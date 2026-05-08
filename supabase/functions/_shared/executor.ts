@@ -163,10 +163,44 @@ export async function executeEntry(
     trail.add("sl_arm_failed", "fail", (e as Error).message);
     await sb.from("system_alerts").insert({
       severity: "critical", category: "unprotected_position",
-      message: `SL placement failed for ${signal.symbol}`,
-      context: { position_id: posRow.id, error: (e as Error).message },
+      message: `SL placement failed for ${signal.symbol} — auto-flattening position`,
+      context: { position_id: posRow.id, error: (e as Error).message, mode },
     });
     await sb.from("app_settings").update({ entries_paused: true }).eq("singleton", true);
+
+    // Safety auto-close: SL could not be confirmed — flatten the position.
+    try {
+      const flattenLink = linkId(`AC-${signal.symbol}`);
+      const closeSide = side === "long" ? "Sell" : "Buy";
+      const closeFill = await client.submitOrder({
+        symbol: signal.symbol, side: closeSide, qty: fill.filledQty,
+        reduceOnly: true, orderLinkId: flattenLink,
+        signalId: signal.id, positionId: posRow.id,
+        orderType: "Market", price: fillPrice, purpose: "exit_full",
+      });
+      await sb.from("positions").update({
+        qty_open: 0,
+        closed_at: new Date().toISOString(),
+        protection_state: "closed",
+        last_seen_price: closeFill.avgFillPrice ?? fillPrice,
+      }).eq("id", posRow.id);
+      await logEvent(sb, posRow.id, "auto_closed_sl_unconfirmed",
+        { close_fill: closeFill, original_fill_price: fillPrice });
+      trail.add("auto_closed_sl_unconfirmed", "pass", undefined,
+        { close_price: closeFill.avgFillPrice });
+      return {
+        ok: false, reason: "sl_unconfirmed_auto_closed",
+        position_id: posRow.id, order_id: fill.bybitOrderId,
+        filled_qty: fill.filledQty, fill_price: fillPrice, protection_state: "closed",
+      };
+    } catch (closeErr) {
+      await sb.from("system_alerts").insert({
+        severity: "critical", category: "unprotected_position",
+        message: `Auto-close FAILED for ${signal.symbol} — manual intervention required`,
+        context: { position_id: posRow.id, error: (closeErr as Error).message },
+      });
+      trail.add("auto_close_failed", "fail", (closeErr as Error).message);
+    }
   }
 
   return {
