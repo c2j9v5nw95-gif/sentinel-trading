@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       app_settings: {
         Row: {
+          chaos_config: Json
           created_at: string
           dedupe_window_seconds: number
           default_leverage: number
@@ -38,6 +39,7 @@ export type Database = {
           webhook_secret_version: number
         }
         Insert: {
+          chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
           default_leverage?: number
@@ -60,6 +62,7 @@ export type Database = {
           webhook_secret_version?: number
         }
         Update: {
+          chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
           default_leverage?: number
@@ -615,6 +618,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      scenario_runs: {
+        Row: {
+          created_by: string | null
+          finished_at: string | null
+          id: string
+          preset: string
+          started_at: string
+          status: string
+          steps: Json
+          symbol: string
+        }
+        Insert: {
+          created_by?: string | null
+          finished_at?: string | null
+          id?: string
+          preset: string
+          started_at?: string
+          status?: string
+          steps?: Json
+          symbol: string
+        }
+        Update: {
+          created_by?: string | null
+          finished_at?: string | null
+          id?: string
+          preset?: string
+          started_at?: string
+          status?: string
+          steps?: Json
+          symbol?: string
+        }
+        Relationships: []
       }
       signals: {
         Row: {
