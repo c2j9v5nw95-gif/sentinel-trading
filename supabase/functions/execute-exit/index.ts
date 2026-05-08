@@ -1,11 +1,26 @@
-// execute-exit — Phase 3.
-// Resolves quantity from current live Bybit position:
-//   portion=tp1  -> tp1_exit_percent of live qty (CHECK ensures = 100 if tp2 disabled)
-//   portion=rest -> remaining live qty
-//   sl/opposite/trend_fail/failsafe -> 100% of live qty
-import { corsHeaders } from "../_shared/db.ts";
-Deno.serve(async (_req) =>
-  new Response(JSON.stringify({ todo: "phase 3" }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  }),
-);
+// execute-exit — manual / replay invocation. Normal path is via dispatcher.
+// POST { signal_id } runs executeExit under an exit lock for that signal.
+import { serviceClient, corsHeaders } from "../_shared/db.ts";
+import { executeExit } from "../_shared/executor.ts";
+import { resolveExecutionMode } from "../_shared/execution-mode.ts";
+import { withSymbolLock } from "../_shared/locks.ts";
+import { Trail, flushTrail } from "../_shared/trail.ts";
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const sb = serviceClient();
+  const body = await req.json().catch(() => ({}));
+  const { data: signal } = await sb.from("signals").select("*").eq("id", body.signal_id).maybeSingle();
+  if (!signal) return new Response(JSON.stringify({ ok: false, error: "signal_not_found" }),
+    { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  const trail = new Trail();
+  for (const s of (signal.decision_trail ?? [])) trail.add(s.step, s.outcome, s.reason, s.metrics);
+  const mode = await resolveExecutionMode(sb, signal.symbol);
+  const result = await withSymbolLock(sb, signal.symbol, "exit",
+    { signalId: signal.id, allowPreempt: true },
+    async () => executeExit(sb, signal, mode.mode, trail));
+  await flushTrail(sb, signal.id, trail);
+  return new Response(JSON.stringify({ ok: true, mode: mode.mode, result }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+});
