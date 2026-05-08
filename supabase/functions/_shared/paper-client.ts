@@ -91,18 +91,40 @@ export class PaperBybitClient implements BybitClient {
     const cfg = await this.settings();
     const refPrice = (await this.lastPrice(req.symbol)) ?? req.price ?? null;
 
-    if (refPrice == null || !Number.isFinite(refPrice) || refPrice <= 0) {
-      // Insert as unknown — caller can reconcile / alert.
+    // Chaos: inject latency
+    if (cfg.chaos.fill_delay_ms && cfg.chaos.fill_delay_ms > 0) {
+      await sleep(Math.min(cfg.chaos.fill_delay_ms, 30_000));
+    }
+
+    // Chaos: random timeout — return 'unknown' as if Bybit didn't ack.
+    const timeoutPct = Number(cfg.chaos.random_timeout_pct ?? 0);
+    if (timeoutPct > 0 && Math.random() * 100 < timeoutPct) {
       await this.sb.from("orders").insert({
         symbol: req.symbol, side: req.side === "Buy" ? "long" : "short",
         order_type: req.orderType ?? "Market", qty: req.qty,
         purpose: req.purpose ?? "entry",
-        signal_id: req.signalId ?? null,
-        position_id: req.positionId ?? null,
+        signal_id: req.signalId ?? null, position_id: req.positionId ?? null,
+        status: "submitted",
+        request_payload: { ...req, paper: true, chaos: "timeout" },
+        execution_mode: "paper", bybit_order_id: req.orderLinkId,
+        error_message: "chaos_timeout",
+      });
+      return {
+        orderLinkId: req.orderLinkId, bybitOrderId: null,
+        status: "unknown", filledQty: 0, avgFillPrice: null, feeUsdt: 0,
+        message: "chaos_timeout",
+      };
+    }
+
+    if (refPrice == null || !Number.isFinite(refPrice) || refPrice <= 0) {
+      await this.sb.from("orders").insert({
+        symbol: req.symbol, side: req.side === "Buy" ? "long" : "short",
+        order_type: req.orderType ?? "Market", qty: req.qty,
+        purpose: req.purpose ?? "entry",
+        signal_id: req.signalId ?? null, position_id: req.positionId ?? null,
         status: "submitted",
         request_payload: { ...req, paper: true, error: "no_price" },
-        execution_mode: "paper",
-        bybit_order_id: req.orderLinkId,
+        execution_mode: "paper", bybit_order_id: req.orderLinkId,
         error_message: "no_price_available",
       });
       return {
@@ -112,38 +134,41 @@ export class PaperBybitClient implements BybitClient {
       };
     }
 
-    // Adverse slippage for taker market orders.
+    // Chaos: partial fill
+    let filledQty = req.qty;
+    const partialPct = Number(cfg.chaos.partial_fill_pct ?? 0);
+    let partial = false;
+    if (partialPct > 0 && partialPct < 100) {
+      filledQty = req.qty * (partialPct / 100);
+      partial = true;
+    }
+
     const slipFactor = cfg.slippage_bps / 10_000;
     const fillPrice = req.side === "Buy"
       ? refPrice * (1 + slipFactor)
       : refPrice * (1 - slipFactor);
 
-    const notional = fillPrice * req.qty;
+    const notional = fillPrice * filledQty;
     const fee = notional * (cfg.fee_bps / 10_000);
 
-    // Insert order as filled.
     const { data: orderRow } = await this.sb.from("orders").insert({
       symbol: req.symbol, side: req.side === "Buy" ? "long" : "short",
-      order_type: req.orderType ?? "Market", qty: req.qty, price: fillPrice,
+      order_type: req.orderType ?? "Market", qty: filledQty, price: fillPrice,
       purpose: req.purpose ?? "entry",
-      signal_id: req.signalId ?? null,
-      position_id: req.positionId ?? null,
-      status: "filled",
+      signal_id: req.signalId ?? null, position_id: req.positionId ?? null,
+      status: partial ? "partial" : "filled",
       submitted_at: new Date().toISOString(),
       finalized_at: new Date().toISOString(),
-      request_payload: { ...req, paper: true },
-      response_payload: { paper: true, refPrice, fillPrice, notional, fee },
-      execution_mode: "paper",
-      bybit_order_id: req.orderLinkId,
+      request_payload: { ...req, paper: true, chaos: cfg.chaos },
+      response_payload: { paper: true, refPrice, fillPrice, notional, fee, partial },
+      execution_mode: "paper", bybit_order_id: req.orderLinkId,
     }).select("id").single();
 
-    // Deduct fee from wallet.
     const { data: wallet } = await this.sb.from("paper_wallet").select("*").maybeSingle();
     if (wallet) {
       const newBalance = Number(wallet.balance_usdt) - fee;
       await this.sb.from("paper_wallet").update({
-        balance_usdt: newBalance,
-        equity_usdt: newBalance,
+        balance_usdt: newBalance, equity_usdt: newBalance,
         realized_pnl: Number(wallet.realized_pnl) - fee,
         updated_at: new Date().toISOString(),
       }).eq("id", wallet.id);
@@ -152,10 +177,8 @@ export class PaperBybitClient implements BybitClient {
     return {
       orderLinkId: req.orderLinkId,
       bybitOrderId: orderRow?.id ?? null,
-      status: "filled",
-      filledQty: req.qty,
-      avgFillPrice: fillPrice,
-      feeUsdt: fee,
+      status: partial ? "submitted" : "filled",
+      filledQty, avgFillPrice: fillPrice, feeUsdt: fee,
     };
   }
 
