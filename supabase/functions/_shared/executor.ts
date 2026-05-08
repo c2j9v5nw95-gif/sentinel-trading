@@ -189,6 +189,12 @@ export async function executeEntry(
       message: `SL placement failed for ${signal.symbol} — auto-flattening position`,
       context: { position_id: posRow.id, error: (e as Error).message, mode },
     });
+    notify({
+      severity: "critical", category: "unprotected_position",
+      execution_mode: mode, symbol: signal.symbol, side,
+      qty: fill.filledQty, price: fillPrice,
+      reason: `SL placement failed: ${(e as Error).message} — auto-flattening`,
+    });
     await sb.from("app_settings").update({ entries_paused: true }).eq("singleton", true);
 
     // Safety auto-close: SL could not be confirmed — flatten the position.
