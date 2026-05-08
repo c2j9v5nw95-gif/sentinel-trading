@@ -15,6 +15,7 @@ import type { ExecutionMode } from "./execution-mode.ts";
 import { computeEntrySizing, validateSymbolSizing } from "./sizing.ts";
 import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
 import { Trail } from "./trail.ts";
+import { notify } from "./telegram.ts";
 
 export interface ExecOutcome {
   ok: boolean;
