@@ -189,7 +189,7 @@ export function BybitDiagnosticsPanel() {
                   {JSON.stringify(view.last_response, null, 2)}
                 </pre>
               </details>
-            )}
+            ) : null}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
