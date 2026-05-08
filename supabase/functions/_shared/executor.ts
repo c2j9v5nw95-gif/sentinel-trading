@@ -55,6 +55,16 @@ export async function executeEntry(
   const side = sideOf(action);
   if (!side) return { ok: false, reason: "invalid_side" };
 
+  // Live circuit breaker: block new live entries when halted (exits remain allowed).
+  if (mode === "live") {
+    const { data: settings } = await sb.from("app_settings")
+      .select("live_risk_halted, live_risk_halt_reason").maybeSingle();
+    if (settings?.live_risk_halted) {
+      trail.add("live_risk_halted", "fail", settings.live_risk_halt_reason ?? "halted");
+      return { ok: false, reason: `live_risk_halted:${settings.live_risk_halt_reason ?? "unknown"}` };
+    }
+  }
+
   // Reject if a live position already exists (entry per direction at a time).
   const existing = await client.getPosition(signal.symbol);
   if (existing.size > 0) {
