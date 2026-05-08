@@ -55,6 +55,11 @@ function SymbolsPage() {
                   <tr key={s.id}>
                     <td className="py-2 font-medium">{s.symbol}</td>
                     <td>{s.enabled ? "✓" : "—"}</td>
+                    <td>
+                      {s.execution_mode_override
+                        ? <ModeChip mode={s.execution_mode_override} />
+                        : <span className="text-xs text-muted-foreground">inherit</span>}
+                    </td>
                     <td className="text-xs">{s.preferred_transport}</td>
                     <td>{s.account_balance_percent}</td>
                     <td>{s.leverage}x</td>
