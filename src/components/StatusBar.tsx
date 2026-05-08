@@ -73,11 +73,14 @@ export function StatusBar() {
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card/40 px-4 py-2 text-xs tabular">
+      {settings?.paper_mode_enabled ? (
+        <Pill label="PAPER MODE" tone="warning" />
+      ) : (
+        <Pill label="LIVE TRADING" tone="success" />
+      )}
       {settings?.emergency_stop ? (
         <Pill label="KILL SWITCH ACTIVE" tone="danger" />
-      ) : (
-        <Pill label="Live" tone="success" />
-      )}
+      ) : null}
       {settings?.entries_paused && <Pill label="Entries paused" tone="warning" />}
       <Pill
         label={`Unprotected: ${unprotected}`}
