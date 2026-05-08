@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       app_settings: {
         Row: {
+          auto_pause_on_critical_invariant: boolean
           chaos_config: Json
           created_at: string
           dedupe_window_seconds: number
@@ -39,6 +40,7 @@ export type Database = {
           webhook_secret_version: number
         }
         Insert: {
+          auto_pause_on_critical_invariant?: boolean
           chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
@@ -62,6 +64,7 @@ export type Database = {
           webhook_secret_version?: number
         }
         Update: {
+          auto_pause_on_critical_invariant?: boolean
           chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
@@ -267,6 +270,110 @@ export type Database = {
             columns: ["source_signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invariant_runs: {
+        Row: {
+          auto_paused: boolean
+          checks_failed: number
+          checks_total: number
+          critical_count: number
+          detail: Json
+          finished_at: string | null
+          health_score: number
+          id: string
+          started_at: string
+          warning_count: number
+        }
+        Insert: {
+          auto_paused?: boolean
+          checks_failed?: number
+          checks_total?: number
+          critical_count?: number
+          detail?: Json
+          finished_at?: string | null
+          health_score?: number
+          id?: string
+          started_at?: string
+          warning_count?: number
+        }
+        Update: {
+          auto_paused?: boolean
+          checks_failed?: number
+          checks_total?: number
+          critical_count?: number
+          detail?: Json
+          finished_at?: string | null
+          health_score?: number
+          id?: string
+          started_at?: string
+          warning_count?: number
+        }
+        Relationships: []
+      }
+      invariant_violations: {
+        Row: {
+          ack_note: string | null
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          detail: Json
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          message: string
+          occurrences: number
+          resolved_at: string | null
+          rule_code: string
+          rule_label: string
+          run_id: string | null
+          severity: Database["public"]["Enums"]["invariant_severity"]
+          target_key: string
+          target_kind: string
+        }
+        Insert: {
+          ack_note?: string | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          detail?: Json
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          message: string
+          occurrences?: number
+          resolved_at?: string | null
+          rule_code: string
+          rule_label: string
+          run_id?: string | null
+          severity?: Database["public"]["Enums"]["invariant_severity"]
+          target_key: string
+          target_kind: string
+        }
+        Update: {
+          ack_note?: string | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          detail?: Json
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          message?: string
+          occurrences?: number
+          resolved_at?: string | null
+          rule_code?: string
+          rule_label?: string
+          run_id?: string | null
+          severity?: Database["public"]["Enums"]["invariant_severity"]
+          target_key?: string
+          target_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invariant_violations_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "invariant_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -998,6 +1105,10 @@ export type Database = {
       }
     }
     Functions: {
+      acknowledge_invariant_violation: {
+        Args: { _id: string; _note: string }
+        Returns: boolean
+      }
       acquire_execution_lock: {
         Args: {
           _allow_preempt: boolean
@@ -1051,6 +1162,7 @@ export type Database = {
         | "sl_failsafe"
         | "opposite"
         | "trend_fail"
+      invariant_severity: "info" | "warning" | "critical"
       lock_kind:
         | "entry"
         | "exit"
@@ -1236,6 +1348,7 @@ export const Constants = {
       entry_reason: ["long_entry", "short_entry"],
       execution_mode: ["live", "paper"],
       exit_reason: ["tp1", "tp2_rest", "sl_failsafe", "opposite", "trend_fail"],
+      invariant_severity: ["info", "warning", "critical"],
       lock_kind: ["entry", "exit", "replay", "reconcile", "protect", "manual"],
       margin_mode: ["isolated", "cross"],
       order_purpose: [

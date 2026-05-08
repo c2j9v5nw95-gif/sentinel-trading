@@ -19,6 +19,7 @@ import { Route as AppSignalsRouteImport } from './routes/_app.signals'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppPositionsRouteImport } from './routes/_app.positions'
 import { Route as AppOverviewRouteImport } from './routes/_app.overview'
+import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
 
@@ -71,6 +72,11 @@ const AppOverviewRoute = AppOverviewRouteImport.update({
   path: '/overview',
   getParentRoute: () => AppRoute,
 } as any)
+const AppInvariantsRoute = AppInvariantsRouteImport.update({
+  id: '/invariants',
+  path: '/invariants',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAuditRoute = AppAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/alerts': typeof AppAlertsRoute
   '/audit': typeof AppAuditRoute
+  '/invariants': typeof AppInvariantsRoute
   '/overview': typeof AppOverviewRoute
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
@@ -100,6 +107,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/alerts': typeof AppAlertsRoute
   '/audit': typeof AppAuditRoute
+  '/invariants': typeof AppInvariantsRoute
   '/overview': typeof AppOverviewRoute
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/audit': typeof AppAuditRoute
+  '/_app/invariants': typeof AppInvariantsRoute
   '/_app/overview': typeof AppOverviewRoute
   '/_app/positions': typeof AppPositionsRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/alerts'
     | '/audit'
+    | '/invariants'
     | '/overview'
     | '/positions'
     | '/settings'
@@ -143,6 +153,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/alerts'
     | '/audit'
+    | '/invariants'
     | '/overview'
     | '/positions'
     | '/settings'
@@ -157,6 +168,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/alerts'
     | '/_app/audit'
+    | '/_app/invariants'
     | '/_app/overview'
     | '/_app/positions'
     | '/_app/settings'
@@ -244,6 +256,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOverviewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/invariants': {
+      id: '/_app/invariants'
+      path: '/invariants'
+      fullPath: '/invariants'
+      preLoaderRoute: typeof AppInvariantsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/audit': {
       id: '/_app/audit'
       path: '/audit'
@@ -264,6 +283,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAlertsRoute: typeof AppAlertsRoute
   AppAuditRoute: typeof AppAuditRoute
+  AppInvariantsRoute: typeof AppInvariantsRoute
   AppOverviewRoute: typeof AppOverviewRoute
   AppPositionsRoute: typeof AppPositionsRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -276,6 +296,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAlertsRoute: AppAlertsRoute,
   AppAuditRoute: AppAuditRoute,
+  AppInvariantsRoute: AppInvariantsRoute,
   AppOverviewRoute: AppOverviewRoute,
   AppPositionsRoute: AppPositionsRoute,
   AppSettingsRoute: AppSettingsRoute,
