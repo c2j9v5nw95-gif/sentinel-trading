@@ -32,13 +32,15 @@ export class PaperBybitClient implements BybitClient {
   readonly mode: ExecutionMode = "paper";
   constructor(private sb: SupabaseClient) {}
 
-  private async settings(): Promise<PaperSettings> {
+  private async settings(): Promise<PaperSettings & { chaos: ChaosConfig }> {
     const { data } = await this.sb.from("app_settings")
-      .select("paper_fee_bps,paper_slippage_bps,paper_starting_balance_usdt").maybeSingle();
+      .select("paper_fee_bps,paper_slippage_bps,paper_starting_balance_usdt,chaos_config")
+      .maybeSingle();
     return {
       fee_bps: Number(data?.paper_fee_bps ?? 5.5),
       slippage_bps: Number(data?.paper_slippage_bps ?? 2),
       starting_balance: Number(data?.paper_starting_balance_usdt ?? 10000),
+      chaos: (data?.chaos_config ?? {}) as ChaosConfig,
     };
   }
 
@@ -47,7 +49,7 @@ export class PaperBybitClient implements BybitClient {
       .select("price,received_at").eq("symbol", symbol).maybeSingle();
     if (!data) return null;
     const ageMs = Date.now() - new Date(data.received_at).getTime();
-    if (ageMs > 60_000) return null;
+    if (ageMs > 5 * 60_000) return null;
     return Number(data.price);
   }
 
