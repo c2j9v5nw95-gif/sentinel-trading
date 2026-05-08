@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
+import { ModeChip } from "@/components/ModeChip";
 
 export const Route = createFileRoute("/_app/symbols")({
   component: SymbolsPage,
@@ -35,6 +36,7 @@ function SymbolsPage() {
                 <tr>
                   <th className="py-2">Symbol</th>
                   <th>On</th>
+                  <th>Mode</th>
                   <th>Transport</th>
                   <th title="Account balance %">Bal %</th>
                   <th>Lev</th>
@@ -53,6 +55,11 @@ function SymbolsPage() {
                   <tr key={s.id}>
                     <td className="py-2 font-medium">{s.symbol}</td>
                     <td>{s.enabled ? "✓" : "—"}</td>
+                    <td>
+                      {s.execution_mode_override
+                        ? <ModeChip mode={s.execution_mode_override} />
+                        : <span className="text-xs text-muted-foreground">inherit</span>}
+                    </td>
                     <td className="text-xs">{s.preferred_transport}</td>
                     <td>{s.account_balance_percent}</td>
                     <td>{s.leverage}x</td>

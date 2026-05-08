@@ -26,6 +26,11 @@ export type Database = {
           id: string
           max_concurrent_positions: number
           max_daily_loss_pct: number
+          paper_fee_bps: number
+          paper_fill_latency_ms: number
+          paper_mode_enabled: boolean
+          paper_slippage_bps: number
+          paper_starting_balance_usdt: number
           singleton: boolean
           updated_at: string
           webhook_secret_hint: string | null
@@ -43,6 +48,11 @@ export type Database = {
           id?: string
           max_concurrent_positions?: number
           max_daily_loss_pct?: number
+          paper_fee_bps?: number
+          paper_fill_latency_ms?: number
+          paper_mode_enabled?: boolean
+          paper_slippage_bps?: number
+          paper_starting_balance_usdt?: number
           singleton?: boolean
           updated_at?: string
           webhook_secret_hint?: string | null
@@ -60,6 +70,11 @@ export type Database = {
           id?: string
           max_concurrent_positions?: number
           max_daily_loss_pct?: number
+          paper_fee_bps?: number
+          paper_fill_latency_ms?: number
+          paper_mode_enabled?: boolean
+          paper_slippage_bps?: number
+          paper_starting_balance_usdt?: number
           singleton?: boolean
           updated_at?: string
           webhook_secret_hint?: string | null
@@ -186,6 +201,7 @@ export type Database = {
           bybit_order_id: string | null
           created_at: string
           error_message: string | null
+          execution_mode: Database["public"]["Enums"]["execution_mode"]
           finalized_at: string | null
           id: string
           order_type: string | null
@@ -205,6 +221,7 @@ export type Database = {
           bybit_order_id?: string | null
           created_at?: string
           error_message?: string | null
+          execution_mode?: Database["public"]["Enums"]["execution_mode"]
           finalized_at?: string | null
           id?: string
           order_type?: string | null
@@ -224,6 +241,7 @@ export type Database = {
           bybit_order_id?: string | null
           created_at?: string
           error_message?: string | null
+          execution_mode?: Database["public"]["Enums"]["execution_mode"]
           finalized_at?: string | null
           id?: string
           order_type?: string | null
@@ -255,6 +273,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      paper_market_prices: {
+        Row: {
+          price: number
+          received_at: string
+          source: string
+          symbol: string
+        }
+        Insert: {
+          price: number
+          received_at?: string
+          source?: string
+          symbol: string
+        }
+        Update: {
+          price?: number
+          received_at?: string
+          source?: string
+          symbol?: string
+        }
+        Relationships: []
+      }
+      paper_wallet: {
+        Row: {
+          balance_usdt: number
+          equity_usdt: number
+          id: string
+          realized_pnl: number
+          singleton: boolean
+          unrealized_pnl: number
+          updated_at: string
+        }
+        Insert: {
+          balance_usdt?: number
+          equity_usdt?: number
+          id?: string
+          realized_pnl?: number
+          singleton?: boolean
+          unrealized_pnl?: number
+          updated_at?: string
+        }
+        Update: {
+          balance_usdt?: number
+          equity_usdt?: number
+          id?: string
+          realized_pnl?: number
+          singleton?: boolean
+          unrealized_pnl?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       position_events: {
         Row: {
@@ -294,6 +363,7 @@ export type Database = {
           created_at: string
           entry_price: number | null
           entry_signal_id: string | null
+          execution_mode: Database["public"]["Enums"]["execution_mode"]
           id: string
           last_exit_signal_id: string | null
           leverage: number | null
@@ -319,6 +389,7 @@ export type Database = {
           created_at?: string
           entry_price?: number | null
           entry_signal_id?: string | null
+          execution_mode?: Database["public"]["Enums"]["execution_mode"]
           id?: string
           last_exit_signal_id?: string | null
           leverage?: number | null
@@ -344,6 +415,7 @@ export type Database = {
           created_at?: string
           entry_price?: number | null
           entry_signal_id?: string | null
+          execution_mode?: Database["public"]["Enums"]["execution_mode"]
           id?: string
           last_exit_signal_id?: string | null
           leverage?: number | null
@@ -626,6 +698,9 @@ export type Database = {
           created_at: string
           display_symbol: string | null
           enabled: boolean
+          execution_mode_override:
+            | Database["public"]["Enums"]["execution_mode"]
+            | null
           id: string
           leverage: number
           margin_mode: Database["public"]["Enums"]["margin_mode"]
@@ -649,6 +724,9 @@ export type Database = {
           created_at?: string
           display_symbol?: string | null
           enabled?: boolean
+          execution_mode_override?:
+            | Database["public"]["Enums"]["execution_mode"]
+            | null
           id?: string
           leverage?: number
           margin_mode?: Database["public"]["Enums"]["margin_mode"]
@@ -672,6 +750,9 @@ export type Database = {
           created_at?: string
           display_symbol?: string | null
           enabled?: boolean
+          execution_mode_override?:
+            | Database["public"]["Enums"]["execution_mode"]
+            | null
           id?: string
           leverage?: number
           margin_mode?: Database["public"]["Enums"]["margin_mode"]
@@ -767,6 +848,7 @@ export type Database = {
       app_role: "operator"
       auth_status: "ok" | "bad_secret" | "malformed"
       entry_reason: "long_entry" | "short_entry"
+      execution_mode: "live" | "paper"
       exit_reason:
         | "tp1"
         | "tp2_rest"
@@ -949,6 +1031,7 @@ export const Constants = {
       app_role: ["operator"],
       auth_status: ["ok", "bad_secret", "malformed"],
       entry_reason: ["long_entry", "short_entry"],
+      execution_mode: ["live", "paper"],
       exit_reason: ["tp1", "tp2_rest", "sl_failsafe", "opposite", "trend_fail"],
       margin_mode: ["isolated", "cross"],
       order_purpose: [

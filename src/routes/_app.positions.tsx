@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
+import { ModeChip } from "@/components/ModeChip";
 
 export const Route = createFileRoute("/_app/positions")({
   component: PositionsPage,
@@ -31,6 +32,7 @@ function PositionsPage() {
             <thead className="text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="py-2">Symbol</th>
+                <th>Mode</th>
                 <th>Side</th>
                 <th>Qty</th>
                 <th>Entry</th>
@@ -44,6 +46,7 @@ function PositionsPage() {
               {data!.map((p) => (
                 <tr key={p.id}>
                   <td className="py-2 font-medium">{p.symbol}</td>
+                  <td><ModeChip mode={p.execution_mode} /></td>
                   <td className={p.side === "long" ? "text-success" : "text-danger"}>
                     {p.side.toUpperCase()}
                   </td>
