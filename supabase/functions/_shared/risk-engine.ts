@@ -1,25 +1,17 @@
-// Risk Engine — sequential gates evaluated in priority order.
-// First failure wins. Each call writes exactly one risk_decisions row.
-//
-// Phase 2 scope:
-//   1. kill_switch       app_settings.emergency_stop / entries_paused
-//   2. risk              symbol enabled, recognized strategy code
-//   3. transport_mismatch signal.transport vs symbols.preferred_transport
-//   4. unprotected_pause any open position in 'unprotected' state blocks ENTERs
-//   5. risk (concurrency) max_concurrent_positions for ENTERs
-//   6. risk (no_position) EXITs require an open position for that symbol/side
+// Risk Engine — sequential gates, first-failure-wins, with mode awareness.
+//   mode='standard'      ENTRY checks: kill_switch, symbol, transport,
+//                        unprotected_pause, concurrency
+//   mode='exit_priority' EXIT checks:  kill_switch (only if blocks_exits=true),
+//                        symbol, no_open_position
+// Health Gate is run separately by the dispatcher (entries only).
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isEntry, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
+import { Trail } from "./trail.ts";
 
 export type RiskGate =
-  | "kill_switch"
-  | "risk"
-  | "transport_mismatch"
-  | "unprotected_pause"
-  | "exposure_limit"
-  | "health"
-  | "dedupe";
+  | "kill_switch" | "risk" | "transport_mismatch"
+  | "unprotected_pause" | "exposure_limit" | "health" | "dedupe";
 
 export type RiskOutcome = "pass" | "block";
 
@@ -38,120 +30,127 @@ export interface RiskInput {
   tag: string;
   transport: "webhook" | "email";
   strategyCodeKnown: boolean;
+  mode: "standard" | "exit_priority";
 }
 
 export async function evaluateRisk(
-  sb: SupabaseClient,
-  inp: RiskInput,
+  sb: SupabaseClient, inp: RiskInput, trail: Trail,
 ): Promise<RiskDecision> {
-  const { data: settings } = await sb
-    .from("app_settings")
-    .select("emergency_stop,entries_paused,max_concurrent_positions")
+  const { data: settings } = await sb.from("app_settings")
+    .select("emergency_stop,entries_paused,max_concurrent_positions,emergency_stop_blocks_exits")
     .maybeSingle();
 
-  // 1. kill switch
+  // 1. Kill switch
   if (settings?.emergency_stop) {
-    return { outcome: "block", gate: "kill_switch", reason: "emergency_stop", metrics: {} };
-  }
-  if (settings?.entries_paused && isEntry(inp.action)) {
+    if (inp.mode === "exit_priority" && !settings.emergency_stop_blocks_exits) {
+      trail.add("kill_switch", "skip", "exit_priority_bypass");
+    } else {
+      trail.add("kill_switch", "fail", "emergency_stop");
+      return { outcome: "block", gate: "kill_switch", reason: "emergency_stop", metrics: {} };
+    }
+  } else if (settings?.entries_paused && isEntry(inp.action)) {
+    trail.add("kill_switch", "fail", "entries_paused");
     return { outcome: "block", gate: "kill_switch", reason: "entries_paused", metrics: {} };
+  } else {
+    trail.add("kill_switch", "pass");
   }
 
-  // 2. recognized strategy code (HEALTH excluded — never reaches here)
+  // 2. Strategy code recognized
   if (!inp.strategyCodeKnown) {
+    trail.add("strategy_code", "fail", "unknown");
     return { outcome: "block", gate: "risk", reason: "unknown_strategy_code", metrics: {} };
   }
+  trail.add("strategy_code", "pass");
 
-  // 2. symbol enabled
-  const { data: sym } = await sb
-    .from("symbols")
+  // 3. Symbol configured + enabled
+  const { data: sym } = await sb.from("symbols")
     .select("enabled,preferred_transport")
-    .eq("symbol", inp.symbol)
-    .maybeSingle();
-
+    .eq("symbol", inp.symbol).maybeSingle();
   if (!sym) {
+    trail.add("symbol", "fail", "not_configured", { symbol: inp.symbol });
     return { outcome: "block", gate: "risk", reason: "symbol_not_configured", metrics: { symbol: inp.symbol } };
   }
   if (!sym.enabled) {
+    trail.add("symbol", "fail", "disabled", { symbol: inp.symbol });
     return { outcome: "block", gate: "risk", reason: "symbol_disabled", metrics: { symbol: inp.symbol } };
   }
+  trail.add("symbol", "pass");
 
-  // 3. transport mismatch
-  if (sym.preferred_transport !== "either" && sym.preferred_transport !== inp.transport) {
+  // 4. Transport — entries only; exits bypass
+  if (inp.mode === "exit_priority") {
+    trail.add("transport", "skip", "exit_priority_bypass");
+  } else if (sym.preferred_transport !== "either" && sym.preferred_transport !== inp.transport) {
+    trail.add("transport", "fail", "mismatch",
+      { preferred: sym.preferred_transport, actual: inp.transport });
     return {
-      outcome: "block",
-      gate: "transport_mismatch",
+      outcome: "block", gate: "transport_mismatch",
       reason: `expected ${sym.preferred_transport}, got ${inp.transport}`,
       metrics: { preferred: sym.preferred_transport, actual: inp.transport },
     };
+  } else {
+    trail.add("transport", "pass");
   }
 
-  // 4. unprotected pause (entries only)
+  // 5. Unprotected pause — entries only
   if (isEntry(inp.action)) {
-    const { count: unprotectedCount } = await sb
-      .from("positions")
+    const { count } = await sb.from("positions")
       .select("id", { count: "exact", head: true })
-      .is("closed_at", null)
-      .eq("protection_state", "unprotected");
-    if ((unprotectedCount ?? 0) > 0) {
+      .is("closed_at", null).eq("protection_state", "unprotected");
+    if ((count ?? 0) > 0) {
+      trail.add("unprotected_pause", "fail", "unprotected_positions_present", { count });
       return {
-        outcome: "block",
-        gate: "unprotected_pause",
+        outcome: "block", gate: "unprotected_pause",
         reason: "unprotected_positions_present",
-        metrics: { unprotected_count: unprotectedCount },
+        metrics: { unprotected_count: count },
       };
     }
+    trail.add("unprotected_pause", "pass");
+  } else {
+    trail.add("unprotected_pause", "skip", "exit");
   }
 
-  // 5. concurrency cap (entries only)
+  // 6. Concurrency — entries only
   if (isEntry(inp.action)) {
     const max = settings?.max_concurrent_positions ?? 5;
-    const { count: openCount } = await sb
-      .from("positions")
-      .select("id", { count: "exact", head: true })
-      .is("closed_at", null);
-    if ((openCount ?? 0) >= max) {
+    const { count } = await sb.from("positions")
+      .select("id", { count: "exact", head: true }).is("closed_at", null);
+    if ((count ?? 0) >= max) {
+      trail.add("concurrency", "fail", "max_concurrent_positions", { open: count, max });
       return {
-        outcome: "block",
-        gate: "risk",
-        reason: "max_concurrent_positions",
-        metrics: { open: openCount, max },
+        outcome: "block", gate: "risk", reason: "max_concurrent_positions",
+        metrics: { open: count, max },
       };
     }
+    trail.add("concurrency", "pass", undefined, { open: count, max });
+  } else {
+    trail.add("concurrency", "skip", "exit");
   }
 
-  // 6. exits require an open matching position
+  // 7. Position check — exits only
   if (isExit(inp.action)) {
     const side = sideOf(inp.action);
-    const { count: matching } = await sb
-      .from("positions")
+    const { count } = await sb.from("positions")
       .select("id", { count: "exact", head: true })
-      .is("closed_at", null)
-      .eq("symbol", inp.symbol)
-      .eq("side", side!);
-    if ((matching ?? 0) === 0) {
+      .is("closed_at", null).eq("symbol", inp.symbol).eq("side", side!);
+    if ((count ?? 0) === 0) {
+      trail.add("position_check", "fail", "no_open_position",
+        { symbol: inp.symbol, side });
       return {
-        outcome: "block",
-        gate: "risk",
-        reason: "no_open_position",
+        outcome: "block", gate: "risk", reason: "no_open_position",
         metrics: { symbol: inp.symbol, side },
       };
     }
+    trail.add("position_check", "pass", undefined, { matching: count });
   }
 
   return { outcome: "pass", gate: "risk", reason: "all_gates_passed", metrics: {} };
 }
 
 export async function recordDecision(
-  sb: SupabaseClient,
-  signalId: string,
-  d: RiskDecision,
+  sb: SupabaseClient, signalId: string, d: RiskDecision,
 ): Promise<void> {
   await sb.from("risk_decisions").insert({
-    signal_id: signalId,
-    gate: d.gate,
-    outcome: d.outcome,
-    reason: d.reason,
-    metrics: d.metrics,
+    signal_id: signalId, gate: d.gate, outcome: d.outcome,
+    reason: d.reason, metrics: d.metrics,
   });
 }
