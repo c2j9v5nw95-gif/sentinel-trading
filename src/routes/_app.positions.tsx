@@ -32,6 +32,7 @@ function PositionsPage() {
             <thead className="text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="py-2">Symbol</th>
+                <th>Mode</th>
                 <th>Side</th>
                 <th>Qty</th>
                 <th>Entry</th>
