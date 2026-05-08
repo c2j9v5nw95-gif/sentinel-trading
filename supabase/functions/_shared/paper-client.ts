@@ -28,6 +28,16 @@ interface PaperSettings {
   starting_balance: number;
 }
 
+export interface ChaosConfig {
+  random_timeout_pct?: number;     // 0..100 — chance the order returns 'unknown'
+  fill_delay_ms?: number;          // injected latency before fill
+  partial_fill_pct?: number;       // 0..100 — fill only this fraction
+  duplicate_delivery_pct?: number; // (used by sim-inject)
+  stale_lock_ms?: number;          // (used by sim-scenario)
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export class PaperBybitClient implements BybitClient {
   readonly mode: ExecutionMode = "paper";
   constructor(private sb: SupabaseClient) {}
