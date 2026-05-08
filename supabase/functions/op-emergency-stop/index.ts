@@ -2,6 +2,7 @@
 // Flips app_settings.emergency_stop = true. Optionally flat-closes positions.
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { notify } from "../_shared/telegram.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
