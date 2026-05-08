@@ -1,12 +1,19 @@
 // ingest-webhook
-// TradingView posts here. Validates secret=<TRADINGVIEW_WEBHOOK_SECRET> in payload,
-// stores raw_alerts row, parses + normalizes, inserts into signals (deduped),
-// returns 200 fast. Phase 2 fills in the parser → DB insert path.
+// Public endpoint — TradingView posts here.
+// Authenticates via `secret=<TRADINGVIEW_WEBHOOK_SECRET>` field in the alert
+// payload (semicolon-separated key=value, newline-separated, or JSON).
+// Stores raw_alerts row, parses + normalizes, inserts into signals (deduped),
+// returns 200 fast. Repeated unauthorized attempts trigger a critical Telegram
+// alert (one per 10-minute bucket, gated through the standard notify pipeline).
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
-import { parseAlert } from "../_shared/parser.ts";
+import { parseAlert, extractSecret, type AlertAction } from "../_shared/parser.ts";
 import { normalizeSymbol } from "../_shared/normalize.ts";
 import { resolveStrategyCode, actionFor } from "../_shared/strategy-map.ts";
 import { buildDedupeKey } from "../_shared/dedupe.ts";
+import { notify } from "../_shared/telegram.ts";
+
+const UNAUTH_ALERT_THRESHOLD = 5;
+const UNAUTH_ALERT_WINDOW_MIN = 10;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -17,32 +24,42 @@ Deno.serve(async (req) => {
   const headers = Object.fromEntries(req.headers);
   const bodyText = await req.text();
 
-  // Authenticate via secret= field (works in JSON or key=value alerts).
   const expected = Deno.env.get("TRADINGVIEW_WEBHOOK_SECRET");
-  let providedSecret: string | undefined;
-  try {
-    const j = JSON.parse(bodyText);
-    providedSecret = typeof j?.secret === "string" ? j.secret : undefined;
-  } catch {
-    const m = bodyText.match(/(?:^|\n)\s*secret\s*=\s*([^\n\r]+)/);
-    providedSecret = m?.[1]?.trim();
-  }
+  const providedSecret = extractSecret(bodyText);
   const authOk = !!expected && providedSecret === expected;
 
   if (!authOk) {
+    const status = providedSecret ? "bad_secret" : "malformed";
     await sb.from("raw_alerts").insert({
       transport: "webhook",
       remote_ip: ip,
       headers,
       body_text: bodyText,
-      auth_status: providedSecret ? "bad_secret" : "malformed",
+      auth_status: status,
     });
     await sb.from("system_alerts").insert({
       severity: "warning",
       category: "ingest_auth",
-      message: "Webhook rejected: missing or invalid secret",
+      message: `Webhook rejected: ${status}`,
       context: { ip },
     });
+
+    // Burst detection — if N+ failures in last window, escalate via Telegram.
+    const since = new Date(Date.now() - UNAUTH_ALERT_WINDOW_MIN * 60_000).toISOString();
+    const { count } = await sb
+      .from("raw_alerts")
+      .select("id", { count: "exact", head: true })
+      .in("auth_status", ["bad_secret", "malformed"])
+      .gte("created_at", since);
+    if ((count ?? 0) >= UNAUTH_ALERT_THRESHOLD) {
+      notify({
+        severity: "critical",
+        category: "dead_letter",
+        reason: `Unauthorized webhook burst: ${count} attempts in ${UNAUTH_ALERT_WINDOW_MIN}m`,
+        extra: { ip, last_status: status, window_minutes: UNAUTH_ALERT_WINDOW_MIN },
+        raw_text: `🚨 <b>WEBHOOK ABUSE</b>\n${count} unauthorized attempts in last ${UNAUTH_ALERT_WINDOW_MIN}m\nLast IP: <code>${ip || "unknown"}</code>\nStatus: ${status}`,
+      });
+    }
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -59,13 +76,31 @@ Deno.serve(async (req) => {
   }
 
   const symbol = normalizeSymbol(parsed.symbol);
+  const mapping = resolveStrategyCode(parsed.strategy_code);
+
+  // Action resolution — explicit `action=` takes precedence; fall back to
+  // strategy-code mapping (e.g. EL1 → ENTER-LONG) for legacy alerts.
+  let action: AlertAction | null = null;
+  if (parsed.type === "stats") {
+    action = "HEALTH";
+  } else if (parsed.action) {
+    action = parsed.action;
+  } else if (mapping) {
+    action = actionFor(mapping);
+  }
+
+  // Portion: explicit `portion=REST` overrides the strategy-code default.
+  let portion: "full" | "tp1" | "rest" = mapping?.portion ?? "full";
+  if (parsed.portion) {
+    const p = parsed.portion.toLowerCase();
+    if (p === "rest") portion = "rest";
+    else if (p === "tp1") portion = "tp1";
+    else if (p === "full") portion = "full";
+  }
+
   const strategy = parsed.strategy ?? "";
   const tag = parsed.tag ?? "";
-  const mapping = resolveStrategyCode(parsed.strategy_code);
-  const action = parsed.type === "stats" ? "HEALTH" : (mapping ? actionFor(mapping) : null);
-  const portion = mapping?.portion ?? "full";
 
-  // Dedupe window from app_settings
   const { data: settings } = await sb
     .from("app_settings")
     .select("dedupe_window_seconds")
@@ -86,9 +121,10 @@ Deno.serve(async (req) => {
   const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
   const nowIso = new Date().toISOString();
   const initialTrail = [
-    { step: "parser_pass", outcome: "pass", at: nowIso },
+    { step: "parser_pass", outcome: "pass", at: nowIso,
+      metrics: { action, strategy_code: parsed.strategy_code ?? null, portion } },
     { step: "normalized_symbol", outcome: "info",
-      metrics: { raw: parsed.symbol ?? null, normalized: symbol }, at: nowIso },
+      metrics: { raw: parsed.raw_ticker ?? null, normalized: symbol }, at: nowIso },
     { step: "dedupe_pass", outcome: "pass", at: nowIso },
   ];
 
@@ -115,7 +151,6 @@ Deno.serve(async (req) => {
     .select("id")
     .maybeSingle();
 
-  // dedupe collision = unique violation; treat as benign
   const dedupeHit = !!insertErr && (insertErr.code === "23505");
 
   await sb.from("raw_alerts").insert({
@@ -127,7 +162,6 @@ Deno.serve(async (req) => {
     signal_id: signal?.id ?? null,
   });
 
-  // Fire-and-forget dispatcher trigger (sub-second latency, doesn't block ACK).
   if (signal?.id) {
     const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/process-signal`;
     const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -142,7 +176,12 @@ Deno.serve(async (req) => {
   }
 
   return new Response(
-    JSON.stringify({ ok: true, signal_id: signal?.id ?? null, dedupe: dedupeHit }),
+    JSON.stringify({
+      ok: true,
+      signal_id: signal?.id ?? null,
+      dedupe: dedupeHit,
+      parsed: { action, symbol, strategy_code: parsed.strategy_code ?? null, portion },
+    }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
 });
