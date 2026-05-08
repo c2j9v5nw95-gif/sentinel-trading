@@ -165,12 +165,14 @@ export async function dispatchSignal(
     }
 
     // Pass — accepted. Phase 3 will pick these up for execution.
+    const resolved = await resolveExecutionMode(sb, signal.symbol);
+    trail.add("mode_resolved", "info", resolved.source, { mode: resolved.mode });
     trail.add("exposure_limit", "skip", "phase3_execution");
     trail.add("accepted", "info");
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
       status: "accepted", processed_at: new Date().toISOString(),
-      decision_reason: "gates_passed",
+      decision_reason: `gates_passed:${resolved.mode}`,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
       action: "signal_dispatched", target: signal.id,
@@ -178,6 +180,7 @@ export async function dispatchSignal(
         gate: "risk", outcome: "pass",
         action, symbol: signal.symbol, strategy: signal.strategy, tag: signal.tag,
         portion: signal.portion, mode,
+        execution_mode: resolved.mode, mode_source: resolved.source,
         note: "phase2: execution stub; not sent to Bybit",
       },
     });
