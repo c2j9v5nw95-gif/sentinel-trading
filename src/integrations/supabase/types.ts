@@ -28,6 +28,18 @@ export type Database = {
           id: string
           live_confirmation_phrase: string | null
           live_enabled: boolean
+          live_risk_acknowledged_at: string | null
+          live_risk_acknowledged_by: string | null
+          live_risk_halt_metrics: Json | null
+          live_risk_halt_reason: string | null
+          live_risk_halted: boolean
+          live_risk_halted_at: string | null
+          live_risk_max_consecutive_losses: number
+          live_risk_max_daily_loss_pct: number
+          live_risk_max_open_positions: number
+          live_risk_max_symbol_exposure_pct: number
+          live_risk_max_total_exposure_pct: number
+          live_risk_max_unrealized_drawdown_pct: number
           max_concurrent_positions: number
           max_daily_loss_pct: number
           paper_fee_bps: number
@@ -56,6 +68,18 @@ export type Database = {
           id?: string
           live_confirmation_phrase?: string | null
           live_enabled?: boolean
+          live_risk_acknowledged_at?: string | null
+          live_risk_acknowledged_by?: string | null
+          live_risk_halt_metrics?: Json | null
+          live_risk_halt_reason?: string | null
+          live_risk_halted?: boolean
+          live_risk_halted_at?: string | null
+          live_risk_max_consecutive_losses?: number
+          live_risk_max_daily_loss_pct?: number
+          live_risk_max_open_positions?: number
+          live_risk_max_symbol_exposure_pct?: number
+          live_risk_max_total_exposure_pct?: number
+          live_risk_max_unrealized_drawdown_pct?: number
           max_concurrent_positions?: number
           max_daily_loss_pct?: number
           paper_fee_bps?: number
@@ -84,6 +108,18 @@ export type Database = {
           id?: string
           live_confirmation_phrase?: string | null
           live_enabled?: boolean
+          live_risk_acknowledged_at?: string | null
+          live_risk_acknowledged_by?: string | null
+          live_risk_halt_metrics?: Json | null
+          live_risk_halt_reason?: string | null
+          live_risk_halted?: boolean
+          live_risk_halted_at?: string | null
+          live_risk_max_consecutive_losses?: number
+          live_risk_max_daily_loss_pct?: number
+          live_risk_max_open_positions?: number
+          live_risk_max_symbol_exposure_pct?: number
+          live_risk_max_total_exposure_pct?: number
+          live_risk_max_unrealized_drawdown_pct?: number
           max_concurrent_positions?: number
           max_daily_loss_pct?: number
           paper_fee_bps?: number
@@ -608,6 +644,7 @@ export type Database = {
           protection_state: Database["public"]["Enums"]["protection_state"]
           qty_initial: number | null
           qty_open: number | null
+          realized_pnl: number
           side: Database["public"]["Enums"]["position_side"]
           sl_order_id: string | null
           sl_price: number | null
@@ -637,6 +674,7 @@ export type Database = {
           protection_state?: Database["public"]["Enums"]["protection_state"]
           qty_initial?: number | null
           qty_open?: number | null
+          realized_pnl?: number
           side: Database["public"]["Enums"]["position_side"]
           sl_order_id?: string | null
           sl_price?: number | null
@@ -666,6 +704,7 @@ export type Database = {
           protection_state?: Database["public"]["Enums"]["protection_state"]
           qty_initial?: number | null
           qty_open?: number | null
+          realized_pnl?: number
           side?: Database["public"]["Enums"]["position_side"]
           sl_order_id?: string | null
           sl_price?: number | null
@@ -1163,6 +1202,7 @@ export type Database = {
         Args: { _id: string; _note: string }
         Returns: boolean
       }
+      acknowledge_live_risk_halt: { Args: { _note?: string }; Returns: boolean }
       acquire_execution_lock: {
         Args: {
           _allow_preempt: boolean
@@ -1203,6 +1243,10 @@ export type Database = {
         Returns: string
       }
       steal_execution_lock: { Args: { _symbol: string }; Returns: Json }
+      trigger_live_risk_halt: {
+        Args: { _metrics: Json; _reason: string }
+        Returns: boolean
+      }
     }
     Enums: {
       alert_severity: "info" | "warning" | "critical"
