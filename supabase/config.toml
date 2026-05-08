@@ -1,0 +1,22 @@
+project_id = "djqhpgbsgelzhrfyxfhl"
+
+[functions.ingest-webhook]
+verify_jwt = false
+
+[functions.ingest-email]
+verify_jwt = false
+
+[functions.process-signal]
+verify_jwt = false
+
+[functions.execute-entry]
+verify_jwt = false
+
+[functions.execute-exit]
+verify_jwt = false
+
+[functions.protection-monitor]
+verify_jwt = false
+
+[functions.record-health]
+verify_jwt = false
