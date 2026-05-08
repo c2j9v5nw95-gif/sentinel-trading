@@ -15,6 +15,7 @@
 //   6. live_risk_max_symbol_exposure_pct   — max single-symbol notional / equity
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
+import { notify } from "../_shared/telegram.ts";
 
 interface Settings {
   live_enabled: boolean;
