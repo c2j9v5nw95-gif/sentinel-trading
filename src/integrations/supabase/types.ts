@@ -602,6 +602,8 @@ export type Database = {
           id: string
           leverage: number
           margin_mode: Database["public"]["Enums"]["margin_mode"]
+          max_margin_usage_usdt: number | null
+          max_position_notional_usdt: number | null
           notes: string | null
           position_size_multiplier: number
           preferred_transport: Database["public"]["Enums"]["transport_pref"]
@@ -623,6 +625,8 @@ export type Database = {
           id?: string
           leverage?: number
           margin_mode?: Database["public"]["Enums"]["margin_mode"]
+          max_margin_usage_usdt?: number | null
+          max_position_notional_usdt?: number | null
           notes?: string | null
           position_size_multiplier?: number
           preferred_transport?: Database["public"]["Enums"]["transport_pref"]
@@ -644,6 +648,8 @@ export type Database = {
           id?: string
           leverage?: number
           margin_mode?: Database["public"]["Enums"]["margin_mode"]
+          max_margin_usage_usdt?: number | null
+          max_position_notional_usdt?: number | null
           notes?: string | null
           position_size_multiplier?: number
           preferred_transport?: Database["public"]["Enums"]["transport_pref"]
@@ -761,6 +767,7 @@ export type Database = {
         | "dedupe"
         | "unprotected_pause"
         | "transport_mismatch"
+        | "exposure_limit"
       risk_outcome: "pass" | "block"
       signal_action:
         | "ENTER-LONG"
@@ -932,6 +939,7 @@ export const Constants = {
         "dedupe",
         "unprotected_pause",
         "transport_mismatch",
+        "exposure_limit",
       ],
       risk_outcome: ["pass", "block"],
       signal_action: [

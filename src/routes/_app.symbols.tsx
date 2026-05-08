@@ -44,6 +44,8 @@ function SymbolsPage() {
                   <th>TSL act / cb</th>
                   <th>TP2</th>
                   <th>TP1 %</th>
+                  <th title="Hard cap on estimated exposure (USDT)">Max Notional</th>
+                  <th title="Hard cap on margin allocated (USDT)">Max Margin</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -64,6 +66,12 @@ function SymbolsPage() {
                     </td>
                     <td>{s.tp2_enabled ? "✓" : "—"}</td>
                     <td>{s.tp1_exit_percent}</td>
+                    <td className={s.max_position_notional_usdt == null ? "text-muted-foreground" : ""}>
+                      {s.max_position_notional_usdt == null ? "—" : `${s.max_position_notional_usdt} USDT`}
+                    </td>
+                    <td className={s.max_margin_usage_usdt == null ? "text-muted-foreground" : ""}>
+                      {s.max_margin_usage_usdt == null ? "—" : `${s.max_margin_usage_usdt} USDT`}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -85,9 +93,16 @@ function SymbolsPage() {
             Exits always use the live Bybit position size — multiplier and balance % are
             entry-only. Leverage is applied via Bybit V5 before each entry.
           </p>
+          <p>
+            <span className="font-medium text-destructive">Hard caps override sizing.</span>{" "}
+            If estimated exposure exceeds <code>max_position_notional_usdt</code> or
+            margin exceeds <code>max_margin_usage_usdt</code>, the entry is rejected and
+            logged as a risk decision (<code>gate=exposure_limit</code>,{" "}
+            <code>outcome=block</code>). Trades are never silently shrunk.
+          </p>
           <p className="text-xs">
             Validation: balance % ∈ [0.1, 100] · multiplier ∈ [0.1, 3.0] · leverage capped
-            by the symbol's Bybit limit.
+            by the symbol's Bybit limit · caps must be &gt; 0 when set (blank = no cap).
           </p>
         </div>
       </Card>
