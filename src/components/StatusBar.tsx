@@ -65,10 +65,14 @@ export function StatusBar() {
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card/40 px-4 py-2 text-xs tabular">
-      {settings?.paper_mode_enabled ? (
+      {settings?.live_enabled ? (
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-danger/60 bg-danger/20 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-danger animate-pulse">
+          ● LIVE TRADING
+        </span>
+      ) : settings?.paper_mode_enabled ? (
         <Pill label="PAPER MODE" tone="warning" />
       ) : (
-        <Pill label="LIVE TRADING" tone="success" />
+        <Pill label="TESTNET" tone="success" />
       )}
       {settings?.emergency_stop ? (
         <Pill label="KILL SWITCH ACTIVE" tone="danger" />

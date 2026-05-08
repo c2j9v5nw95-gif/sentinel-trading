@@ -45,7 +45,14 @@ function PositionsPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {data!.map((p) => (
-                <tr key={p.id}>
+                <tr
+                  key={p.id}
+                  className={
+                    p.execution_mode === "live" && p.closed_at == null
+                      ? "bg-danger/10 border-l-2 border-danger"
+                      : ""
+                  }
+                >
                   <td className="py-2 font-medium">{p.symbol}</td>
                   <td><ModeChip mode={p.execution_mode} /></td>
                   <td className={p.side === "long" ? "text-success" : "text-danger"}>
