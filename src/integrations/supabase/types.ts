@@ -146,6 +146,78 @@ export type Database = {
         }
         Relationships: []
       }
+      execution_lock_events: {
+        Row: {
+          created_at: string
+          event: string
+          id: string
+          kind: Database["public"]["Enums"]["lock_kind"]
+          note: string | null
+          owner_id: string
+          previous_kind: Database["public"]["Enums"]["lock_kind"] | null
+          previous_owner_id: string | null
+          symbol: string
+        }
+        Insert: {
+          created_at?: string
+          event: string
+          id?: string
+          kind: Database["public"]["Enums"]["lock_kind"]
+          note?: string | null
+          owner_id: string
+          previous_kind?: Database["public"]["Enums"]["lock_kind"] | null
+          previous_owner_id?: string | null
+          symbol: string
+        }
+        Update: {
+          created_at?: string
+          event?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["lock_kind"]
+          note?: string | null
+          owner_id?: string
+          previous_kind?: Database["public"]["Enums"]["lock_kind"] | null
+          previous_owner_id?: string | null
+          symbol?: string
+        }
+        Relationships: []
+      }
+      execution_locks: {
+        Row: {
+          acquired_at: string
+          heartbeat_at: string
+          job_id: string | null
+          kind: Database["public"]["Enums"]["lock_kind"]
+          metadata: Json
+          owner_id: string
+          signal_id: string | null
+          symbol: string
+          ttl_seconds: number
+        }
+        Insert: {
+          acquired_at?: string
+          heartbeat_at?: string
+          job_id?: string | null
+          kind: Database["public"]["Enums"]["lock_kind"]
+          metadata?: Json
+          owner_id: string
+          signal_id?: string | null
+          symbol: string
+          ttl_seconds?: number
+        }
+        Update: {
+          acquired_at?: string
+          heartbeat_at?: string
+          job_id?: string | null
+          kind?: Database["public"]["Enums"]["lock_kind"]
+          metadata?: Json
+          owner_id?: string
+          signal_id?: string | null
+          symbol?: string
+          ttl_seconds?: number
+        }
+        Relationships: []
+      }
       health_snapshots: {
         Row: {
           bar_time: string | null
@@ -828,9 +900,72 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      current_execution_locks: {
+        Row: {
+          acquired_at: string | null
+          age_seconds: number | null
+          expires_at: string | null
+          heartbeat_age_seconds: number | null
+          heartbeat_at: string | null
+          is_stale: boolean | null
+          job_id: string | null
+          kind: Database["public"]["Enums"]["lock_kind"] | null
+          metadata: Json | null
+          owner_id: string | null
+          seconds_until_expiry: number | null
+          signal_id: string | null
+          symbol: string | null
+          ttl_seconds: number | null
+        }
+        Insert: {
+          acquired_at?: string | null
+          age_seconds?: never
+          expires_at?: never
+          heartbeat_age_seconds?: never
+          heartbeat_at?: string | null
+          is_stale?: never
+          job_id?: string | null
+          kind?: Database["public"]["Enums"]["lock_kind"] | null
+          metadata?: Json | null
+          owner_id?: string | null
+          seconds_until_expiry?: never
+          signal_id?: string | null
+          symbol?: string | null
+          ttl_seconds?: number | null
+        }
+        Update: {
+          acquired_at?: string | null
+          age_seconds?: never
+          expires_at?: never
+          heartbeat_age_seconds?: never
+          heartbeat_at?: string | null
+          is_stale?: never
+          job_id?: string | null
+          kind?: Database["public"]["Enums"]["lock_kind"] | null
+          metadata?: Json | null
+          owner_id?: string | null
+          seconds_until_expiry?: never
+          signal_id?: string | null
+          symbol?: string | null
+          ttl_seconds?: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
+      acquire_execution_lock: {
+        Args: {
+          _allow_preempt: boolean
+          _job_id: string
+          _kind: Database["public"]["Enums"]["lock_kind"]
+          _owner_id: string
+          _signal_id: string
+          _symbol: string
+          _ttl_seconds: number
+        }
+        Returns: Json
+      }
+      expire_stale_locks: { Args: never; Returns: number }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -838,10 +973,26 @@ export type Database = {
         }
         Returns: boolean
       }
+      heartbeat_execution_lock: {
+        Args: { _owner_id: string; _symbol: string }
+        Returns: boolean
+      }
+      lock_can_preempt: {
+        Args: {
+          _current: Database["public"]["Enums"]["lock_kind"]
+          _requested: Database["public"]["Enums"]["lock_kind"]
+        }
+        Returns: boolean
+      }
+      release_execution_lock: {
+        Args: { _owner_id: string; _symbol: string }
+        Returns: boolean
+      }
       replay_signal: {
         Args: { _bypass_dedupe: boolean; _signal_id: string }
         Returns: string
       }
+      steal_execution_lock: { Args: { _symbol: string }; Returns: Json }
     }
     Enums: {
       alert_severity: "info" | "warning" | "critical"
@@ -855,6 +1006,13 @@ export type Database = {
         | "sl_failsafe"
         | "opposite"
         | "trend_fail"
+      lock_kind:
+        | "entry"
+        | "exit"
+        | "replay"
+        | "reconcile"
+        | "protect"
+        | "manual"
       margin_mode: "isolated" | "cross"
       order_purpose:
         | "entry"
@@ -1033,6 +1191,7 @@ export const Constants = {
       entry_reason: ["long_entry", "short_entry"],
       execution_mode: ["live", "paper"],
       exit_reason: ["tp1", "tp2_rest", "sl_failsafe", "opposite", "trend_fail"],
+      lock_kind: ["entry", "exit", "replay", "reconcile", "protect", "manual"],
       margin_mode: ["isolated", "cross"],
       order_purpose: [
         "entry",

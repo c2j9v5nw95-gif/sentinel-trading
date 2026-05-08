@@ -27,7 +27,7 @@ export function StatusBar() {
   const { data } = useQuery({
     queryKey: ["status-bar"],
     queryFn: async () => {
-      const [{ data: settings }, { count: unprotected }, { data: lastWebhook }, { data: lastEmail }] =
+      const [{ data: settings }, { count: unprotected }, { data: lastWebhook }, { data: lastEmail }, { data: locks }] =
         await Promise.all([
           supabase.from("app_settings").select("*").maybeSingle(),
           supabase
@@ -35,26 +35,18 @@ export function StatusBar() {
             .select("id", { count: "exact", head: true })
             .eq("protection_state", "unprotected")
             .is("closed_at", null),
-          supabase
-            .from("raw_alerts")
-            .select("received_at")
-            .eq("transport", "webhook")
-            .order("received_at", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          supabase
-            .from("raw_alerts")
-            .select("received_at")
-            .eq("transport", "email")
-            .order("received_at", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
+          supabase.from("raw_alerts").select("received_at").eq("transport", "webhook")
+            .order("received_at", { ascending: false }).limit(1).maybeSingle(),
+          supabase.from("raw_alerts").select("received_at").eq("transport", "email")
+            .order("received_at", { ascending: false }).limit(1).maybeSingle(),
+          supabase.from("current_execution_locks").select("symbol,is_stale"),
         ]);
       return {
         settings,
         unprotected: unprotected ?? 0,
         lastWebhook: lastWebhook?.received_at as string | undefined,
         lastEmail: lastEmail?.received_at as string | undefined,
+        locks: locks ?? [],
       };
     },
     refetchInterval: 5_000,
