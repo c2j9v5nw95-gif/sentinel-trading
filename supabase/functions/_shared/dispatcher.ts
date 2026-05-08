@@ -19,6 +19,7 @@ import { evaluateHealth } from "./health-gate.ts";
 import { evaluateRisk, recordDecision } from "./risk-engine.ts";
 import { resolveStrategyCode, isExit, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
+import { resolveExecutionMode } from "./execution-mode.ts";
 
 const MAX_RETRIES = 2;
 
