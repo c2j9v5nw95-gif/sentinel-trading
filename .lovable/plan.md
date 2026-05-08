@@ -1,79 +1,129 @@
-# Phase 2: Signal Pipeline (no live execution)
+# Phase 2.5: Operational Safeguards
 
-Wire the queue from `signals` (status=queued) through normalization → strategy mapping → Health Gate → Risk Engine → terminal status. Bybit calls remain stubs; the pipeline ends by marking the signal `ready_for_execution` (or `rejected`) with full risk_decisions / audit trails.
+Four pre-execution safeguards layered onto the existing pipeline. No Bybit work yet.
 
-## 1. Shared modules (already in place — small hardening only)
+## 1. Database changes (one migration)
 
-- `parser.ts`, `normalize.ts`, `dedupe.ts`, `strategy-map.ts` already work and are used by `ingest-webhook`. Only changes:
-  - `parser.ts`: also accept `barTime` casing variants and ignore an optional `secret=` line so it doesn't pollute `payload.raw` after auth.
-  - `strategy-map.ts`: add `sideOf(action)` helper and a `requiresPosition(action)` helper for the Risk Engine.
-- New `supabase/functions/_shared/health-gate.ts`:
-  - `evaluateHealth(sb, { symbol, strategy, tag })` → `{ pass, reason, metrics }`.
-  - Reads the latest `health_snapshots` row for `(symbol, strategy, tag)` and the matching `strategies` row; compares to `health_min_winrate`, `health_min_profit_factor`, `health_min_net_profit` (NULL threshold = skip that check).
-  - Returns `pass=true` with `reason="no_thresholds_configured"` if strategy has no thresholds, or `reason="no_health_data"` if no snapshot yet (configurable: default = pass with warning, never silently block until at least one stats alert was received).
-  - HEALTH alerts always pass this gate (it's only consulted for trade signals).
-- New `supabase/functions/_shared/risk-engine.ts`:
-  - `evaluateRisk(sb, signal, mapping)` → `{ outcome: 'pass'|'block', gate, reason, metrics }`.
-  - Sequential gates, first failure wins:
-    1. `kill_switch` — `app_settings.emergency_stop` blocks ALL; `entries_paused` blocks ENTER-* only.
-    2. `risk` — symbol row exists & `enabled=true`; strategy row exists & `enabled=true`.
-    3. `transport_mismatch` — if `symbols.preferred_transport != 'either'` and `signal.transport != preferred_transport`, block.
-    4. `unprotected_pause` — if any open `positions.protection_state='unprotected'`, block ENTER-* (exits always allowed).
-    5. `risk` (concurrency) — count distinct open positions; block ENTER-* when `>= app_settings.max_concurrent_positions`.
-    6. `risk` (no_position) — EXIT-* with no matching open position → block with reason `no_open_position`.
-  - Each call ends with one `risk_decisions` insert (`gate`, `outcome`, `reason`, `metrics`, `signal_id`).
-  - Health Gate is run separately (only for trade signals, before Risk Engine) so the rejection reason cleanly attributes to `gate=health`.
-- New `supabase/functions/_shared/dispatcher.ts`:
-  - `dispatchSignal(sb, signalId)` — pure function that runs one signal end-to-end. Used by both `process-signal` (queue worker) and a future post-insert trigger.
+`signal_status` enum — add `dead_letter` and `replay`. (`replay` is unused as a status today but reserved; the replay row gets `queued` and replay metadata in payload.)
 
-## 2. `record-health` (implement)
+`app_settings` — add `emergency_stop_blocks_exits boolean NOT NULL DEFAULT false`. By default emergency stop blocks **entries only**; exits still flow. Operator can opt into "block exits too" explicitly.
 
-POST `{ signal_id }` (or signal row) and:
-1. Fetch the signal; assert `type='stats'`.
-2. Insert `health_snapshots` row with `symbol`, `strategy`, `tag`, `net_profit`, `winrate`, `profit_factor`, `bar_time`, `source_signal_id`, raw `payload`.
-3. Update `strategies.last_health_at = now()` (upsert by `(name, tag)` if missing — but do NOT auto-create strategies with thresholds; create with NULL thresholds so the gate falls back to the safe default).
-4. Mark signal `status='processed'`, `processed_at=now()`, `decision_reason='health_recorded'`.
-5. Return `{ ok, snapshot_id }`.
+`signals` — add columns:
+- `replay_of uuid NULL` — points to original signal (no FK to keep replays even if origin is purged later, but logically references signals.id)
+- `replay_by uuid NULL` — operator who triggered the replay
+- `replay_at timestamptz NULL`
+- `bypass_dedupe boolean NOT NULL DEFAULT false`
+- `retry_count int NOT NULL DEFAULT 0`
+- `error_stack text NULL`
+- `request_id text NULL` (carry through from ingest if present; auto-gen otherwise)
+- `decision_trail jsonb NOT NULL DEFAULT '[]'::jsonb` — ordered array of `{ step, outcome, reason?, metrics?, at }` entries
 
-## 3. `process-signal` (implement)
+Index: `signals(status) WHERE status IN ('dead_letter','queued','processing')` for the worker + dashboard.
 
-Two invocation modes, same handler:
-- POST with `{ signal_id }` → process that one signal.
-- POST with `{}` (cron) → claim up to N (default 25) `signals` rows where `status='queued'` ordered by `received_at`, process in order.
+A new RPC / server function `replay_signal(signal_id, bypass_dedupe)` that requires `operator` role; copies a signal row into a new one with `status='queued'`, links via `replay_of`, sets `replay_by=auth.uid()`, `replay_at=now()`, optionally pre-empts dedupe by appending `|replay=<uuid>` to the dedupe key.
 
-Per signal:
-1. Optimistic claim: `update signals set status='processing' where id=$1 and status='queued' returning *`. If no row, skip (already taken / dedupe collision).
-2. If `type='stats'`: call record-health logic inline (same module), commit, continue.
-3. If `type='trade'`:
-   - Resolve mapping from `strategy_code` (re-resolve defensively; ingest already populated columns).
-   - **Health Gate** — `evaluateHealth(...)`. On block: `risk_decisions` row with `gate='health'`, mark signal `status='rejected'`, `decision_reason=...`, return.
-   - **Risk Engine** — `evaluateRisk(...)`. On block: signal `status='rejected'`, `decision_reason=...`, return.
-   - On pass: mark signal `status='ready_for_execution'`, `decision_reason='gates_passed'`, `processed_at=now()`. **Do NOT call Bybit.** Phase 3 will pick these rows up.
-4. Always write an `audit_log` entry with `action='signal_dispatched'` and the full decision context.
+## 2. Decision trail (`_shared/trail.ts`)
 
-## 4. Trigger from ingest
+New helper module:
+```ts
+type TrailStep = {
+  step: string;          // "parser_pass" | "normalized_symbol" | "dedupe_pass" | ...
+  outcome: "pass" | "fail" | "skip" | "info";
+  reason?: string;
+  metrics?: Record<string, unknown>;
+  at: string;            // ISO timestamp
+};
+class Trail {
+  add(step, outcome, reason?, metrics?): void
+  toJSON(): TrailStep[]
+}
+async flushTrail(sb, signalId, trail): Promise<void>  // updates signals.decision_trail
+```
 
-`ingest-webhook` already inserts the signal. After insertion, fire-and-forget POST to `process-signal` with `{ signal_id }` using the project's internal function URL + service-role key (no `await` on the response, just `void fetch(...)` with a 5s abort). This gives sub-second latency without blocking the TradingView ACK. The cron-style empty-body invocation remains as a safety net for missed dispatches.
+Steps are appended at every gate, in this canonical order:
+- `parser_pass` / `parser_fail` (recorded in raw_alerts when no signal row exists yet, then mirrored on the signal once created)
+- `normalized_symbol` (info, with `{ raw, normalized }`)
+- `dedupe_pass` / `dedupe_skip` (skip when bypass_dedupe=true)
+- `claimed` (info)
+- `exit_priority` (info, when bypassing health/transport for an exit)
+- `health_gate_pass` / `health_gate_skip` / `health_gate_fail`
+- `transport_pass` / `transport_skip` / `transport_fail`
+- `kill_switch_pass` / `kill_switch_fail`
+- `symbol_pass` / `symbol_fail`
+- `unprotected_pause_pass` / `unprotected_pause_fail`
+- `concurrency_pass` / `concurrency_fail`
+- `position_check_pass` / `position_check_fail` (exits)
+- `exposure_limit_pass` / `exposure_limit_fail` (will be wired by execute-entry in Phase 3; the slot is already in the trail)
+- terminal: `accepted` / `rejected` / `dead_letter`
 
-## 5. Status enum check
+Single flush at end of `dispatchSignal` (and at the catch boundary) so the trail survives errors. The existing `risk_decisions` table stays — it's the canonical rejection log; `decision_trail` is the per-signal narrative.
 
-Confirm `signal_status` enum already includes `queued`, `processing`, `rejected`, `processed`, and add `ready_for_execution` if missing. Migration only if needed (will be checked first via `pg_enum` SELECT).
+## 3. Exit-priority short-circuit (in `dispatcher.ts`)
 
-## 6. Dashboard surfacing (light pass)
+After claim, if `isExit(action)`:
+- Skip Health Gate entirely (`trail.add("health_gate","skip","exit_priority")`).
+- Skip transport_mismatch check (record skip step).
+- Skip strategy_disabled check (already only enforced inside health-gate; risk-engine's symbol enabled check stays).
+- Still enforce: `emergency_stop` only when `app_settings.emergency_stop_blocks_exits=true`; `symbol_not_configured`; `missing_symbol`; `unknown_strategy_code` (treated as malformed); `no_open_position`.
 
-- `/signals`: show `status`, `decision_reason`, latest matching `risk_decisions.gate` for rejected rows.
-- `/audit` already lists `audit_log`; surface the new `signal_dispatched` action with metric chips (gate, outcome).
-- No new pages.
+`risk-engine.ts` gets a new `mode: 'standard' | 'exit_priority'` flag so the gate ordering is one place. Exits never check `entries_paused` (already true) and never check `unprotected_pause` (already true). Add: exits never check `max_concurrent_positions` (already true). Add: exits skip `transport_mismatch`.
 
-## 7. Out of scope for Phase 2
+## 4. Dead-letter queue
 
-- Bybit calls: `execute-entry`, `execute-exit`, `protection-monitor`, leverage push remain stubs. Their inputs (sizing breakdown, exposure caps, SL params) are already Phase-1/3 defined.
-- Email ingest (`ingest-email`) stays disabled.
-- pg_cron schedule wiring; we'll provide the endpoint and document the cron call but leave actual scheduling for the Phase 3 review.
+`signals.status='dead_letter'` is reached when:
+- An uncaught exception escapes `dispatchSignal` after retry attempts (default `MAX_RETRIES=2`), OR
+- Any required external dependency (DB write) fails with a non-transient error.
+
+Mechanics in `dispatcher.ts` catch block:
+- Increment `retry_count`. If `< MAX_RETRIES`, set status back to `queued` so the next batch picks it up; else set `dead_letter`, persist `error_stack`, record `dead_letter` step in trail, write `audit_log` row `action='signal_dead_letter'`, raise a `system_alerts` row (severity=`critical`).
+- `process-signal` worker batch query continues to claim only `status='queued'` — dead-letter rows never auto-resurrect.
+
+Operator can replay a dead-letter signal via the same replay path (creates a fresh `queued` copy; the dead-letter original stays as historical evidence).
+
+## 5. Replay (operator-driven)
+
+New `createServerFn` `replaySignal({ signalId, bypassDedupe })` in `src/lib/signals.functions.ts`:
+- Wrapped in `requireSupabaseAuth` + `has_role(uid,'operator')` check (RLS-backed).
+- Calls a Postgres function `public.replay_signal(uuid, boolean)` (SECURITY DEFINER, role-gated) that does the row copy + dedupe-key salt + `replay_*` metadata, then returns the new signal_id.
+- Server fn then fires the existing `process-signal` HTTP fan-out (same as ingest does) to dispatch the new row immediately.
+
+UI:
+- Signals page row gets a **Replay** button (operator only). Confirms via shadcn dialog with checkbox "bypass dedupe".
+- Replayed signals render with a small `↺ replay of <short-id>` chip and link back to original.
+- New tab/section **Dead Letter** at the top of the Signals page (or a separate `/signals/dead-letter` route) that lists `status='dead_letter'` rows with replay button + expandable error_stack.
+
+## 6. Signal details UI
+
+Click a signal row → side sheet (shadcn `Sheet`) showing:
+- Header: action / symbol / strategy / tag / status / decision_reason
+- Replay metadata if present
+- Ordered **Decision Trail** (timeline UI) rendered from `decision_trail`, with pass/fail/skip pills and per-step metrics expandable
+- Linked `risk_decisions` entries
+- Raw payload + raw_alert reference
+- Replay button (and "Replay without dedupe" toggle)
+
+Audit log page already shows `signal_dispatched` / `signal_dead_letter` / `signal_replayed` actions; add filter chips for these three.
+
+## 7. Migration order & implementation sequence
+
+1. Migration: enum + columns + index + `replay_signal` SQL function.
+2. `_shared/trail.ts` and refactor `dispatcher.ts` + `risk-engine.ts` to thread the trail through every gate and honor exit-priority + emergency_stop_blocks_exits.
+3. `ingest-webhook` — record initial trail steps (`parser_pass`, `normalized_symbol`, `dedupe_pass`/`skip`) when creating the signal; set `request_id`.
+4. Dead-letter logic + retry loop in dispatcher; update `process-signal` batch query.
+5. `src/lib/signals.functions.ts` with `replaySignal` server fn.
+6. UI: signal details Sheet, replay button, dead-letter section, audit-log filters.
+7. Smoke tests: unhealthy-strategy + EXIT bypasses gate; dead-letter via forced exception; replay copy creates a new row with linked metadata.
+
+## Out of scope
+
+- No Bybit calls in this phase; `accepted` and `dead_letter` are still terminal.
+- No automatic dead-letter replay; strictly operator-driven.
+- No multi-tenant operator scoping (single operator).
+- No global retry-window tuning UI; `MAX_RETRIES` is a constant for now (2).
 
 ## Technical notes
 
-- All sb calls use `serviceClient()`; RLS bypassed intentionally (background worker).
-- `risk_decisions.metrics` is `jsonb` — store all numeric inputs as numbers (PostgREST returns `numeric` as string; convert with `Number(...)`).
-- Concurrency count: `select count(*) from positions where closed_at is null` filtered by symbol when needed.
-- Idempotency: optimistic `status` claim guarantees one worker per signal; ingest's unique `dedupe_key` already prevents duplicate inserts.
+- `decision_trail` is append-only in code (we never rewrite earlier steps).
+- Replay copies preserve `payload` verbatim; only metadata + dedupe key differ.
+- `request_id` is a UUID generated at ingest if TradingView didn't supply one.
+- `replay_signal` SQL is SECURITY DEFINER and double-checks `has_role(auth.uid(),'operator')` to defend against accidental anon exposure.

@@ -21,6 +21,7 @@ export type Database = {
           default_leverage: number
           email_ingest_enabled: boolean
           emergency_stop: boolean
+          emergency_stop_blocks_exits: boolean
           entries_paused: boolean
           id: string
           max_concurrent_positions: number
@@ -37,6 +38,7 @@ export type Database = {
           default_leverage?: number
           email_ingest_enabled?: boolean
           emergency_stop?: boolean
+          emergency_stop_blocks_exits?: boolean
           entries_paused?: boolean
           id?: string
           max_concurrent_positions?: number
@@ -53,6 +55,7 @@ export type Database = {
           default_leverage?: number
           email_ingest_enabled?: boolean
           emergency_stop?: boolean
+          emergency_stop_blocks_exits?: boolean
           entries_paused?: boolean
           id?: string
           max_concurrent_positions?: number
@@ -464,16 +467,24 @@ export type Database = {
         Row: {
           action: Database["public"]["Enums"]["signal_action"] | null
           bar_time: string | null
+          bypass_dedupe: boolean
           created_at: string
           decision_reason: string | null
+          decision_trail: Json
           dedupe_key: string
           entry_reason: Database["public"]["Enums"]["entry_reason"] | null
+          error_stack: string | null
           exit_reason: Database["public"]["Enums"]["exit_reason"] | null
           id: string
           payload: Json
           portion: Database["public"]["Enums"]["signal_portion"]
           processed_at: string | null
           received_at: string
+          replay_at: string | null
+          replay_by: string | null
+          replay_of: string | null
+          request_id: string | null
+          retry_count: number
           status: Database["public"]["Enums"]["signal_status"]
           strategy: string | null
           strategy_code: string | null
@@ -485,16 +496,24 @@ export type Database = {
         Insert: {
           action?: Database["public"]["Enums"]["signal_action"] | null
           bar_time?: string | null
+          bypass_dedupe?: boolean
           created_at?: string
           decision_reason?: string | null
+          decision_trail?: Json
           dedupe_key: string
           entry_reason?: Database["public"]["Enums"]["entry_reason"] | null
+          error_stack?: string | null
           exit_reason?: Database["public"]["Enums"]["exit_reason"] | null
           id?: string
           payload: Json
           portion?: Database["public"]["Enums"]["signal_portion"]
           processed_at?: string | null
           received_at?: string
+          replay_at?: string | null
+          replay_by?: string | null
+          replay_of?: string | null
+          request_id?: string | null
+          retry_count?: number
           status?: Database["public"]["Enums"]["signal_status"]
           strategy?: string | null
           strategy_code?: string | null
@@ -506,16 +525,24 @@ export type Database = {
         Update: {
           action?: Database["public"]["Enums"]["signal_action"] | null
           bar_time?: string | null
+          bypass_dedupe?: boolean
           created_at?: string
           decision_reason?: string | null
+          decision_trail?: Json
           dedupe_key?: string
           entry_reason?: Database["public"]["Enums"]["entry_reason"] | null
+          error_stack?: string | null
           exit_reason?: Database["public"]["Enums"]["exit_reason"] | null
           id?: string
           payload?: Json
           portion?: Database["public"]["Enums"]["signal_portion"]
           processed_at?: string | null
           received_at?: string
+          replay_at?: string | null
+          replay_by?: string | null
+          replay_of?: string | null
+          request_id?: string | null
+          retry_count?: number
           status?: Database["public"]["Enums"]["signal_status"]
           strategy?: string | null
           strategy_code?: string | null
@@ -730,6 +757,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      replay_signal: {
+        Args: { _bypass_dedupe: boolean; _signal_id: string }
+        Returns: string
+      }
     }
     Enums: {
       alert_severity: "info" | "warning" | "critical"
@@ -783,6 +814,7 @@ export type Database = {
         | "rejected"
         | "error"
         | "processed"
+        | "dead_letter"
       signal_type: "trade" | "stats"
       transport_kind: "webhook" | "email"
       transport_pref: "webhook" | "email" | "either"
@@ -963,6 +995,7 @@ export const Constants = {
         "rejected",
         "error",
         "processed",
+        "dead_letter",
       ],
       signal_type: ["trade", "stats"],
       transport_kind: ["webhook", "email"],
