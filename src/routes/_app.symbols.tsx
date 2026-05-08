@@ -44,6 +44,8 @@ function SymbolsPage() {
                   <th>TSL act / cb</th>
                   <th>TP2</th>
                   <th>TP1 %</th>
+                  <th title="Hard cap on estimated exposure (USDT)">Max Notional</th>
+                  <th title="Hard cap on margin allocated (USDT)">Max Margin</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
