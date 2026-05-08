@@ -15,6 +15,7 @@
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { getClient } from "../_shared/bybit-client.ts";
 import { withSymbolLock } from "../_shared/locks.ts";
+import { notify } from "../_shared/telegram.ts";
 import type { ExecutionMode } from "../_shared/execution-mode.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -139,6 +140,13 @@ async function processPosition(sb: SupabaseClient, pos: PositionRow): Promise<st
       protection_state: "sl_and_tsl",
     }).eq("id", pos.id);
     await logEvent(sb, pos.id, "tsl_activated", { price, trigger, callbackPct });
+    if (pos.execution_mode !== "paper") {
+      notify({
+        severity: "info", category: "tsl_update",
+        execution_mode: pos.execution_mode, symbol: pos.symbol, side: pos.side,
+        price, reason: `TSL activated @ ${callbackPct * 100}% callback`,
+      });
+    }
     return "tsl_activated";
   }
 

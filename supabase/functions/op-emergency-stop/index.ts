@@ -2,6 +2,7 @@
 // Flips app_settings.emergency_stop = true. Optionally flat-closes positions.
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { notify } from "../_shared/telegram.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -37,6 +38,11 @@ Deno.serve(async (req) => {
     severity: "critical",
     category: "kill_switch",
     message: `Emergency stop activated by ${u.user.email}`,
+  });
+  notify({
+    severity: "critical", category: "emergency_stop",
+    reason: `Emergency stop activated by ${u.user.email ?? u.user.id}`,
+    bypass_dedupe: true,
   });
 
   return new Response(JSON.stringify({ ok: true }), {

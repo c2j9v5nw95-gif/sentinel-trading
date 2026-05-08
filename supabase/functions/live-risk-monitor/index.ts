@@ -15,6 +15,7 @@
 //   6. live_risk_max_symbol_exposure_pct   — max single-symbol notional / equity
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
+import { notify } from "../_shared/telegram.ts";
 
 interface Settings {
   live_enabled: boolean;
@@ -158,6 +159,13 @@ Deno.serve(async (req) => {
   await sb.rpc("trigger_live_risk_halt", {
     _reason: reason,
     _metrics: { ...metrics, breaches },
+  });
+
+  notify({
+    severity: "critical", category: "live_risk_halt",
+    execution_mode: "live",
+    reason,
+    extra: { metrics, breaches },
   });
 
   return json({ ok: true, breached: true, reason, metrics, breaches });

@@ -15,6 +15,7 @@ import type { ExecutionMode } from "./execution-mode.ts";
 import { computeEntrySizing, validateSymbolSizing } from "./sizing.ts";
 import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
 import { Trail } from "./trail.ts";
+import { notify } from "./telegram.ts";
 
 export interface ExecOutcome {
   ok: boolean;
@@ -157,6 +158,18 @@ export async function executeEntry(
   await logEvent(sb, posRow.id, "entry_filled",
     { fill_price: fillPrice, qty: fill.filledQty, fee: fill.feeUsdt });
 
+  if (mode === "live" || mode === "testnet") {
+    notify({
+      severity: mode === "live" ? "warning" : "info",
+      category: "live_entry",
+      execution_mode: mode, symbol: signal.symbol, side,
+      leverage: Number(breakdown.effectiveLeverage),
+      qty: fill.filledQty, price: fillPrice,
+      exposure: fill.filledQty * fillPrice,
+      reason: signal.entry_reason ?? signal.strategy_code ?? "entry",
+    });
+  }
+
   // SL placement (fixed % from entry).
   const slPct = Number(sym.sl_pct ?? 1.5) / 100;
   const slPrice = side === "long" ? fillPrice * (1 - slPct) : fillPrice * (1 + slPct);
@@ -175,6 +188,12 @@ export async function executeEntry(
       severity: "critical", category: "unprotected_position",
       message: `SL placement failed for ${signal.symbol} — auto-flattening position`,
       context: { position_id: posRow.id, error: (e as Error).message, mode },
+    });
+    notify({
+      severity: "critical", category: "unprotected_position",
+      execution_mode: mode, symbol: signal.symbol, side,
+      qty: fill.filledQty, price: fillPrice,
+      reason: `SL placement failed: ${(e as Error).message} — auto-flattening`,
     });
     await sb.from("app_settings").update({ entries_paused: true }).eq("singleton", true);
 
@@ -339,6 +358,20 @@ export async function executeExit(
   await logEvent(sb, posRow.id, `exit_${purpose}`, {
     qty: fill.filledQty, fill_price: fillPrice, remaining: newQty, reason: mapping?.exitReason,
   });
+
+  if (mode === "live" || mode === "testnet") {
+    const reason = mapping?.exitReason ?? signal.exit_reason ?? purpose;
+    let category: "tp_hit" | "sl_hit" | "live_exit" = "live_exit";
+    if (purpose === "tp1" || purpose === "tp2_rest" || reason === "tp1" || reason === "tp2_rest") category = "tp_hit";
+    else if (reason === "sl_failsafe" || reason === "sl") category = "sl_hit";
+    notify({
+      severity: category === "sl_hit" ? "warning" : "info",
+      category,
+      execution_mode: mode, symbol: signal.symbol, side,
+      qty: fill.filledQty, price: fillPrice, pnl,
+      reason: String(reason),
+    });
+  }
 
   return {
     ok: true, position_id: posRow.id, order_id: fill.bybitOrderId,

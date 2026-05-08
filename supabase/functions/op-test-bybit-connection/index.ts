@@ -18,6 +18,7 @@
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { BybitRest, BybitError } from "../_shared/bybit-rest.ts";
+import { notify } from "../_shared/telegram.ts";
 
 const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
 
@@ -364,6 +365,12 @@ Deno.serve(async (req) => {
       category: "bybit_diagnostic",
       message: `${mode.toUpperCase()} Bybit diagnostic failed: ${topError.code}`,
       context: { mode, error: topError, failed_checks: failed.map(([k]) => k) },
+    });
+    notify({
+      severity: "warning", category: "bybit_diagnostic_failure",
+      execution_mode: mode,
+      reason: `${topError.code}: ${topError.message}`,
+      extra: { failed_checks: failed.map(([k]) => k) },
     });
   }
 

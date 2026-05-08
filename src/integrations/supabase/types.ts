@@ -468,6 +468,81 @@ export type Database = {
           },
         ]
       }
+      notification_events: {
+        Row: {
+          category: string
+          created_at: string
+          dedupe_key: string | null
+          error_message: string | null
+          id: string
+          payload: Json
+          provider: string
+          sent_at: string | null
+          severity: Database["public"]["Enums"]["notification_severity"]
+          status: Database["public"]["Enums"]["notification_status"]
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          dedupe_key?: string | null
+          error_message?: string | null
+          id?: string
+          payload?: Json
+          provider?: string
+          sent_at?: string | null
+          severity: Database["public"]["Enums"]["notification_severity"]
+          status: Database["public"]["Enums"]["notification_status"]
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          dedupe_key?: string | null
+          error_message?: string | null
+          id?: string
+          payload?: Json
+          provider?: string
+          sent_at?: string | null
+          severity?: Database["public"]["Enums"]["notification_severity"]
+          status?: Database["public"]["Enums"]["notification_status"]
+        }
+        Relationships: []
+      }
+      notification_settings: {
+        Row: {
+          created_at: string
+          dedupe_window_seconds: number
+          enabled_categories: Json
+          id: string
+          min_severity: Database["public"]["Enums"]["notification_severity"]
+          rate_limit_seconds: number
+          singleton: boolean
+          telegram_enabled: boolean
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dedupe_window_seconds?: number
+          enabled_categories?: Json
+          id?: string
+          min_severity?: Database["public"]["Enums"]["notification_severity"]
+          rate_limit_seconds?: number
+          singleton?: boolean
+          telegram_enabled?: boolean
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dedupe_window_seconds?: number
+          enabled_categories?: Json
+          id?: string
+          min_severity?: Database["public"]["Enums"]["notification_severity"]
+          rate_limit_seconds?: number
+          singleton?: boolean
+          telegram_enabled?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
       orders: {
         Row: {
           bybit_order_id: string | null
@@ -1269,6 +1344,8 @@ export type Database = {
         | "protect"
         | "manual"
       margin_mode: "isolated" | "cross"
+      notification_severity: "info" | "warning" | "critical"
+      notification_status: "sent" | "skipped" | "failed"
       order_purpose:
         | "entry"
         | "sl"
@@ -1449,6 +1526,8 @@ export const Constants = {
       invariant_severity: ["info", "warning", "critical"],
       lock_kind: ["entry", "exit", "replay", "reconcile", "protect", "manual"],
       margin_mode: ["isolated", "cross"],
+      notification_severity: ["info", "warning", "critical"],
+      notification_status: ["sent", "skipped", "failed"],
       order_purpose: [
         "entry",
         "sl",

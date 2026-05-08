@@ -6,6 +6,7 @@ import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
 import { BybitDiagnosticsPanel } from "@/components/BybitDiagnosticsPanel";
 import { LiveRiskBreakerCard } from "@/components/LiveRiskBreakerCard";
+import { TelegramNotificationsCard } from "@/components/TelegramNotificationsCard";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -285,6 +286,7 @@ function SettingsPage() {
       <div className="mt-4 grid grid-cols-1 gap-4">
         <LiveRiskBreakerCard />
         <BybitDiagnosticsPanel />
+        <TelegramNotificationsCard />
       </div>
     </>
   );

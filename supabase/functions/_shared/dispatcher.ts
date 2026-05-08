@@ -22,6 +22,7 @@ import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
+import { notify } from "./telegram.ts";
 
 const MAX_RETRIES = 2;
 
@@ -255,6 +256,12 @@ export async function dispatchSignal(
       severity: "critical", category: "dead_letter",
       message: `Signal moved to dead-letter: ${msg.slice(0, 160)}`,
       context: { signal_id: signal.id },
+    });
+    notify({
+      severity: "critical", category: "dead_letter",
+      symbol: signal.symbol ?? null,
+      reason: msg.slice(0, 200),
+      extra: { signal_id: signal.id },
     });
     return { signalId: signal.id, status: "dead_letter", reason: msg };
   }
