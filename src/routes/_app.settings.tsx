@@ -7,6 +7,7 @@ import { ModeChip } from "@/components/ModeChip";
 import { BybitDiagnosticsPanel } from "@/components/BybitDiagnosticsPanel";
 import { LiveRiskBreakerCard } from "@/components/LiveRiskBreakerCard";
 import { TelegramNotificationsCard } from "@/components/TelegramNotificationsCard";
+import { LiveWalletPanel } from "@/components/LiveWalletPanel";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
