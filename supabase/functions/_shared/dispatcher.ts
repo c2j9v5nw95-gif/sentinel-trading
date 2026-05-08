@@ -22,6 +22,7 @@ import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
+import { notify } from "./telegram.ts";
 
 const MAX_RETRIES = 2;
 
