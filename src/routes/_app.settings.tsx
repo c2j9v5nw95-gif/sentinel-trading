@@ -212,10 +212,9 @@ function SettingsPage() {
                 <div className="font-medium text-danger">Live (mainnet) gate</div>
                 <ul className="space-y-0.5 text-muted-foreground">
                   <li>{data?.emergency_stop ? "✗" : "✓"} Emergency stop off</li>
-                  <li>{testnetValidated ? "✓" : "✗"} Testnet validated within 24h
-                    {data?.testnet_validated_at && ` (${new Date(data.testnet_validated_at).toLocaleString()})`}</li>
                   <li>{(criticalCount ?? 0) === 0 ? "✓" : "✗"} No open critical invariants
                     ({criticalCount ?? 0})</li>
+                  <li>{liveRiskBreakerOk ? "✓" : "✗"} Live risk circuit breaker not tripped</li>
                   <li>{liveDiagnosticOk ? "✓" : "✗"} Live Bybit diagnostic passed (≤24h)
                     {liveDiag?.created_at && ` (${new Date(liveDiag.created_at).toLocaleString()})`}</li>
                   <li>✓ BYBIT_LIVE_API_KEY / SECRET present (verified at runtime)</li>
