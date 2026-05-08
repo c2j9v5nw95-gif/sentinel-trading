@@ -1,202 +1,234 @@
 
-# Paper Execution Mode — Design
+# Symbol-Level Execution Locking — Design
 
-A simulation layer that exercises the full Phase 3 execution state machine without touching Bybit. Same code paths, same tables, same decision trails — only the side-effecting Bybit client is swapped for a deterministic simulator.
-
----
-
-## 1. Principles
-
-1. **One pipeline, two backends.** `_shared/bybit.ts` becomes an interface; `LiveBybitClient` and `PaperBybitClient` implement it. The executor never branches on mode — it just calls the resolved client.
-2. **Mode resolved per signal/job at dispatch time** (global flag + per-symbol override), then frozen onto the order/position rows so historical data stays unambiguous even if mode changes later.
-3. **Paper writes use the same tables** — `orders`, `positions`, `position_events`, `risk_decisions`, `audit_log`, `signals.decision_trail`, `execution_jobs`, `bybit_executions`. Discrimination is by an `execution_mode` column, never by separate tables.
-4. **No silent crossover.** A live order can never be reconciled against paper state, and vice versa — every Bybit-bound call carries the mode and the wrong-mode client refuses to act.
+A single coordination primitive that every Phase 3 execution path (entry, exit, replay, reconcile, protection re-arm) must acquire before touching Bybit or position rows for a given symbol. Built as a Postgres-backed `execution_locks` table with TTL + heartbeat, atomically managed by SECURITY DEFINER functions. Visible in the dashboard and crash-safe by design.
 
 ---
 
-## 2. Schema (planned, not yet migrated)
+## 1. Why a Table (not raw advisory locks)
 
-### 2.1 New enum
-- `execution_mode` ∈ (`live`, `paper`).
+Postgres advisory locks (`pg_try_advisory_xact_lock`) are atomic and cheap, but:
+- They die with the connection — invisible to the dashboard.
+- They can't carry metadata (owner, job kind, acquired-at, heartbeat).
+- They can't be "broken" by an operator.
+- They don't survive across the supabase-js connection pool well.
 
-### 2.2 `app_settings`
-- `paper_mode_enabled boolean default true` — global default while validating.
-- `paper_starting_balance_usdt numeric default 10000` — virtual wallet for sizing.
-- `paper_fee_bps numeric default 5.5` — taker fee simulated on fills.
-- `paper_slippage_bps numeric default 2` — applied to market fills.
-- `paper_fill_latency_ms int default 250`.
-
-### 2.3 `symbols`
-- `execution_mode_override execution_mode null` — per-symbol force (`paper`, `live`, or null = use global).
-
-### 2.4 `orders`, `positions`, `execution_jobs`, `bybit_executions`
-- Add `execution_mode execution_mode not null default 'paper'` to each.
-- Index `(execution_mode, status)` on `orders` and `execution_jobs` (workers filter by mode).
-
-### 2.5 New tables
-- `paper_wallet` — single-row virtual account: `balance_usdt`, `equity_usdt`, `realized_pnl`, `unrealized_pnl`, `updated_at`. Reset button in Operator UI.
-- `paper_market_prices` — last known price per symbol used for simulated fills, fed by either (a) periodic Bybit *public* ticker pulls (no auth, no orders) or (b) the price embedded in the incoming signal payload. `(symbol, price, source, received_at)`.
-
-All new columns/tables RLS-locked to `operator`; writes via service role.
+So the canonical lock is the **`execution_locks` table** with TTL + heartbeat. We still keep one advisory lock **inside the SQL acquisition function** to serialize the test-and-set, eliminating the small race window between SELECT and INSERT.
 
 ---
 
-## 3. Mode Resolution
+## 2. Schema (planned)
+
+### 2.1 New enums
+- `lock_kind` ∈ (`entry`, `exit`, `replay`, `reconcile`, `protect`, `manual`).
+
+### 2.2 `execution_locks` table
+| column            | type                    | notes |
+|-------------------|-------------------------|-------|
+| `symbol`          | text PRIMARY KEY        | one row per locked symbol |
+| `kind`            | `lock_kind` NOT NULL    | what the holder is doing |
+| `owner_id`        | text NOT NULL           | worker/process id (uuid v4 generated per worker boot) |
+| `job_id`          | uuid NULL               | references `execution_jobs.id` when applicable |
+| `signal_id`       | uuid NULL               | references `signals.id` when applicable |
+| `acquired_at`     | timestamptz NOT NULL    | first-grab time |
+| `heartbeat_at`    | timestamptz NOT NULL    | last refresh |
+| `ttl_seconds`     | integer NOT NULL        | per-kind default (see §4) |
+| `expires_at`      | timestamptz GENERATED   | `heartbeat_at + ttl_seconds * interval '1 second'` |
+| `metadata`        | jsonb                   | anything useful (action, attempt, etc.) |
+
+Indexes: `(expires_at)` for stale sweeps; primary key gives O(1) lookup.
+
+RLS: `operator` SELECT only. All writes via `SECURITY DEFINER` SQL functions (service-role).
+
+### 2.3 `execution_lock_events` (audit trail)
+Append-only log of acquire/release/steal/expire events for the dashboard and audit. Columns: `id, symbol, kind, owner_id, event` (`acquired|released|heartbeat|stolen|expired|preempted`), `previous_kind`, `previous_owner_id`, `note`, `created_at`.
+
+---
+
+## 3. Lock Acquisition — SQL functions
+
+All atomic. All `SECURITY DEFINER`, `search_path=public`, executable only by service role (REVOKE from `public` and `authenticated`).
+
+### 3.1 `acquire_execution_lock(_symbol text, _kind lock_kind, _owner_id text, _job_id uuid, _signal_id uuid, _ttl_seconds int, _allow_preempt boolean) returns jsonb`
+
+Pseudocode:
 
 ```text
-resolveMode(symbol):
-  if symbols.execution_mode_override is not null → use it
-  else if app_settings.paper_mode_enabled → 'paper'
-  else → 'live'
+PERFORM pg_advisory_xact_lock(hashtext('exec_lock:' || _symbol));  -- serialize T&S
+
+SELECT * INTO existing FROM execution_locks WHERE symbol = _symbol;
+
+IF existing IS NULL OR existing.expires_at <= now() THEN
+  -- free or stale: take it
+  INSERT ... ON CONFLICT (symbol) DO UPDATE SET ...;
+  log('acquired' or 'stolen');
+  RETURN { granted:true, took_over:existing IS NOT NULL };
+END IF;
+
+-- held and fresh
+IF existing.owner_id = _owner_id AND existing.kind = _kind THEN
+  -- reentrant for same owner+kind: refresh heartbeat
+  UPDATE execution_locks SET heartbeat_at = now() WHERE symbol = _symbol;
+  log('heartbeat');
+  RETURN { granted:true, reentrant:true };
+END IF;
+
+-- preemption rules (see §5)
+IF _allow_preempt AND can_preempt(existing.kind, _kind) THEN
+  UPDATE ... SET kind=_kind, owner_id=_owner_id, ...;
+  log('preempted');
+  RETURN { granted:true, preempted:true, previous_kind:existing.kind };
+END IF;
+
+RETURN { granted:false, holder:existing.owner_id, holder_kind:existing.kind,
+         expires_at:existing.expires_at };
 ```
 
-Resolved once at:
-- Signal dispatch — written into `signals.decision_trail` as a `mode_resolved` step.
-- Job creation — stamped on `execution_jobs.execution_mode`.
-- Order/position creation — stamped on the row.
+The advisory lock is transactional (`xact`), so it auto-releases on commit/rollback — a worker crash mid-function never leaves it stuck.
 
-Mode is **immutable per row** after creation. Reconciler and protection monitor read mode off the row, not off settings.
+### 3.2 `release_execution_lock(_symbol text, _owner_id text) returns boolean`
+Releases only if the caller still owns the row. Logs `released`. Returns `true`/`false`.
+
+### 3.3 `heartbeat_execution_lock(_symbol text, _owner_id text) returns boolean`
+Updates `heartbeat_at = now()` only if owner matches and lock not expired. Returns `false` if the lock was lost (caller MUST abort).
+
+### 3.4 `expire_stale_locks() returns int`
+Sweeper — deletes rows where `expires_at <= now()` and logs `expired`. Run by cron every 30s.
+
+### 3.5 Read-only `current_execution_locks()` view
+For the dashboard. Joins lock rows with derived `age_seconds`, `seconds_until_expiry`, `is_stale` (expired but not yet swept), and (where available) signal/job summary.
 
 ---
 
-## 4. Client Interface
+## 4. TTLs by Kind
 
-`_shared/bybit-client.ts`:
+| kind        | default TTL | heartbeat cadence | rationale |
+|-------------|-------------|-------------------|-----------|
+| `entry`     | 30s         | 5s                | one Bybit market round-trip + sizing |
+| `exit`      | 30s         | 5s                | same |
+| `replay`    | 30s         | 5s                | runs through dispatcher + executor |
+| `reconcile` | 60s         | 10s               | may pull positions/orders/executions |
+| `protect`   | 20s         | 5s                | trading-stop call only |
+| `manual`    | 300s        | n/a               | operator-held via UI; no auto-heartbeat |
+
+A worker that is healthy refreshes its heartbeat well before TTL. If it crashes, the row goes stale within at most one TTL window and any other worker may grab it.
+
+---
+
+## 5. Preemption Rules — Exit > Entry
+
+Encoded in `can_preempt(current, requested)`:
+
+| current → / requested ↓ | entry | exit | replay | reconcile | protect | manual |
+|-------------------------|:-----:|:----:|:------:|:---------:|:-------:|:------:|
+| **entry**               | no    | YES  | no     | no        | no      | YES    |
+| **exit**                | no    | no   | no     | no        | no      | YES    |
+| **replay**              | no    | YES  | no     | no        | no      | YES    |
+| **reconcile**           | no    | YES  | no     | no        | no      | YES    |
+| **protect**             | no    | YES  | no     | no        | no      | YES    |
+
+- **Exits always preempt entries/replays/reconciles/protects.** They first signal the holder via a `lock_preempted` flag (the holder's next heartbeat returns `false`, the holder must roll back its in-flight work cleanly). Then the exit takes the lock.
+- **Manual** (operator from dashboard) preempts anything — last-resort kill switch for stuck symbols.
+- All other combinations wait or fail-fast (caller decides via `_allow_preempt=false`).
+
+A holder whose heartbeat returns `false` MUST:
+1. Abort any pre-Bybit-call work in-flight.
+2. NOT roll back already-submitted Bybit orders (those become reconciler's problem — Bybit truth wins).
+3. Mark its `execution_jobs` row `failed_preempted` with `next_run_at = now()+5s` so it retries cleanly after the higher-priority job finishes.
+
+---
+
+## 6. Reconciliation vs Stale Locks
+
+Reconciler uses a special path:
+1. Sweep expired locks first (`expire_stale_locks()`).
+2. For each symbol with non-terminal state, attempt to acquire `kind=reconcile` with `_allow_preempt=false`.
+3. If acquisition fails because someone else holds the lock and it's NOT yet expired → **skip this symbol this pass**; reconcile only idle symbols. Prevents reconciler from racing against an in-flight entry.
+4. After a configurable `RECONCILE_FORCE_AFTER` (default 5 minutes) of continuous lock-busy on the same symbol, escalate to `_allow_preempt=true` AND raise `system_alerts(severity=warning, category=long_held_lock)` so an operator can intervene.
+
+---
+
+## 7. Replay Compatibility
+
+`replay_signal()` already requeues a signal. The replayed signal goes through dispatch like any other; when its `execution_jobs` row leases, the executor must call `acquire_execution_lock(symbol, kind='replay', ...)` exactly like a normal entry/exit — replays are not special-cased and cannot bypass locking.
+
+The replay UI shows a warning banner if the target symbol currently holds a non-`replay` lock: "Symbol is busy (kind=entry, age 12s). Replay will queue and retry."
+
+---
+
+## 8. Duplicate Webhook Retry Protection
+
+Layered defense — locks are the last layer:
+1. `signals.dedupe_key` (already in place) — rejects duplicate inbound webhooks before they are even queued.
+2. `execution_jobs.dedupe_key` (Phase 3) — rejects duplicate jobs derived from the same `(signal_id, kind, attempt)`.
+3. `execution_locks` — even if both layers above fail, the second job to attempt acquisition for the same symbol gets `granted:false` and either waits or aborts.
+4. Bybit `orderLinkId` — Bybit-side dedupe of any orders that somehow get through.
+
+---
+
+## 9. Worker Identity & Heartbeat Loop
+
+Each Edge Function invocation:
+1. Generates a stable `owner_id = crypto.randomUUID()` at startup, stored in module-level `WORKER_ID` constant.
+2. Wraps the critical section in:
 
 ```ts
-interface BybitClient {
-  mode: 'live' | 'paper'
-  getPosition(symbol): Promise<PositionSnapshot>
-  getOpenOrders(symbol): Promise<OrderSnapshot[]>
-  getExecutions(symbol, since): Promise<ExecutionSnapshot[]>
-  getWalletBalance(): Promise<WalletSnapshot>
-  setLeverage(symbol, lev): Promise<void>
-  switchIsolated(symbol, isolated): Promise<void>
-  switchPositionMode(symbol, mode): Promise<void>
-  submitOrder(req): Promise<SubmitResult>
-  cancelOrder(symbol, orderLinkId): Promise<void>
-  setTradingStop(req): Promise<void>          // SL/TSL/TP via /position/trading-stop
-  getInstrument(symbol): Promise<InstrumentInfo>
-}
+const lock = await acquireLock(symbol, "entry", { jobId, signalId, ttlSec: 30 });
+if (!lock.granted) return { status: "skipped", reason: "symbol_busy", holder: lock.holder };
+const beat = setInterval(async () => {
+  const ok = await heartbeat(symbol);
+  if (!ok) { aborted = true; clearInterval(beat); /* trigger graceful abort */ }
+}, 5_000);
+try { await doWork(); }
+finally { clearInterval(beat); await releaseLock(symbol); }
 ```
 
-Both `LiveBybitClient` and `PaperBybitClient` implement this exactly. The factory `getClient(mode)` returns the right one. Executor code is mode-agnostic.
+3. `try { ... } finally { release }` guarantees release on normal exits and exceptions; TTL covers crashes.
 
 ---
 
-## 5. PaperBybitClient — Behavior
+## 10. Dashboard Surfacing
 
-### 5.1 State
-Backed entirely by Postgres (no in-memory state — survives restarts):
-- `paper_wallet` for balance/equity.
-- `orders` (rows with `execution_mode='paper'`) for open orders.
-- `positions` (rows with `execution_mode='paper'`) for current size.
-- `bybit_executions` for synthetic fills.
-- `paper_market_prices` for last price.
+New "Execution Locks" panel on the Positions page (and a small chip in the StatusBar):
 
-### 5.2 Pricing
-- Read latest `paper_market_prices.price` for the symbol.
-- If absent or older than 60s, fall back to the signal payload's `price` field (TradingView always sends one).
-- If still absent → return order to `unknown` and raise alert. We do not invent prices.
-
-### 5.3 Order simulation
-- `submitOrder` (market, IOC, including reduce-only):
-  1. Insert `orders` row `submitted` → simulate `paper_fill_latency_ms` (write `next_run_at` for the executor poll, no real sleep on the request path).
-  2. On the next executor tick, fill at `last_price * (1 ± slippage_bps)` (sign = adverse to taker).
-  3. Compute fee = `notional * fee_bps`. Deduct from wallet.
-  4. Insert synthetic `bybit_executions` row (`exec_id = 'paper:' || order_link_id || ':' || attempt`).
-  5. Update `orders` → `filled`, `filled_qty`, `avg_fill_price`.
-  6. Apply position delta in `positions` (open/extend/reduce/close).
-- `submitOrder` (limit, GTC) — out of scope for paper unless used by SL/TSL (see 5.4).
-- `cancelOrder` — flips status to `cancelled`; no fee.
-
-### 5.4 Trading-stop simulation (SL/TSL)
-- `setTradingStop` writes the SL/TSL params onto the `positions` row (existing columns: `sl_price`, `tsl_active`, etc.) and inserts a synthetic `orders` row with `purpose='stop_loss'` / `'trailing_stop'`, `status='submitted'`, `reduce_only=true`.
-- A periodic paper-tick (cron, see §7) re-evaluates each open paper position against the latest `paper_market_prices`:
-  - If price crosses `sl_price` → simulate market reduce-only fill at SL price (no slippage; SL behaves as triggered market — optional tunable).
-  - If TSL active → maintain trailing high/low (`positions.reconcile_drift` jsonb stores trail anchor) and trigger when callback breached.
-  - On trigger: same fill path as §5.3, position transitions `closing → closed`.
-
-### 5.5 Reads
-- `getPosition`, `getOpenOrders`, `getExecutions`, `getWalletBalance` are straight DB reads filtered by `execution_mode='paper'`.
-
-### 5.6 Account-config calls
-- `setLeverage`, `switchIsolated`, `switchPositionMode` are no-ops that succeed and log to `audit_log` with `action='paper_account_config'` so the trail step still records.
+- **StatusBar chip**: `🔒 3 locked` (clickable → opens the panel). Red dot if any lock is past TTL but not yet swept.
+- **Panel table** (`current_execution_locks` view, refresh 2s):
+  - Symbol · Kind chip · Owner (truncated) · Age · Heartbeat age · Expires in · Job/Signal links · `Steal` button (operator role; opens confirm modal that calls `acquire_execution_lock(..., kind='manual', _allow_preempt=true)`).
+  - Row tinted amber when `heartbeat_age > 2 × cadence` (worker likely dead, will expire soon).
+  - Row tinted red when expired.
+- **Per-symbol detail** in Positions row: when a row's `symbol` is locked, show a small `🔒 entry · 12s` badge inline.
+- **Audit log** filter chip for `lock_*` events from `execution_lock_events`.
 
 ---
 
-## 6. Executor Integration
+## 11. Failure Modes Covered
 
-No FSM changes from Phase 3. The only edits are:
-
-1. Job creation reads `resolveMode(symbol)` and stamps `execution_jobs.execution_mode`.
-2. Job handler instantiates `getClient(job.execution_mode)`.
-3. Reconciliation loop runs **two passes**: one for `live` rows, one for `paper` rows, each with its own client. Cross-mode joins are forbidden.
-4. Sizing (`_shared/sizing.ts`) reads wallet from `client.getWalletBalance()` — paper returns the virtual wallet, so identical formulas apply with no branching.
-5. Risk engine, Health Gate, exposure caps, decision trail — unchanged. The trail just gains one extra step `mode_resolved:{paper|live}`.
-
----
-
-## 7. Paper Tick & Price Feed
-
-Two cron hooks (`/api/public/hooks/paper-tick`, `/api/public/hooks/paper-prices`):
-
-- **paper-prices** (every 5s): pulls `/v5/market/tickers` (public, no auth) for every symbol with paper activity in the last 24h, upserts `paper_market_prices`. Falls back to disabled if rate-limited.
-- **paper-tick** (every 2s): for each open paper position, evaluates SL/TSL trigger logic, advances any `submitted` paper orders past their fill latency, updates wallet equity, writes `position_events`. This is the simulator's "engine".
-
-Both hooks are mode-scoped — they ignore `live` rows entirely.
+| Scenario                                         | Outcome |
+|--------------------------------------------------|---------|
+| Worker crashes mid-entry                         | Lock expires after TTL; another worker re-acquires; reconciler resolves any half-done Bybit state. |
+| Two webhooks for same signal arrive in parallel  | Signal dedupe rejects #2; even if both reached executor, only one gets the lock. |
+| Reconciler fires while exit is mid-flight        | Reconciler sees fresh lock, skips symbol that pass. |
+| Operator hits Replay during entry                | Replay queues; lock acquisition fails until entry finishes; UI shows busy banner. |
+| Exit signal arrives during a slow entry          | Exit preempts; entry's next heartbeat returns false → entry aborts pre-submit; if entry already submitted to Bybit, reconciler folds the result in. |
+| Lock row stuck because of a Postgres bug        | Sweeper expires it; or operator clicks Steal. |
+| Network partition between worker and DB         | Heartbeat fails → worker treats lock as lost and aborts further side-effects. |
 
 ---
 
-## 8. Replay Compatibility
+## 12. Out of Scope
 
-`replay_signal()` already clones a signal back to `queued`. It needs no changes — the replayed signal goes through dispatch, dispatch resolves mode at *replay time*, and the trail records that. Operators can therefore:
-- Replay a historical live signal in paper mode (flip global flag first), or
-- Replay a historical paper signal in live mode after validation.
-
-UI: replay dialog gains a read-only line "Will execute in: **paper** (global default)" so operators see the resolved mode before confirming.
+- Cross-symbol locks (portfolio-level) — handled by Phase 2 concurrency cap.
+- Distributed consensus across regions — single Postgres is the source of truth.
+- Lock fairness/queueing — callers re-poll with backoff; we don't implement a wait queue.
 
 ---
 
-## 9. Dashboard Surfacing
+## 13. Implementation Order (when approved)
 
-All existing pages get a mode filter and badge — no new pages required:
-
-- **Header**: persistent badge `PAPER MODE` (amber) or `LIVE` (green) reflecting global setting; tooltip lists per-symbol overrides.
-- **Signals table**: new `Mode` column (paper/live chip). Filter dropdown.
-- **Positions table**: same chip + filter; paper and live sections visually grouped (or filtered).
-- **Orders table**: same.
-- **Symbols page**: per-symbol `Execution Mode` selector (`Inherit / Force Paper / Force Live`).
-- **Settings page**: global `Paper Mode` toggle, virtual wallet balance, fee/slippage/latency inputs, **Reset Paper State** button (confirms, then truncates paper rows + resets `paper_wallet`).
-- **Position detail**: shows paper fees/slippage applied per fill so operators can audit the simulator.
-
----
-
-## 10. Safety Rails
-
-- DB CHECK / trigger: an order with `execution_mode='live'` cannot reference a `position` with `execution_mode='paper'`, and vice versa.
-- `LiveBybitClient` constructor refuses to instantiate if `app_settings.paper_mode_enabled=true` AND no per-symbol live override exists for the call site — prevents accidental live orders while validating.
-- Switching the global flag from paper → live writes a `system_alerts(severity=warning, category=mode_switch)` and a forced banner on the dashboard for 24h.
-- Reset Paper State requires typing the symbol-set name; never affects live rows.
-
----
-
-## 11. Out of Scope
-
-- Realistic order-book depth simulation (we use last-price + flat slippage).
-- Funding-rate / borrow-fee simulation.
-- Partial-fill simulation for paper market orders (always fully filled at simulated price; reflects Bybit market behavior closely enough).
-- Paper backtesting over historical bars — this mode is **forward** simulation against live ticker prices only.
-
----
-
-## 12. Implementation Order (when approved)
-
-1. Schema migration: `execution_mode` enum, columns on existing tables, `paper_wallet`, `paper_market_prices`, settings additions.
-2. Refactor `_shared/bybit.ts` into `bybit-client.ts` interface + `LiveBybitClient` (still stub) + `PaperBybitClient`.
-3. `getClient(mode)` factory + `resolveMode(symbol)` helper. Add `mode_resolved` trail step in dispatcher.
-4. Stamp `execution_mode` on every job/order/position write; split reconcile loop by mode.
-5. Cron hooks `paper-prices` and `paper-tick` + ticker fetch helper.
-6. Dashboard: header badge, mode chips/filters on Signals/Orders/Positions, Symbols override field, Settings paper panel + reset.
-7. Safety rails: DB constraint trigger + live-client refusal guard + mode-switch alert.
-8. Test plan: replay one historical signal of each strategy code (EL1..XL5) end-to-end in paper, verify trail, fills, protection re-arm, TSL trigger, full close, and wallet accounting.
+1. Migration: `lock_kind` enum, `execution_locks`, `execution_lock_events`, `current_execution_locks` view, RLS.
+2. SQL functions: `acquire_execution_lock`, `release_execution_lock`, `heartbeat_execution_lock`, `expire_stale_locks`. Tests via direct SQL.
+3. `_shared/locks.ts` helper: `acquireLock / heartbeat / releaseLock / withSymbolLock(symbol, kind, fn)` wrapper.
+4. Cron: `/api/public/hooks/expire-locks` every 30s calling `expire_stale_locks()`.
+5. Wire `withSymbolLock` into Phase 3 `execute-entry`, `execute-exit`, `protection-monitor`, `reconcile`, and the replay path.
+6. Dashboard: StatusBar chip + Positions panel + Steal modal + audit filter.
+7. Test plan: simulated crash mid-entry, exit-preempts-entry, reconcile-skips-busy-symbol, operator-steal, double-webhook-replay.
