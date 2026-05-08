@@ -39,6 +39,11 @@ Deno.serve(async (req) => {
     category: "kill_switch",
     message: `Emergency stop activated by ${u.user.email}`,
   });
+  notify({
+    severity: "critical", category: "emergency_stop",
+    reason: `Emergency stop activated by ${u.user.email ?? u.user.id}`,
+    bypass_dedupe: true,
+  });
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
