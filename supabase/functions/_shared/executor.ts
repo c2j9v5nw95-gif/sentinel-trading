@@ -303,10 +303,14 @@ export async function executeExit(
   const fillPrice = fill.avgFillPrice ?? Number(refPrice);
   const newQty = Math.max(0, Number(posRow.qty_open) - fill.filledQty);
 
-  // PnL realization for paper mode wallet.
-  if (mode === "paper" && posRow.entry_price != null) {
+  // Compute realized PnL for this exit (used by paper wallet AND live risk monitor).
+  let pnl = 0;
+  if (posRow.entry_price != null) {
     const direction = side === "long" ? 1 : -1;
-    const pnl = (fillPrice - Number(posRow.entry_price)) * fill.filledQty * direction;
+    pnl = (fillPrice - Number(posRow.entry_price)) * fill.filledQty * direction;
+  }
+
+  if (mode === "paper" && pnl !== 0) {
     const { data: w } = await sb.from("paper_wallet").select("*").maybeSingle();
     if (w) {
       await sb.from("paper_wallet").update({
@@ -320,6 +324,7 @@ export async function executeExit(
 
   const patch: Record<string, unknown> = {
     qty_open: newQty, last_exit_signal_id: signal.id, last_seen_price: fillPrice,
+    realized_pnl: Number(posRow.realized_pnl ?? 0) + pnl,
   };
   if (purpose === "tp1") {
     patch.tp1_done = true;
