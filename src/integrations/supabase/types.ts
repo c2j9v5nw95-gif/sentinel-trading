@@ -26,6 +26,8 @@ export type Database = {
           emergency_stop_blocks_exits: boolean
           entries_paused: boolean
           id: string
+          live_confirmation_phrase: string | null
+          live_enabled: boolean
           max_concurrent_positions: number
           max_daily_loss_pct: number
           paper_fee_bps: number
@@ -35,6 +37,7 @@ export type Database = {
           paper_starting_balance_usdt: number
           singleton: boolean
           testnet_enabled: boolean
+          testnet_validated_at: string | null
           updated_at: string
           webhook_secret_hint: string | null
           webhook_secret_rotated_at: string | null
@@ -51,6 +54,8 @@ export type Database = {
           emergency_stop_blocks_exits?: boolean
           entries_paused?: boolean
           id?: string
+          live_confirmation_phrase?: string | null
+          live_enabled?: boolean
           max_concurrent_positions?: number
           max_daily_loss_pct?: number
           paper_fee_bps?: number
@@ -60,6 +65,7 @@ export type Database = {
           paper_starting_balance_usdt?: number
           singleton?: boolean
           testnet_enabled?: boolean
+          testnet_validated_at?: string | null
           updated_at?: string
           webhook_secret_hint?: string | null
           webhook_secret_rotated_at?: string | null
@@ -76,6 +82,8 @@ export type Database = {
           emergency_stop_blocks_exits?: boolean
           entries_paused?: boolean
           id?: string
+          live_confirmation_phrase?: string | null
+          live_enabled?: boolean
           max_concurrent_positions?: number
           max_daily_loss_pct?: number
           paper_fee_bps?: number
@@ -85,6 +93,7 @@ export type Database = {
           paper_starting_balance_usdt?: number
           singleton?: boolean
           testnet_enabled?: boolean
+          testnet_validated_at?: string | null
           updated_at?: string
           webhook_secret_hint?: string | null
           webhook_secret_rotated_at?: string | null
