@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { StatusBar } from "./StatusBar";
+import { LiveRiskHaltedBanner } from "./LiveRiskHaltedBanner";
 
 const NAV: { to: string; label: string }[] = [
   { to: "/", label: "Overview" },
@@ -52,6 +53,7 @@ export function AppLayout() {
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <StatusBar />
+        <LiveRiskHaltedBanner />
         <div className="flex-1 overflow-auto px-6 py-6">
           <Outlet />
         </div>

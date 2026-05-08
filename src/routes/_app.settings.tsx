@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
 import { BybitDiagnosticsPanel } from "@/components/BybitDiagnosticsPanel";
+import { LiveRiskBreakerCard } from "@/components/LiveRiskBreakerCard";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -281,7 +282,8 @@ function SettingsPage() {
           </p>
         </Card>
       </div>
-      <div className="mt-4">
+      <div className="mt-4 grid grid-cols-1 gap-4">
+        <LiveRiskBreakerCard />
         <BybitDiagnosticsPanel />
       </div>
     </>
