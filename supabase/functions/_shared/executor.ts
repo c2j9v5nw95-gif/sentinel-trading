@@ -158,6 +158,18 @@ export async function executeEntry(
   await logEvent(sb, posRow.id, "entry_filled",
     { fill_price: fillPrice, qty: fill.filledQty, fee: fill.feeUsdt });
 
+  if (mode === "live" || mode === "testnet") {
+    notify({
+      severity: mode === "live" ? "warning" : "info",
+      category: "live_entry",
+      execution_mode: mode, symbol: signal.symbol, side,
+      leverage: Number(breakdown.effectiveLeverage),
+      qty: fill.filledQty, price: fillPrice,
+      exposure: fill.filledQty * fillPrice,
+      reason: signal.entry_reason ?? signal.strategy_code ?? "entry",
+    });
+  }
+
   // SL placement (fixed % from entry).
   const slPct = Number(sym.sl_pct ?? 1.5) / 100;
   const slPrice = side === "long" ? fillPrice * (1 - slPct) : fillPrice * (1 + slPct);
