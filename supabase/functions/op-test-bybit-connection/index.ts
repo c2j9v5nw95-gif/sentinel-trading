@@ -18,6 +18,7 @@
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { BybitRest, BybitError } from "../_shared/bybit-rest.ts";
+import { notify } from "../_shared/telegram.ts";
 
 const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
 
