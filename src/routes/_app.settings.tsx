@@ -50,12 +50,15 @@ function SettingsPage() {
   });
 
   // Latest live-mode Bybit diagnostic — required for live-gate.
+  // We accept the diagnostic if every read-only check passed, even if the
+  // optional safe_order_test failed (it requires live_enabled, which is the
+  // very flag this gate unlocks — chicken-and-egg).
   const { data: liveDiag } = useQuery({
     queryKey: ["bybit_diagnostics", "live", "latest"],
     queryFn: async () => {
       const { data } = await supabase
         .from("bybit_diagnostics")
-        .select("ok, created_at")
+        .select("ok, checks, created_at")
         .eq("mode", "live")
         .order("created_at", { ascending: false })
         .limit(1)
@@ -105,7 +108,13 @@ function SettingsPage() {
 
   // Live gate: every condition must be green to allow LIVE selection.
   // NOTE: Testnet validation is intentionally NOT a live-gate requirement.
-  const liveDiagnosticOk = !!liveDiag?.ok && !!liveDiag?.created_at &&
+  // Read-only checks are sufficient — safe_order_test is ignored here because
+  // it can only succeed once live is already enabled.
+  const liveChecks = (liveDiag?.checks ?? {}) as Record<string, { ok?: boolean }>;
+  const readOnlyChecksOk = Object.entries(liveChecks)
+    .filter(([k]) => k !== "safe_order_test")
+    .every(([, v]) => v?.ok === true);
+  const liveDiagnosticOk = !!liveDiag?.created_at && readOnlyChecksOk &&
     (Date.now() - new Date(liveDiag.created_at).getTime() < 24 * 60 * 60_000);
   const liveRiskBreakerOk = !data?.live_risk_halted;
   const liveGateOk =
