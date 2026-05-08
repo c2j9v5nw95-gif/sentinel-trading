@@ -359,6 +359,20 @@ export async function executeExit(
     qty: fill.filledQty, fill_price: fillPrice, remaining: newQty, reason: mapping?.exitReason,
   });
 
+  if (mode === "live" || mode === "testnet") {
+    const reason = mapping?.exitReason ?? signal.exit_reason ?? purpose;
+    let category: "tp_hit" | "sl_hit" | "live_exit" = "live_exit";
+    if (purpose === "tp1" || purpose === "tp2_rest" || reason === "tp1" || reason === "tp2_rest") category = "tp_hit";
+    else if (reason === "sl_failsafe" || reason === "sl") category = "sl_hit";
+    notify({
+      severity: category === "sl_hit" ? "warning" : "info",
+      category,
+      execution_mode: mode, symbol: signal.symbol, side,
+      qty: fill.filledQty, price: fillPrice, pnl,
+      reason: String(reason),
+    });
+  }
+
   return {
     ok: true, position_id: posRow.id, order_id: fill.bybitOrderId,
     filled_qty: fill.filledQty, fill_price: fillPrice,
