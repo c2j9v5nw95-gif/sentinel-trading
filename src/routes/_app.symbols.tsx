@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
@@ -8,13 +8,27 @@ export const Route = createFileRoute("/_app/symbols")({
   component: SymbolsPage,
 });
 
+type ModeOverride = "inherit_global" | "paper" | "testnet" | "live";
+
 function SymbolsPage() {
+  const qc = useQueryClient();
   const { data } = useQuery({
     queryKey: ["symbols"],
     queryFn: async () => {
       const { data } = await supabase.from("symbols").select("*").order("symbol");
       return data ?? [];
     },
+  });
+
+  const setOverride = useMutation({
+    mutationFn: async (args: { id: string; value: ModeOverride }) => {
+      const dbValue = args.value === "inherit_global" ? null : args.value;
+      const { error } = await supabase.from("symbols")
+        .update({ execution_mode_override: dbValue })
+        .eq("id", args.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["symbols"] }),
   });
 
   return (
@@ -56,9 +70,20 @@ function SymbolsPage() {
                     <td className="py-2 font-medium">{s.symbol}</td>
                     <td>{s.enabled ? "✓" : "—"}</td>
                     <td>
+                      <select
+                        value={s.execution_mode_override ?? "inherit_global"}
+                        disabled={setOverride.isPending}
+                        onChange={(e) => setOverride.mutate({ id: s.id, value: e.target.value as ModeOverride })}
+                        className="rounded border border-border bg-background px-1.5 py-0.5 text-xs"
+                      >
+                        <option value="inherit_global">inherit</option>
+                        <option value="paper">paper</option>
+                        <option value="testnet">testnet</option>
+                        <option value="live">live</option>
+                      </select>
                       {s.execution_mode_override
-                        ? <ModeChip mode={s.execution_mode_override} />
-                        : <span className="text-xs text-muted-foreground">inherit</span>}
+                        ? <span className="ml-1"><ModeChip mode={s.execution_mode_override} /></span>
+                        : null}
                     </td>
                     <td className="text-xs">{s.preferred_transport}</td>
                     <td>{s.account_balance_percent}</td>
