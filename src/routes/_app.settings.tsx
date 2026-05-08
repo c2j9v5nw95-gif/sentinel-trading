@@ -50,12 +50,15 @@ function SettingsPage() {
   });
 
   // Latest live-mode Bybit diagnostic — required for live-gate.
+  // We accept the diagnostic if every read-only check passed, even if the
+  // optional safe_order_test failed (it requires live_enabled, which is the
+  // very flag this gate unlocks — chicken-and-egg).
   const { data: liveDiag } = useQuery({
     queryKey: ["bybit_diagnostics", "live", "latest"],
     queryFn: async () => {
       const { data } = await supabase
         .from("bybit_diagnostics")
-        .select("ok, created_at")
+        .select("ok, checks, created_at")
         .eq("mode", "live")
         .order("created_at", { ascending: false })
         .limit(1)
