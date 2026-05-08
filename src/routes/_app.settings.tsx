@@ -29,15 +29,31 @@ function SettingsPage() {
     refetchInterval: 5_000,
   });
 
-  const togglePaper = useMutation({
-    mutationFn: async (next: boolean) => {
+  const setMode = useMutation({
+    mutationFn: async (mode: "paper" | "testnet" | "live") => {
       if (!data?.id) return;
       await supabase.from("app_settings")
-        .update({ paper_mode_enabled: next })
+        .update({
+          paper_mode_enabled: mode === "paper",
+          testnet_enabled: mode === "testnet",
+        })
         .eq("id", data.id);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app_settings"] }),
   });
+
+  const runRecovery = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.functions.invoke("bybit-recovery", {
+        body: {}, method: "POST",
+      });
+      if (error) throw error;
+    },
+  });
+
+  const currentMode: "paper" | "testnet" | "live" =
+    data?.paper_mode_enabled ? "paper"
+      : data?.testnet_enabled ? "testnet" : "live";
 
   return (
     <>
@@ -73,22 +89,47 @@ function SettingsPage() {
                 <div>
                   <div className="flex items-center gap-2 text-foreground">
                     <span>Global mode</span>
-                    <ModeChip mode={data.paper_mode_enabled ? "paper" : "live"} />
+                    <ModeChip mode={currentMode} />
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Paper-mode signals run the full pipeline (Health Gate, Risk
-                    Engine, sizing, protection logic) without sending real Bybit
-                    orders. Per-symbol overrides take precedence.
+                    PAPER simulates fills locally. TESTNET sends real signed orders to
+                    Bybit testnet (api-testnet.bybit.com). LIVE (mainnet) is disabled.
                   </p>
                 </div>
-                <button
-                  onClick={() => togglePaper.mutate(!data.paper_mode_enabled)}
-                  disabled={togglePaper.isPending}
-                  className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
-                >
-                  {data.paper_mode_enabled ? "Switch to LIVE" : "Switch to PAPER"}
-                </button>
+                <div className="flex gap-1">
+                  {(["paper", "testnet"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setMode.mutate(m)}
+                      disabled={setMode.isPending || currentMode === m}
+                      className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                        currentMode === m
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border bg-background hover:bg-accent"
+                      }`}
+                    >
+                      {m.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
               </div>
+              {currentMode === "testnet" && (
+                <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
+                  <div className="font-medium text-warning">Testnet active</div>
+                  <p className="mt-1 text-muted-foreground">
+                    Requires <code>BYBIT_TESTNET_API_KEY</code> and <code>BYBIT_TESTNET_API_SECRET</code> in
+                    backend secrets. Run recovery after enabling to hydrate any
+                    pre-existing venue positions.
+                  </p>
+                  <button
+                    onClick={() => runRecovery.mutate()}
+                    disabled={runRecovery.isPending}
+                    className="mt-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-accent"
+                  >
+                    {runRecovery.isPending ? "Recovering…" : "Run startup recovery"}
+                  </button>
+                </div>
+              )}
               <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
                 <dt className="text-muted-foreground">Virtual starting balance</dt>
                 <dd>{Number(data.paper_starting_balance_usdt).toLocaleString()} USDT</dd>
