@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   for (const p of positions ?? []) {
     try {
       await withSymbolLock(sb, p.symbol, "reconcile",
-        { signalId: undefined, ttlSecOverride: 30 },
+        { ttlSec: 30 },
         async () => {
           const client = getClient(p.execution_mode as ExecutionMode, sb);
           const venue = await client.getPosition(p.symbol);
