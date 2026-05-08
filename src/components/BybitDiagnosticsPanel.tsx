@@ -1,0 +1,242 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
+import { Card } from "@/components/PageHeader";
+
+type Mode = "testnet" | "live";
+
+interface CheckResult {
+  ok: boolean;
+  detail?: unknown;
+  error?: { code: string; message: string };
+  ms?: number;
+}
+
+interface DiagnosticResponse {
+  ok: boolean;
+  mode: Mode;
+  symbol?: string;
+  checks: Record<string, CheckResult>;
+  permissions?: unknown;
+  account_type?: string | null;
+  last_response?: unknown;
+  error?: { code: string; message: string } | null;
+}
+
+const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
+
+const CHECK_LABELS: Record<string, string> = {
+  credentials_present: "API keys present",
+  live_gate: "Live mode allowed",
+  api_auth: "API authentication",
+  account_info: "Account info",
+  wallet_balance: "Wallet / balance read",
+  read_positions: "Open positions read",
+  read_orders: "Open orders read",
+  instrument_info: "Symbol instrument info",
+  leverage_limits: "Leverage limits",
+  permissions: "API key permissions",
+  safe_order_test: "Safe order test (place + cancel)",
+};
+
+export function BybitDiagnosticsPanel() {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<Mode>("testnet");
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [safeOrder, setSafeOrder] = useState(false);
+  const [confirmPhrase, setConfirmPhrase] = useState("");
+
+  const { data: history } = useQuery({
+    queryKey: ["bybit_diagnostics", mode],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("bybit_diagnostics")
+        .select("*")
+        .eq("mode", mode)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      return data ?? [];
+    },
+    refetchInterval: 10_000,
+  });
+
+  const latest = history?.[0];
+  const latestChecks = (latest?.checks ?? {}) as unknown as Record<string, CheckResult>;
+
+  const run = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = { mode, symbol };
+      if (safeOrder) body.safe_order = { enabled: true, confirm: confirmPhrase };
+      const { data, error } = await supabase.functions.invoke("op-test-bybit-connection", {
+        body, method: "POST",
+      });
+      if (error) throw error;
+      return data as DiagnosticResponse;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["bybit_diagnostics"] }),
+  });
+
+  const result = (run.data as DiagnosticResponse | undefined) ?? null;
+  const view = result ?? (latest ? {
+    ok: latest.ok,
+    mode: latest.mode as Mode,
+    checks: latestChecks,
+    account_type: latest.account_type,
+    last_response: latest.last_response,
+    error: latest.error_code
+      ? { code: latest.error_code, message: latest.error_message ?? "" }
+      : null,
+  } as DiagnosticResponse : null);
+
+  const safeOrderReady = !safeOrder || confirmPhrase === SAFE_ORDER_PHRASE;
+
+  return (
+    <Card title="Bybit diagnostics">
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-muted-foreground">Mode</label>
+          <div className="flex gap-1">
+            {(["testnet", "live"] as Mode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`rounded-md border px-2 py-1 text-xs font-medium ${
+                  mode === m
+                    ? m === "live"
+                      ? "border-danger bg-danger/15 text-danger"
+                      : "border-primary bg-primary/10"
+                    : "border-border bg-background hover:bg-accent"
+                }`}
+              >
+                {m.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <label className="ml-3 text-xs text-muted-foreground">Symbol</label>
+          <input
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            className="w-32 rounded border border-border bg-background px-2 py-1 text-xs font-mono"
+          />
+          <button
+            onClick={() => run.mutate()}
+            disabled={run.isPending || (safeOrder && !safeOrderReady)}
+            className="ml-auto rounded-md border border-primary bg-primary/10 px-3 py-1 text-xs font-semibold hover:bg-primary/20 disabled:opacity-40"
+          >
+            {run.isPending ? "Running…" : "Run diagnostic"}
+          </button>
+        </div>
+
+        <div className="rounded-md border border-border/60 bg-muted/40 p-2">
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={safeOrder}
+              onChange={(e) => setSafeOrder(e.target.checked)}
+            />
+            <span>Include <strong>safe order test</strong> (places minimum-qty far-from-market limit and cancels it)</span>
+          </label>
+          {safeOrder && (
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-muted-foreground">
+                Type <code className="text-danger">{SAFE_ORDER_PHRASE}</code> to confirm.
+              </p>
+              <input
+                value={confirmPhrase}
+                onChange={(e) => setConfirmPhrase(e.target.value)}
+                placeholder={SAFE_ORDER_PHRASE}
+                className="w-full rounded border border-border bg-background px-2 py-1 text-xs font-mono"
+              />
+            </div>
+          )}
+        </div>
+
+        {view ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3 text-xs tabular">
+              <span className={`rounded-md border px-2 py-0.5 font-bold ${
+                view.ok ? "border-success/40 bg-success/15 text-success"
+                        : "border-danger/40 bg-danger/15 text-danger"
+              }`}>{view.ok ? "PASS" : "FAIL"}</span>
+              <span className="text-muted-foreground">mode: {view.mode}</span>
+              {view.account_type && <span className="text-muted-foreground">account: {view.account_type}</span>}
+              {latest?.created_at && (
+                <span className="text-muted-foreground">
+                  last check: {new Date(latest.created_at).toLocaleString()}
+                </span>
+              )}
+            </div>
+
+            {view.error && (
+              <div className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs">
+                <div className="font-mono text-danger">{view.error.code}</div>
+                <div className="text-muted-foreground">{view.error.message}</div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+              {Object.entries(view.checks).map(([k, v]) => (
+                <CheckRow key={k} k={k} v={v} />
+              ))}
+            </div>
+
+            {view.last_response ? (
+              <details className="rounded-md border border-border bg-background/60">
+                <summary className="cursor-pointer px-2 py-1 text-xs text-muted-foreground">
+                  Last raw API response
+                </summary>
+                <pre className="max-h-64 overflow-auto p-2 text-[11px] leading-tight">
+                  {JSON.stringify(view.last_response, null, 2)}
+                </pre>
+              </details>
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No diagnostic has been run yet for {mode}.
+          </p>
+        )}
+
+        {history && history.length > 1 && (
+          <details>
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              History ({history.length})
+            </summary>
+            <ul className="mt-1 space-y-0.5 text-xs">
+              {history.map((h) => (
+                <li key={h.id} className="flex justify-between gap-3 tabular">
+                  <span className={h.ok ? "text-success" : "text-danger"}>
+                    {h.ok ? "✓" : "✗"} {new Date(h.created_at).toLocaleString()}
+                  </span>
+                  <span className="text-muted-foreground truncate">
+                    {h.error_code ?? "ok"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function CheckRow({ k, v }: { k: string; v: CheckResult }) {
+  const label = CHECK_LABELS[k] ?? k;
+  return (
+    <div className={`flex items-start gap-2 rounded border px-2 py-1 ${
+      v.ok ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
+    }`}>
+      <span className={v.ok ? "text-success" : "text-danger"}>{v.ok ? "✓" : "✗"}</span>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">{label}{v.ms != null && <span className="ml-1 text-[10px] text-muted-foreground">{v.ms}ms</span>}</div>
+        {v.error && (
+          <div className="text-[11px]">
+            <span className="font-mono text-danger">{v.error.code}</span>
+            <span className="text-muted-foreground"> — {v.error.message}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

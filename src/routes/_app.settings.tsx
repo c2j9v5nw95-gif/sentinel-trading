@@ -4,6 +4,7 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
+import { BybitDiagnosticsPanel } from "@/components/BybitDiagnosticsPanel";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -42,6 +43,22 @@ function SettingsPage() {
         .is("resolved_at", null)
         .is("acknowledged_at", null);
       return count ?? 0;
+    },
+    refetchInterval: 10_000,
+  });
+
+  // Latest live-mode Bybit diagnostic — required for live-gate.
+  const { data: liveDiag } = useQuery({
+    queryKey: ["bybit_diagnostics", "live", "latest"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("bybit_diagnostics")
+        .select("ok, created_at")
+        .eq("mode", "live")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
     },
     refetchInterval: 10_000,
   });
@@ -87,9 +104,12 @@ function SettingsPage() {
   // Live gate: every condition must be green to allow LIVE selection.
   const testnetValidated = !!data?.testnet_validated_at &&
     (Date.now() - new Date(data.testnet_validated_at).getTime() < 24 * 60 * 60_000);
+  const liveDiagnosticOk = !!liveDiag?.ok && !!liveDiag?.created_at &&
+    (Date.now() - new Date(liveDiag.created_at).getTime() < 24 * 60 * 60_000);
   const liveGateOk =
     !data?.emergency_stop &&
     testnetValidated &&
+    liveDiagnosticOk &&
     (criticalCount ?? 0) === 0 &&
     livePhrase === LIVE_CONFIRM_PHRASE;
 
@@ -194,6 +214,8 @@ function SettingsPage() {
                     {data?.testnet_validated_at && ` (${new Date(data.testnet_validated_at).toLocaleString()})`}</li>
                   <li>{(criticalCount ?? 0) === 0 ? "✓" : "✗"} No open critical invariants
                     ({criticalCount ?? 0})</li>
+                  <li>{liveDiagnosticOk ? "✓" : "✗"} Live Bybit diagnostic passed (≤24h)
+                    {liveDiag?.created_at && ` (${new Date(liveDiag.created_at).toLocaleString()})`}</li>
                   <li>✓ BYBIT_LIVE_API_KEY / SECRET present (verified at runtime)</li>
                   <li>{livePhrase === LIVE_CONFIRM_PHRASE ? "✓" : "✗"} Type confirmation phrase</li>
                 </ul>
@@ -258,6 +280,9 @@ function SettingsPage() {
             only metadata.
           </p>
         </Card>
+      </div>
+      <div className="mt-4">
+        <BybitDiagnosticsPanel />
       </div>
     </>
   );
