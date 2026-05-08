@@ -66,6 +66,12 @@ function SymbolsPage() {
                     </td>
                     <td>{s.tp2_enabled ? "✓" : "—"}</td>
                     <td>{s.tp1_exit_percent}</td>
+                    <td className={s.max_position_notional_usdt == null ? "text-muted-foreground" : ""}>
+                      {s.max_position_notional_usdt == null ? "—" : `${s.max_position_notional_usdt} USDT`}
+                    </td>
+                    <td className={s.max_margin_usage_usdt == null ? "text-muted-foreground" : ""}>
+                      {s.max_margin_usage_usdt == null ? "—" : `${s.max_margin_usage_usdt} USDT`}
+                    </td>
                   </tr>
                 ))}
               </tbody>
