@@ -20,56 +20,76 @@ function SymbolsPage() {
     <>
       <PageHeader
         title="Symbols"
-        description="Per-symbol sizing, protection and exit configuration."
+        description="Per-symbol sizing, protection and exit configuration. Final exposure = balance × balance% × leverage × multiplier."
       />
       <Card>
         {(data?.length ?? 0) === 0 ? (
           <EmptyState
             title="No symbols configured"
-            hint="Add a symbol from the database to enable trading on it."
+            hint="Add a symbol to enable trading on it."
           />
         ) : (
-          <table className="w-full text-sm tabular">
-            <thead className="text-left text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="py-2">Symbol</th>
-                <th>Enabled</th>
-                <th>Transport</th>
-                <th>Size</th>
-                <th>Lev</th>
-                <th>SL %</th>
-                <th>TSL act / cb</th>
-                <th>TP2</th>
-                <th>TP1 %</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {data!.map((s) => (
-                <tr key={s.id}>
-                  <td className="py-2 font-medium">{s.symbol}</td>
-                  <td>{s.enabled ? "✓" : "—"}</td>
-                  <td className="text-xs">{s.preferred_transport}</td>
-                  <td>
-                    {s.position_size_value}
-                    <span className="text-xs text-muted-foreground">
-                      {" "}
-                      {s.position_size_mode === "fixed_usdt" ? "USDT" : "% eq"}
-                    </span>
-                  </td>
-                  <td>{s.leverage}x</td>
-                  <td>{s.sl_pct}</td>
-                  <td className="text-xs">
-                    {s.tsl_enabled
-                      ? `${s.tsl_activation_profit_pct} / ${s.tsl_callback_pct}`
-                      : "off"}
-                  </td>
-                  <td>{s.tp2_enabled ? "✓" : "—"}</td>
-                  <td>{s.tp1_exit_percent}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm tabular">
+              <thead className="text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="py-2">Symbol</th>
+                  <th>On</th>
+                  <th>Transport</th>
+                  <th title="Account balance %">Bal %</th>
+                  <th>Lev</th>
+                  <th title="Position size multiplier">Mult</th>
+                  <th>Margin</th>
+                  <th>SL %</th>
+                  <th>TSL act / cb</th>
+                  <th>TP2</th>
+                  <th>TP1 %</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {data!.map((s) => (
+                  <tr key={s.id}>
+                    <td className="py-2 font-medium">{s.symbol}</td>
+                    <td>{s.enabled ? "✓" : "—"}</td>
+                    <td className="text-xs">{s.preferred_transport}</td>
+                    <td>{s.account_balance_percent}</td>
+                    <td>{s.leverage}x</td>
+                    <td>{s.position_size_multiplier}</td>
+                    <td className="text-xs">{s.margin_mode}</td>
+                    <td>{s.sl_pct}</td>
+                    <td className="text-xs">
+                      {s.tsl_enabled
+                        ? `${s.tsl_activation_profit_pct} / ${s.tsl_callback_pct}`
+                        : "off"}
+                    </td>
+                    <td>{s.tp2_enabled ? "✓" : "—"}</td>
+                    <td>{s.tp1_exit_percent}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+      </Card>
+
+      <Card title="Sizing model">
+        <div className="space-y-1 text-sm text-muted-foreground">
+          <p>
+            <span className="font-medium text-foreground">Entry notional</span> = available
+            Bybit balance × (balance % ÷ 100) × leverage × multiplier.
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Margin allocated</span> = balance × (balance % ÷ 100).
+          </p>
+          <p>
+            Exits always use the live Bybit position size — multiplier and balance % are
+            entry-only. Leverage is applied via Bybit V5 before each entry.
+          </p>
+          <p className="text-xs">
+            Validation: balance % ∈ [0.1, 100] · multiplier ∈ [0.1, 3.0] · leverage capped
+            by the symbol's Bybit limit.
+          </p>
+        </div>
       </Card>
     </>
   );

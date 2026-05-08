@@ -594,6 +594,7 @@ export type Database = {
       }
       symbols: {
         Row: {
+          account_balance_percent: number
           category: string
           created_at: string
           display_symbol: string | null
@@ -602,8 +603,7 @@ export type Database = {
           leverage: number
           margin_mode: Database["public"]["Enums"]["margin_mode"]
           notes: string | null
-          position_size_mode: Database["public"]["Enums"]["position_size_mode"]
-          position_size_value: number
+          position_size_multiplier: number
           preferred_transport: Database["public"]["Enums"]["transport_pref"]
           sl_pct: number
           symbol: string
@@ -615,6 +615,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          account_balance_percent?: number
           category?: string
           created_at?: string
           display_symbol?: string | null
@@ -623,8 +624,7 @@ export type Database = {
           leverage?: number
           margin_mode?: Database["public"]["Enums"]["margin_mode"]
           notes?: string | null
-          position_size_mode?: Database["public"]["Enums"]["position_size_mode"]
-          position_size_value?: number
+          position_size_multiplier?: number
           preferred_transport?: Database["public"]["Enums"]["transport_pref"]
           sl_pct?: number
           symbol: string
@@ -636,6 +636,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          account_balance_percent?: number
           category?: string
           created_at?: string
           display_symbol?: string | null
@@ -644,8 +645,7 @@ export type Database = {
           leverage?: number
           margin_mode?: Database["public"]["Enums"]["margin_mode"]
           notes?: string | null
-          position_size_mode?: Database["public"]["Enums"]["position_size_mode"]
-          position_size_value?: number
+          position_size_multiplier?: number
           preferred_transport?: Database["public"]["Enums"]["transport_pref"]
           sl_pct?: number
           symbol?: string
@@ -753,7 +753,6 @@ export type Database = {
         | "rejected"
         | "error"
       position_side: "long" | "short"
-      position_size_mode: "fixed_usdt" | "pct_equity"
       protection_state: "unprotected" | "sl_only" | "sl_and_tsl" | "closed"
       risk_gate:
         | "health"
@@ -925,7 +924,6 @@ export const Constants = {
         "error",
       ],
       position_side: ["long", "short"],
-      position_size_mode: ["fixed_usdt", "pct_equity"],
       protection_state: ["unprotected", "sl_only", "sl_and_tsl", "closed"],
       risk_gate: [
         "health",
