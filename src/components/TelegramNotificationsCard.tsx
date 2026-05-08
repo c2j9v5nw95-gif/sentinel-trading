@@ -43,6 +43,28 @@ export function TelegramNotificationsCard() {
   const settingsQ = useQuery({
     queryKey: ["notification_settings"],
     queryFn: async (): Promise<Settings> => {
+      // Diagnostics: verify session + operator role first so we surface auth/role
+      // failures with a clear message instead of a generic table error.
+      const { data: userRes, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userRes?.user) {
+        console.error("[TelegramNotificationsCard] no auth session", userErr);
+        throw new Error("Not signed in. Please sign in as an operator.");
+      }
+      const { data: roleRow, error: roleErr } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userRes.user.id)
+        .eq("role", "operator")
+        .maybeSingle();
+      if (roleErr) {
+        console.error("[TelegramNotificationsCard] role lookup failed", roleErr);
+        throw new Error(`Role lookup failed: ${roleErr.message}`);
+      }
+      if (!roleRow) {
+        console.error("[TelegramNotificationsCard] user lacks operator role", userRes.user.id);
+        throw new Error("Your account does not have the operator role required to view Telegram settings.");
+      }
+
       // Try to load
       const { data, error } = await supabase
         .from("notification_settings" as never)
