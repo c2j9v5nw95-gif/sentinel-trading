@@ -20,7 +20,7 @@ export function LiveRiskHaltedBanner() {
 
   const ack = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.rpc("acknowledge_live_risk_halt", { _note: note || null });
+      const { error } = await supabase.rpc("acknowledge_live_risk_halt", { _note: note || undefined });
       if (error) throw error;
     },
     onSuccess: () => {
