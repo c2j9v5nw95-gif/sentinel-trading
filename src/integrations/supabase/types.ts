@@ -134,6 +134,48 @@ export type Database = {
         }
         Relationships: []
       }
+      bybit_diagnostics: {
+        Row: {
+          account_type: string | null
+          checks: Json
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          last_response: Json | null
+          mode: string
+          ok: boolean
+          permissions: Json | null
+          ran_by: string | null
+        }
+        Insert: {
+          account_type?: string | null
+          checks?: Json
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          last_response?: Json | null
+          mode: string
+          ok: boolean
+          permissions?: Json | null
+          ran_by?: string | null
+        }
+        Update: {
+          account_type?: string | null
+          checks?: Json
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          last_response?: Json | null
+          mode?: string
+          ok?: boolean
+          permissions?: Json | null
+          ran_by?: string | null
+        }
+        Relationships: []
+      }
       error_log: {
         Row: {
           context: Json | null
