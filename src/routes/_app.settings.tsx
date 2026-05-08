@@ -104,15 +104,15 @@ function SettingsPage() {
       : data?.live_enabled    ? "live" : "paper";
 
   // Live gate: every condition must be green to allow LIVE selection.
-  const testnetValidated = !!data?.testnet_validated_at &&
-    (Date.now() - new Date(data.testnet_validated_at).getTime() < 24 * 60 * 60_000);
+  // NOTE: Testnet validation is intentionally NOT a live-gate requirement.
   const liveDiagnosticOk = !!liveDiag?.ok && !!liveDiag?.created_at &&
     (Date.now() - new Date(liveDiag.created_at).getTime() < 24 * 60 * 60_000);
+  const liveRiskBreakerOk = !data?.live_risk_halted;
   const liveGateOk =
     !data?.emergency_stop &&
-    testnetValidated &&
     liveDiagnosticOk &&
     (criticalCount ?? 0) === 0 &&
+    liveRiskBreakerOk &&
     livePhrase === LIVE_CONFIRM_PHRASE;
 
   return (
@@ -212,10 +212,9 @@ function SettingsPage() {
                 <div className="font-medium text-danger">Live (mainnet) gate</div>
                 <ul className="space-y-0.5 text-muted-foreground">
                   <li>{data?.emergency_stop ? "✗" : "✓"} Emergency stop off</li>
-                  <li>{testnetValidated ? "✓" : "✗"} Testnet validated within 24h
-                    {data?.testnet_validated_at && ` (${new Date(data.testnet_validated_at).toLocaleString()})`}</li>
                   <li>{(criticalCount ?? 0) === 0 ? "✓" : "✗"} No open critical invariants
                     ({criticalCount ?? 0})</li>
+                  <li>{liveRiskBreakerOk ? "✓" : "✗"} Live risk circuit breaker not tripped</li>
                   <li>{liveDiagnosticOk ? "✓" : "✗"} Live Bybit diagnostic passed (≤24h)
                     {liveDiag?.created_at && ` (${new Date(liveDiag.created_at).toLocaleString()})`}</li>
                   <li>✓ BYBIT_LIVE_API_KEY / SECRET present (verified at runtime)</li>
