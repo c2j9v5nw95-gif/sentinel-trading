@@ -15,6 +15,7 @@
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { getClient } from "../_shared/bybit-client.ts";
 import { withSymbolLock } from "../_shared/locks.ts";
+import { notify } from "../_shared/telegram.ts";
 import type { ExecutionMode } from "../_shared/execution-mode.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
