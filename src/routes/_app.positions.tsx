@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
+import { ExecutionLocksPanel } from "@/components/ExecutionLocksPanel";
 
 export const Route = createFileRoute("/_app/positions")({
   component: PositionsPage,
