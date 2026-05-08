@@ -11,6 +11,7 @@
 // All checks are READ-ONLY against engine tables — they never mutate execution state.
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
+import { notify } from "../_shared/telegram.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 interface Violation {
