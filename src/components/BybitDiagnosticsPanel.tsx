@@ -61,7 +61,7 @@ export function BybitDiagnosticsPanel() {
   });
 
   const latest = history?.[0];
-  const latestChecks = (latest?.checks ?? {}) as Record<string, CheckResult>;
+  const latestChecks = (latest?.checks ?? {}) as unknown as Record<string, CheckResult>;
 
   const run = useMutation({
     mutationFn: async () => {
