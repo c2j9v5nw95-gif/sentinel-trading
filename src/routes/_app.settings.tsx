@@ -104,15 +104,15 @@ function SettingsPage() {
       : data?.live_enabled    ? "live" : "paper";
 
   // Live gate: every condition must be green to allow LIVE selection.
-  const testnetValidated = !!data?.testnet_validated_at &&
-    (Date.now() - new Date(data.testnet_validated_at).getTime() < 24 * 60 * 60_000);
+  // NOTE: Testnet validation is intentionally NOT a live-gate requirement.
   const liveDiagnosticOk = !!liveDiag?.ok && !!liveDiag?.created_at &&
     (Date.now() - new Date(liveDiag.created_at).getTime() < 24 * 60 * 60_000);
+  const liveRiskBreakerOk = !data?.live_risk_halted;
   const liveGateOk =
     !data?.emergency_stop &&
-    testnetValidated &&
     liveDiagnosticOk &&
     (criticalCount ?? 0) === 0 &&
+    liveRiskBreakerOk &&
     livePhrase === LIVE_CONFIRM_PHRASE;
 
   return (
