@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
@@ -8,8 +9,11 @@ export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
 });
 
+const LIVE_CONFIRM_PHRASE = "ENABLE LIVE TRADING";
+
 function SettingsPage() {
   const qc = useQueryClient();
+  const [livePhrase, setLivePhrase] = useState("");
 
   const { data } = useQuery({
     queryKey: ["app_settings"],
@@ -29,6 +33,19 @@ function SettingsPage() {
     refetchInterval: 5_000,
   });
 
+  const { data: criticalCount } = useQuery({
+    queryKey: ["critical_invariants_open"],
+    queryFn: async () => {
+      const { count } = await supabase.from("invariant_violations")
+        .select("id", { count: "exact", head: true })
+        .eq("severity", "critical")
+        .is("resolved_at", null)
+        .is("acknowledged_at", null);
+      return count ?? 0;
+    },
+    refetchInterval: 10_000,
+  });
+
   const setMode = useMutation({
     mutationFn: async (mode: "paper" | "testnet" | "live") => {
       if (!data?.id) return;
@@ -36,7 +53,18 @@ function SettingsPage() {
         .update({
           paper_mode_enabled: mode === "paper",
           testnet_enabled: mode === "testnet",
+          live_enabled: mode === "live",
         })
+        .eq("id", data.id);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app_settings"] }),
+  });
+
+  const markTestnetValidated = useMutation({
+    mutationFn: async () => {
+      if (!data?.id) return;
+      await supabase.from("app_settings")
+        .update({ testnet_validated_at: new Date().toISOString() })
         .eq("id", data.id);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app_settings"] }),
@@ -53,7 +81,17 @@ function SettingsPage() {
 
   const currentMode: "paper" | "testnet" | "live" =
     data?.paper_mode_enabled ? "paper"
-      : data?.testnet_enabled ? "testnet" : "live";
+      : data?.testnet_enabled ? "testnet"
+      : data?.live_enabled    ? "live" : "paper";
+
+  // Live gate: every condition must be green to allow LIVE selection.
+  const testnetValidated = !!data?.testnet_validated_at &&
+    (Date.now() - new Date(data.testnet_validated_at).getTime() < 24 * 60 * 60_000);
+  const liveGateOk =
+    !data?.emergency_stop &&
+    testnetValidated &&
+    (criticalCount ?? 0) === 0 &&
+    livePhrase === LIVE_CONFIRM_PHRASE;
 
   return (
     <>
