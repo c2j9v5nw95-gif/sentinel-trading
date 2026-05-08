@@ -83,6 +83,15 @@ Deno.serve(async (req) => {
     windowSeconds,
   });
 
+  const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  const initialTrail = [
+    { step: "parser_pass", outcome: "pass", at: nowIso },
+    { step: "normalized_symbol", outcome: "info",
+      metrics: { raw: parsed.symbol ?? null, normalized: symbol }, at: nowIso },
+    { step: "dedupe_pass", outcome: "pass", at: nowIso },
+  ];
+
   const { data: signal, error: insertErr } = await sb
     .from("signals")
     .insert({
@@ -100,6 +109,8 @@ Deno.serve(async (req) => {
       payload: parsed.raw,
       dedupe_key: dedupeKey,
       status: "queued",
+      request_id: requestId,
+      decision_trail: initialTrail,
     })
     .select("id")
     .maybeSingle();
