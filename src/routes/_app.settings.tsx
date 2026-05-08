@@ -131,43 +131,86 @@ function SettingsPage() {
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     PAPER simulates fills locally. TESTNET sends real signed orders to
-                    Bybit testnet (api-testnet.bybit.com). LIVE (mainnet) is disabled.
+                    Bybit testnet. LIVE (mainnet) is execution-blocked until every
+                    safety gate passes.
                   </p>
                 </div>
                 <div className="flex gap-1">
-                  {(["paper", "testnet"] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setMode.mutate(m)}
-                      disabled={setMode.isPending || currentMode === m}
-                      className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
-                        currentMode === m
-                          ? "border-primary bg-primary/10 text-foreground"
-                          : "border-border bg-background hover:bg-accent"
-                      }`}
-                    >
-                      {m.toUpperCase()}
-                    </button>
-                  ))}
+                  {(["paper", "testnet", "live"] as const).map((m) => {
+                    const liveBlocked = m === "live" && !liveGateOk;
+                    return (
+                      <button
+                        key={m}
+                        onClick={() => setMode.mutate(m)}
+                        disabled={setMode.isPending || currentMode === m || liveBlocked}
+                        title={liveBlocked ? "Live gate not satisfied" : ""}
+                        className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                          currentMode === m
+                            ? "border-primary bg-primary/10 text-foreground"
+                            : liveBlocked
+                              ? "border-border bg-muted text-muted-foreground cursor-not-allowed"
+                              : "border-border bg-background hover:bg-accent"
+                        }`}
+                      >
+                        {m.toUpperCase()}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+
               {currentMode === "testnet" && (
                 <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
                   <div className="font-medium text-warning">Testnet active</div>
                   <p className="mt-1 text-muted-foreground">
-                    Requires <code>BYBIT_TESTNET_API_KEY</code> and <code>BYBIT_TESTNET_API_SECRET</code> in
-                    backend secrets. Run recovery after enabling to hydrate any
-                    pre-existing venue positions.
+                    Requires <code>BYBIT_TESTNET_API_KEY</code> and <code>BYBIT_TESTNET_API_SECRET</code>.
+                    Run recovery after enabling to hydrate any pre-existing venue positions.
                   </p>
-                  <button
-                    onClick={() => runRecovery.mutate()}
-                    disabled={runRecovery.isPending}
-                    className="mt-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-accent"
-                  >
-                    {runRecovery.isPending ? "Recovering…" : "Run startup recovery"}
-                  </button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => runRecovery.mutate()}
+                      disabled={runRecovery.isPending}
+                      className="rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-accent"
+                    >
+                      {runRecovery.isPending ? "Recovering…" : "Run startup recovery"}
+                    </button>
+                    <button
+                      onClick={() => markTestnetValidated.mutate()}
+                      disabled={markTestnetValidated.isPending}
+                      className="rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-accent"
+                    >
+                      Mark testnet validated (24h)
+                    </button>
+                  </div>
                 </div>
               )}
+
+              {/* Live gate panel — always visible so operator can prep. */}
+              <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-xs space-y-2">
+                <div className="font-medium text-danger">Live (mainnet) gate</div>
+                <ul className="space-y-0.5 text-muted-foreground">
+                  <li>{data?.emergency_stop ? "✗" : "✓"} Emergency stop off</li>
+                  <li>{testnetValidated ? "✓" : "✗"} Testnet validated within 24h
+                    {data?.testnet_validated_at && ` (${new Date(data.testnet_validated_at).toLocaleString()})`}</li>
+                  <li>{(criticalCount ?? 0) === 0 ? "✓" : "✗"} No open critical invariants
+                    ({criticalCount ?? 0})</li>
+                  <li>✓ BYBIT_LIVE_API_KEY / SECRET present (verified at runtime)</li>
+                  <li>{livePhrase === LIVE_CONFIRM_PHRASE ? "✓" : "✗"} Type confirmation phrase</li>
+                </ul>
+                <input
+                  type="text"
+                  value={livePhrase}
+                  onChange={(e) => setLivePhrase(e.target.value)}
+                  placeholder={`Type "${LIVE_CONFIRM_PHRASE}" to enable LIVE button`}
+                  className="w-full rounded border border-border bg-background px-2 py-1 text-xs"
+                />
+                {!liveGateOk && (
+                  <p className="text-muted-foreground">
+                    LIVE button stays disabled until every gate is green.
+                  </p>
+                )}
+              </div>
+
               <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
                 <dt className="text-muted-foreground">Virtual starting balance</dt>
                 <dd>{Number(data.paper_starting_balance_usdt).toLocaleString()} USDT</dd>
