@@ -1,240 +1,202 @@
 
-# Phase 3 — Bybit V5 Execution Engine & Protection Lifecycle (Design)
+# Paper Execution Mode — Design
 
-This is a design-only plan. No code is written until approved. The goal is a deterministic, restart-safe execution layer where Bybit is the source of truth and the local DB is an operational cache.
-
----
-
-## 1. Core Principles
-
-1. **Bybit = truth, DB = cache.** Every decision boundary re-reads Bybit (`/v5/position/list`, `/v5/order/realtime`, `/v5/execution/list`) before acting on a stale DB row.
-2. **Idempotency by client order id.** Every Bybit-bound order carries a deterministic `orderLinkId` derived from `(signal_id, purpose, attempt)`. Retries reuse the same id so Bybit dedupes.
-3. **Single writer per symbol.** A symbol-scoped advisory lock (Postgres `pg_try_advisory_xact_lock(hashtext(symbol))`) guarantees no two workers mutate the same position concurrently.
-4. **State machine first.** Every order and every position has an explicit FSM. Side effects only on transitions.
-5. **Protection invariant.** A position with `qty_open > 0` must, within a bounded window, have `protection_state = protected` and a live SL on Bybit. Violations raise `system_alerts` and trigger the protection monitor.
+A simulation layer that exercises the full Phase 3 execution state machine without touching Bybit. Same code paths, same tables, same decision trails — only the side-effecting Bybit client is swapped for a deterministic simulator.
 
 ---
 
-## 2. New / Extended Schema (planned, not yet migrated)
+## 1. Principles
 
-### 2.1 `orders` (extend)
-- `order_link_id text unique` — deterministic client id, idempotency key.
-- `attempt int default 0` — retry counter for the same purpose.
-- `intended_qty numeric` — qty we asked for.
-- `filled_qty numeric default 0` — cumulative fills.
-- `avg_fill_price numeric`.
-- `reduce_only boolean default false`.
-- `time_in_force text` — `IOC` for market reductions, `GTC` for SL/TSL.
-- `last_synced_at timestamptz` — last reconciliation.
-- `cancel_reason text`.
-- Status enum extended: `pending_submit | submitted | partially_filled | filled | cancelled | rejected | expired | stale | unknown`.
-
-### 2.2 `positions` (extend)
-- `bybit_position_idx int` — 0 one-way, 1/2 hedge.
-- `mode text check in ('one_way','hedge')`.
-- `margin_mode text` (already on symbols, mirror snapshot).
-- `leverage_applied numeric` — what we actually set on Bybit.
-- `last_reconciled_at timestamptz`.
-- `reconcile_drift jsonb` — last drift report.
-- `state text` — FSM (see §4).
-- `protection_attempts int default 0`.
-
-### 2.3 New tables
-- `execution_jobs` — durable work queue for the executor.
-  - `id`, `kind` (`entry|exit|protect|reconcile|cancel|replace`), `signal_id?`, `position_id?`, `symbol`, `payload jsonb`, `status` (`queued|leased|done|failed|dead_letter`), `lease_until`, `attempts`, `last_error`, `next_run_at`, `dedupe_key unique`.
-- `bybit_executions` — raw fill ledger mirrored from `/v5/execution/list`. Keyed by `(symbol, exec_id)` unique. Source for `filled_qty` and avg price truth.
-- `reconciliation_runs` — audit of each reconcile pass, drift found, actions taken.
-- `rate_limit_buckets` — per-endpoint token state (`endpoint`, `tokens`, `refilled_at`) so multiple workers share quota.
-
-All new tables RLS-restricted to `operator` role for SELECT; writes via service role only.
+1. **One pipeline, two backends.** `_shared/bybit.ts` becomes an interface; `LiveBybitClient` and `PaperBybitClient` implement it. The executor never branches on mode — it just calls the resolved client.
+2. **Mode resolved per signal/job at dispatch time** (global flag + per-symbol override), then frozen onto the order/position rows so historical data stays unambiguous even if mode changes later.
+3. **Paper writes use the same tables** — `orders`, `positions`, `position_events`, `risk_decisions`, `audit_log`, `signals.decision_trail`, `execution_jobs`, `bybit_executions`. Discrimination is by an `execution_mode` column, never by separate tables.
+4. **No silent crossover.** A live order can never be reconciled against paper state, and vice versa — every Bybit-bound call carries the mode and the wrong-mode client refuses to act.
 
 ---
 
-## 3. Order Lifecycle FSM
+## 2. Schema (planned, not yet migrated)
+
+### 2.1 New enum
+- `execution_mode` ∈ (`live`, `paper`).
+
+### 2.2 `app_settings`
+- `paper_mode_enabled boolean default true` — global default while validating.
+- `paper_starting_balance_usdt numeric default 10000` — virtual wallet for sizing.
+- `paper_fee_bps numeric default 5.5` — taker fee simulated on fills.
+- `paper_slippage_bps numeric default 2` — applied to market fills.
+- `paper_fill_latency_ms int default 250`.
+
+### 2.3 `symbols`
+- `execution_mode_override execution_mode null` — per-symbol force (`paper`, `live`, or null = use global).
+
+### 2.4 `orders`, `positions`, `execution_jobs`, `bybit_executions`
+- Add `execution_mode execution_mode not null default 'paper'` to each.
+- Index `(execution_mode, status)` on `orders` and `execution_jobs` (workers filter by mode).
+
+### 2.5 New tables
+- `paper_wallet` — single-row virtual account: `balance_usdt`, `equity_usdt`, `realized_pnl`, `unrealized_pnl`, `updated_at`. Reset button in Operator UI.
+- `paper_market_prices` — last known price per symbol used for simulated fills, fed by either (a) periodic Bybit *public* ticker pulls (no auth, no orders) or (b) the price embedded in the incoming signal payload. `(symbol, price, source, received_at)`.
+
+All new columns/tables RLS-locked to `operator`; writes via service role.
+
+---
+
+## 3. Mode Resolution
 
 ```text
-pending_submit
-   │  submit() ok
-   ▼
-submitted ──► partially_filled ──► filled
-   │              │                    │
-   │              └──► cancelled       └──► (terminal)
-   │
-   ├──► rejected         (Bybit error, terminal)
-   ├──► expired          (TIF lapse, terminal)
-   ├──► stale            (no fill within window, eligible for cancel/replace)
-   └──► unknown          (lost ack — must be reconciled before next action)
+resolveMode(symbol):
+  if symbols.execution_mode_override is not null → use it
+  else if app_settings.paper_mode_enabled → 'paper'
+  else → 'live'
 ```
 
-Transitions only via:
-- `submit()` — POST `/v5/order/create` with `orderLinkId`.
-- `reconcile()` — pull `/v5/order/realtime` + `/v5/execution/list`, advance state.
-- `cancel()` — POST `/v5/order/cancel`.
-- `replace()` — `cancel()` then `submit()` with `attempt+1` (new link id suffix).
+Resolved once at:
+- Signal dispatch — written into `signals.decision_trail` as a `mode_resolved` step.
+- Job creation — stamped on `execution_jobs.execution_mode`.
+- Order/position creation — stamped on the row.
 
-`unknown` is the recovery state. Any submit that times out, network-fails, or returns ambiguous code goes to `unknown` and **must not** be re-submitted blindly — the next reconcile pass resolves it by `orderLinkId` lookup.
+Mode is **immutable per row** after creation. Reconciler and protection monitor read mode off the row, not off settings.
 
 ---
 
-## 4. Position Lifecycle FSM
+## 4. Client Interface
 
-```text
-intended ──► opening ──► open_unprotected ──► open_protected
-                │              │                    │
-                │              │                    ├──► tp1_partial ──► open_protected (qty reduced, SL re-armed)
-                │              │                    ├──► tp2_partial ──► open_protected
-                │              │                    └──► closing ──► closed
-                │              └──► failed (entry rejected / 0 fill)
-                └──► aborted (pre-flight risk reject)
+`_shared/bybit-client.ts`:
+
+```ts
+interface BybitClient {
+  mode: 'live' | 'paper'
+  getPosition(symbol): Promise<PositionSnapshot>
+  getOpenOrders(symbol): Promise<OrderSnapshot[]>
+  getExecutions(symbol, since): Promise<ExecutionSnapshot[]>
+  getWalletBalance(): Promise<WalletSnapshot>
+  setLeverage(symbol, lev): Promise<void>
+  switchIsolated(symbol, isolated): Promise<void>
+  switchPositionMode(symbol, mode): Promise<void>
+  submitOrder(req): Promise<SubmitResult>
+  cancelOrder(symbol, orderLinkId): Promise<void>
+  setTradingStop(req): Promise<void>          // SL/TSL/TP via /position/trading-stop
+  getInstrument(symbol): Promise<InstrumentInfo>
+}
 ```
 
-Invariants:
-- Enter `open_protected` only when SL order confirmed live on Bybit.
-- `tp1_partial` and `tp2_partial` re-enter `open_protected` only after SL qty rewritten to current `qty_open`.
-- `closed` requires `qty_open == 0` confirmed by Bybit position read, not just our exit fills.
+Both `LiveBybitClient` and `PaperBybitClient` implement this exactly. The factory `getClient(mode)` returns the right one. Executor code is mode-agnostic.
 
 ---
 
-## 5. Entry Flow (`execute-entry`)
+## 5. PaperBybitClient — Behavior
 
-Pre-conditions already enforced in Phase 2 (risk gates, exposure caps). Entry job runs under symbol lock:
+### 5.1 State
+Backed entirely by Postgres (no in-memory state — survives restarts):
+- `paper_wallet` for balance/equity.
+- `orders` (rows with `execution_mode='paper'`) for open orders.
+- `positions` (rows with `execution_mode='paper'`) for current size.
+- `bybit_executions` for synthetic fills.
+- `paper_market_prices` for last price.
 
-1. **Pre-flight reconcile**: read Bybit position for symbol. If a position already exists in our intended direction, reject as `duplicate_entry` and trail it. If opposite direction, route to "flip" decision (out of scope this phase — block + alert).
-2. **Account mode check**: ensure `position_mode` (`one_way|hedge`) matches symbol config; if not, set via `/v5/position/switch-mode`. Cache result.
-3. **Margin & leverage**: call `/v5/position/switch-isolated` and `/v5/position/set-leverage` only when current values differ (read first to avoid `110043` "leverage not modified" noise — treat that code as success anyway).
-4. **Sizing**: recompute notional from live wallet balance + symbol caps (already in `sizing.ts`). Round to instrument `lotSize`/`minOrderQty`.
-5. **Submit market entry** with `orderLinkId = entry:{signal_id}:{attempt}`, `reduceOnly=false`, `timeInForce=IOC`.
-6. **Await fill** via short reconcile loop (poll `/v5/order/realtime` + `/v5/execution/list` up to N seconds). Allowed terminal outcomes: `filled`, `partially_filled` (accept partial), `rejected`, `unknown`.
-7. **On any fill > 0**: create/upsert `positions` row, transition to `open_unprotected`, set `unprotected_since=now()`.
-8. **Immediately** enqueue `protect` job (see §7). Entry job does not return success until protect job is enqueued and `qty_open` recorded.
-9. **On `unknown`**: do not retry submit; enqueue `reconcile` job, leave signal in `accepted` (executor) state with `attempt` unchanged.
+### 5.2 Pricing
+- Read latest `paper_market_prices.price` for the symbol.
+- If absent or older than 60s, fall back to the signal payload's `price` field (TradingView always sends one).
+- If still absent → return order to `unknown` and raise alert. We do not invent prices.
 
----
+### 5.3 Order simulation
+- `submitOrder` (market, IOC, including reduce-only):
+  1. Insert `orders` row `submitted` → simulate `paper_fill_latency_ms` (write `next_run_at` for the executor poll, no real sleep on the request path).
+  2. On the next executor tick, fill at `last_price * (1 ± slippage_bps)` (sign = adverse to taker).
+  3. Compute fee = `notional * fee_bps`. Deduct from wallet.
+  4. Insert synthetic `bybit_executions` row (`exec_id = 'paper:' || order_link_id || ':' || attempt`).
+  5. Update `orders` → `filled`, `filled_qty`, `avg_fill_price`.
+  6. Apply position delta in `positions` (open/extend/reduce/close).
+- `submitOrder` (limit, GTC) — out of scope for paper unless used by SL/TSL (see 5.4).
+- `cancelOrder` — flips status to `cancelled`; no fee.
 
-## 6. Exit Flow (`execute-exit`)
+### 5.4 Trading-stop simulation (SL/TSL)
+- `setTradingStop` writes the SL/TSL params onto the `positions` row (existing columns: `sl_price`, `tsl_active`, etc.) and inserts a synthetic `orders` row with `purpose='stop_loss'` / `'trailing_stop'`, `status='submitted'`, `reduce_only=true`.
+- A periodic paper-tick (cron, see §7) re-evaluates each open paper position against the latest `paper_market_prices`:
+  - If price crosses `sl_price` → simulate market reduce-only fill at SL price (no slippage; SL behaves as triggered market — optional tunable).
+  - If TSL active → maintain trailing high/low (`positions.reconcile_drift` jsonb stores trail anchor) and trigger when callback breached.
+  - On trigger: same fill path as §5.3, position transitions `closing → closed`.
 
-Triggered by `EXIT-LONG`, `EXIT-SHORT`, `XL1..XL5`, plus internal TP1/TP2.
+### 5.5 Reads
+- `getPosition`, `getOpenOrders`, `getExecutions`, `getWalletBalance` are straight DB reads filtered by `execution_mode='paper'`.
 
-1. **Pre-flight**: read Bybit position. If `size == 0` → mark signal `no_position`, close local position row, done. (Bybit truth wins.)
-2. **Compute exit qty**:
-   - Full exit: `qty = bybit_size` (live).
-   - TP1 portion: `qty = round(bybit_size * tp1_exit_percent / 100, lotSize)`.
-   - TP2 / rest: `qty = bybit_size` (whatever remains).
-   - Never derive qty from local `qty_open` — Bybit is truth.
-3. **Submit reduce-only market** with `orderLinkId = exit:{signal_id}:{portion}:{attempt}`, `reduceOnly=true`, `timeInForce=IOC`.
-4. **Await fill** via reconcile poll. Accept partial fills; on partial, do not auto-retry the residual unless explicitly a "full close" exit (in which case re-submit residual with `attempt+1`, still reduce-only).
-5. **Post-exit re-arm**: if remaining `qty_open > 0`, enqueue `protect` job to rewrite SL to new qty. Position transitions back to `open_protected` only after SL confirmed.
-6. **Full close**: confirm `bybit_size == 0` via fresh read before transitioning to `closed`. Cancel any leftover SL/TSL orders for this symbol.
-
----
-
-## 7. Protection Lifecycle (`protection-monitor`)
-
-Runs as a job + cron sweep (every 10s).
-
-1. **Arming after entry**: place SL via `/v5/position/trading-stop` with `slPrice = entry * (1 ± sl_pct)`, `tpslMode=Full`, qty = live `qty_open`. On success, position → `open_protected`.
-2. **Arming retries**: bounded retries (e.g. 5 attempts, exponential backoff up to 30s). Each attempt increments `protection_attempts`. After cap → `system_alerts(severity=critical, category=unprotected_position)` and the position is flagged `manual_intervention_required` (still tracked, not auto-closed).
-3. **Re-arm after partial exit (TP1/TP2)**: rewrite trading-stop with new qty. SL price unchanged unless TSL activation criteria met.
-4. **TSL activation**: when unrealised profit ≥ `tsl_activation_profit_pct`, switch SL to a trailing stop with `callbackRatio = tsl_callback_pct`. Record `tsl_active=true`, `tsl_activated_at`.
-5. **Sweep**: cron pass finds positions with `qty_open > 0` AND (`unprotected_since older than threshold` OR `protection_state != protected`) and re-runs the arming job.
-6. **Cancel-on-close**: when position closes, explicitly cancel any residual conditional orders for the symbol to prevent orphaned SL.
+### 5.6 Account-config calls
+- `setLeverage`, `switchIsolated`, `switchPositionMode` are no-ops that succeed and log to `audit_log` with `action='paper_account_config'` so the trail step still records.
 
 ---
 
-## 8. Reconciliation Loop
+## 6. Executor Integration
 
-Runs every ~15s, plus on-demand after any `unknown` order outcome and on worker startup.
+No FSM changes from Phase 3. The only edits are:
 
-For each symbol with activity in the last 24h:
-1. Acquire symbol advisory lock (skip if held).
-2. Pull `/v5/position/list?symbol=…`, `/v5/order/realtime?symbol=…&openOnly=0`, `/v5/execution/list?symbol=…&startTime=lastCursor`.
-3. Upsert raw fills into `bybit_executions` (idempotent by `exec_id`).
-4. For each open order DB row: match by `orderLinkId`, advance FSM. Orders DB-open but missing on Bybit and older than `stale_threshold` → `stale` → cancel attempt or mark `unknown` resolved.
-5. For each Bybit order with no DB row: insert as `discovered` (manual or recovered) and alert.
-6. Recompute position truth: `qty_open := bybit_size`, `entry_price := bybit_avgPrice`. Diff vs DB → write `reconcile_drift` and `position_events(event_type='drift')`. Drift > tolerance raises alert.
-7. Protection check: if `bybit_size > 0` and no live SL on Bybit → enqueue `protect` job.
-8. Position closed on Bybit but DB still open → transition to `closed`, snapshot final pnl from executions, cancel residual orders.
-9. Write `reconciliation_runs` summary.
-
-This loop is also the **startup recovery** path: on boot, every symbol with non-terminal state is reconciled before any new signal is processed. `process-signal` blocks new entries while a `recovery_pending` flag is set in `app_settings`.
+1. Job creation reads `resolveMode(symbol)` and stamps `execution_jobs.execution_mode`.
+2. Job handler instantiates `getClient(job.execution_mode)`.
+3. Reconciliation loop runs **two passes**: one for `live` rows, one for `paper` rows, each with its own client. Cross-mode joins are forbidden.
+4. Sizing (`_shared/sizing.ts`) reads wallet from `client.getWalletBalance()` — paper returns the virtual wallet, so identical formulas apply with no branching.
+5. Risk engine, Health Gate, exposure caps, decision trail — unchanged. The trail just gains one extra step `mode_resolved:{paper|live}`.
 
 ---
 
-## 9. Idempotency, Retries, Rate Limits, Timeouts
+## 7. Paper Tick & Price Feed
 
-- **`orderLinkId` scheme**: `{purpose}:{signal_id}:{detail}:{attempt}` — max 36 chars, hash if longer. Bybit rejects duplicates with `110072` → treat as success and reconcile.
-- **HTTP client** (`_shared/bybit.ts`): timeout 8s connect / 12s total. AbortController. Single-flight per `orderLinkId` within a process.
-- **Retry policy**: only retry on network error, 5xx, or Bybit codes in a defined `RETRYABLE_CODES` set (e.g. `10002`, `10006`, `170136`). Backoff: 250ms, 750ms, 2s, 5s, 10s; max 5 attempts. Non-retryable codes terminate to `rejected` immediately.
-- **Rate limiter**: token bucket per endpoint group stored in `rate_limit_buckets`, shared across workers via row-level `UPDATE … RETURNING`. On Bybit `10006`/header `X-Bapi-Limit-Status=0` → drain bucket and back off.
-- **Job queue semantics**: `execution_jobs` rows leased with `UPDATE … WHERE status='queued' AND next_run_at<=now() RETURNING …` + `lease_until`. Orphaned leases reclaimed after expiry. After max attempts → `dead_letter` + alert.
+Two cron hooks (`/api/public/hooks/paper-tick`, `/api/public/hooks/paper-prices`):
 
----
+- **paper-prices** (every 5s): pulls `/v5/market/tickers` (public, no auth) for every symbol with paper activity in the last 24h, upserts `paper_market_prices`. Falls back to disabled if rate-limited.
+- **paper-tick** (every 2s): for each open paper position, evaluates SL/TSL trigger logic, advances any `submitted` paper orders past their fill latency, updates wallet equity, writes `position_events`. This is the simulator's "engine".
 
-## 10. Duplicate Execution Prevention (multi-layer)
-
-1. Signal-level dedupe (Phase 2, already in place).
-2. `execution_jobs.dedupe_key` unique per `(signal_id, kind, attempt)`.
-3. Symbol advisory lock during entry/exit.
-4. Pre-submit Bybit position check (refuses entry if same-direction position exists for same `signal_id` reference in `positions.entry_signal_id`).
-5. Bybit-side `orderLinkId` uniqueness.
-6. Reconcile diffs against `bybit_executions` ledger before declaring any order "filled".
+Both hooks are mode-scoped — they ignore `live` rows entirely.
 
 ---
 
-## 11. One-Way vs Hedge Mode
+## 8. Replay Compatibility
 
-- Symbol config gains `position_mode` (default `one_way`).
-- On first activity per symbol, executor calls `/v5/position/switch-mode` if mismatch.
-- Hedge mode: include `positionIdx` (1 long / 2 short) on every order; one-way uses `0`. Stored on `positions.bybit_position_idx`.
-- Reconciliation matches positions on `(symbol, side, positionIdx)`.
+`replay_signal()` already clones a signal back to `queued`. It needs no changes — the replayed signal goes through dispatch, dispatch resolves mode at *replay time*, and the trail records that. Operators can therefore:
+- Replay a historical live signal in paper mode (flip global flag first), or
+- Replay a historical paper signal in live mode after validation.
 
----
-
-## 12. State Machine Diagram
-
-```text
-SIGNAL accepted
-     │
-     ▼
-execution_jobs(kind=entry) ──lease──► entry FSM
-                                     │
-                                     ├─ duplicate? ─► reject + trail
-                                     ├─ unknown   ─► reconcile job
-                                     └─ filled>0  ─► positions.opening → open_unprotected
-                                                                │
-                                                                ▼
-                                            execution_jobs(kind=protect)
-                                                                │
-                                                ┌──ok──► open_protected ◄──────────┐
-                                                │                                   │
-                                                └──fail (capped)──► alert            │
-                                                                                    │
-SIGNAL exit accepted ──► execution_jobs(kind=exit) ──► exit FSM ──► partial? ──► protect (re-arm)
-                                                              └──► full close ──► closed (after Bybit size==0)
-
-cron(15s) ──► reconcile loop ──► drift fix / orphan cleanup / protection sweep
-```
+UI: replay dialog gains a read-only line "Will execute in: **paper** (global default)" so operators see the resolved mode before confirming.
 
 ---
 
-## 13. Out of Scope (this phase)
+## 9. Dashboard Surfacing
 
-- Live Bybit calls — this plan defines structure; switching from stubs is a follow-up implementation phase.
-- Position flips on opposite-direction signal (block + alert only).
-- Cross-symbol portfolio risk (already handled by Phase 2 caps).
-- UI changes beyond surfacing `reconciliation_runs`, drift, and dead-letter execution jobs on the existing dashboards (detailed UI spec deferred to implementation PR).
+All existing pages get a mode filter and badge — no new pages required:
+
+- **Header**: persistent badge `PAPER MODE` (amber) or `LIVE` (green) reflecting global setting; tooltip lists per-symbol overrides.
+- **Signals table**: new `Mode` column (paper/live chip). Filter dropdown.
+- **Positions table**: same chip + filter; paper and live sections visually grouped (or filtered).
+- **Orders table**: same.
+- **Symbols page**: per-symbol `Execution Mode` selector (`Inherit / Force Paper / Force Live`).
+- **Settings page**: global `Paper Mode` toggle, virtual wallet balance, fee/slippage/latency inputs, **Reset Paper State** button (confirms, then truncates paper rows + resets `paper_wallet`).
+- **Position detail**: shows paper fees/slippage applied per fill so operators can audit the simulator.
 
 ---
 
-## 14. Implementation Order (when approved)
+## 10. Safety Rails
 
-1. Schema migration (orders/positions extensions, new tables, enums).
-2. `_shared/bybit.ts` real V5 client (signing, rate limiter, retry, timeouts).
-3. `_shared/executor.ts` — job queue lease + symbol lock + FSM transitions.
-4. `_shared/reconcile.ts` — the loop.
-5. Refactor `execute-entry` / `execute-exit` / `protection-monitor` into thin job handlers calling executor primitives.
-6. Cron wiring (`/api/public/hooks/reconcile`, `/api/public/hooks/executor-tick`).
-7. Startup recovery flag + gating in `process-signal`.
-8. Dashboard surfaces (drift, reconcile runs, dead-letter execution jobs, protection alerts).
-9. Integration test plan against Bybit testnet before flipping live.
+- DB CHECK / trigger: an order with `execution_mode='live'` cannot reference a `position` with `execution_mode='paper'`, and vice versa.
+- `LiveBybitClient` constructor refuses to instantiate if `app_settings.paper_mode_enabled=true` AND no per-symbol live override exists for the call site — prevents accidental live orders while validating.
+- Switching the global flag from paper → live writes a `system_alerts(severity=warning, category=mode_switch)` and a forced banner on the dashboard for 24h.
+- Reset Paper State requires typing the symbol-set name; never affects live rows.
 
+---
+
+## 11. Out of Scope
+
+- Realistic order-book depth simulation (we use last-price + flat slippage).
+- Funding-rate / borrow-fee simulation.
+- Partial-fill simulation for paper market orders (always fully filled at simulated price; reflects Bybit market behavior closely enough).
+- Paper backtesting over historical bars — this mode is **forward** simulation against live ticker prices only.
+
+---
+
+## 12. Implementation Order (when approved)
+
+1. Schema migration: `execution_mode` enum, columns on existing tables, `paper_wallet`, `paper_market_prices`, settings additions.
+2. Refactor `_shared/bybit.ts` into `bybit-client.ts` interface + `LiveBybitClient` (still stub) + `PaperBybitClient`.
+3. `getClient(mode)` factory + `resolveMode(symbol)` helper. Add `mode_resolved` trail step in dispatcher.
+4. Stamp `execution_mode` on every job/order/position write; split reconcile loop by mode.
+5. Cron hooks `paper-prices` and `paper-tick` + ticker fetch helper.
+6. Dashboard: header badge, mode chips/filters on Signals/Orders/Positions, Symbols override field, Settings paper panel + reset.
+7. Safety rails: DB constraint trigger + live-client refusal guard + mode-switch alert.
+8. Test plan: replay one historical signal of each strategy code (EL1..XL5) end-to-end in paper, verify trail, fills, protection re-arm, TSL trigger, full close, and wallet accounting.
