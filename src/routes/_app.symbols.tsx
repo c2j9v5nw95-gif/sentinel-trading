@@ -36,6 +36,7 @@ function SymbolsPage() {
                 <tr>
                   <th className="py-2">Symbol</th>
                   <th>On</th>
+                  <th>Mode</th>
                   <th>Transport</th>
                   <th title="Account balance %">Bal %</th>
                   <th>Lev</th>
