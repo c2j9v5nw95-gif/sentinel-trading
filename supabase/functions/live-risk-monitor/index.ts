@@ -161,6 +161,13 @@ Deno.serve(async (req) => {
     _metrics: { ...metrics, breaches },
   });
 
+  notify({
+    severity: "critical", category: "live_risk_halt",
+    execution_mode: "live",
+    reason,
+    extra: { metrics, breaches },
+  });
+
   return json({ ok: true, breached: true, reason, metrics, breaches });
 });
 
