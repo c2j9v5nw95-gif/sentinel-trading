@@ -17,9 +17,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { evaluateHealth } from "./health-gate.ts";
 import { evaluateRisk, recordDecision } from "./risk-engine.ts";
-import { resolveStrategyCode, isExit, type SignalAction } from "./strategy-map.ts";
+import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
+import { withSymbolLock } from "./locks.ts";
+import { executeEntry, executeExit } from "./executor.ts";
 
 const MAX_RETRIES = 2;
 
