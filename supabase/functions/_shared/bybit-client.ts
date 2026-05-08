@@ -21,7 +21,7 @@ export interface SubmitOrderRequest {
   // For limit orders / SL/TSL — paper supports market only for now.
   orderType?: "Market" | "Limit";
   price?: number;
-  purpose?: "entry" | "exit" | "stop_loss" | "trailing_stop" | "tp1" | "tp2";
+  purpose?: "entry" | "sl" | "tsl" | "tp1" | "tp2_rest" | "exit_full" | "manual_close";
 }
 
 export interface SubmitOrderResult {

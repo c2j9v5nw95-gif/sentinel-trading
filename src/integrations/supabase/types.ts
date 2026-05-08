@@ -438,6 +438,7 @@ export type Database = {
           execution_mode: Database["public"]["Enums"]["execution_mode"]
           id: string
           last_exit_signal_id: string | null
+          last_seen_price: number | null
           leverage: number | null
           opened_at: string
           protection_state: Database["public"]["Enums"]["protection_state"]
@@ -452,7 +453,9 @@ export type Database = {
           tp2_done: boolean
           tsl_activated_at: string | null
           tsl_active: boolean
+          tsl_high_water_price: number | null
           tsl_order_id: string | null
+          tsl_trigger_price: number | null
           unprotected_since: string | null
           updated_at: string
         }
@@ -464,6 +467,7 @@ export type Database = {
           execution_mode?: Database["public"]["Enums"]["execution_mode"]
           id?: string
           last_exit_signal_id?: string | null
+          last_seen_price?: number | null
           leverage?: number | null
           opened_at?: string
           protection_state?: Database["public"]["Enums"]["protection_state"]
@@ -478,7 +482,9 @@ export type Database = {
           tp2_done?: boolean
           tsl_activated_at?: string | null
           tsl_active?: boolean
+          tsl_high_water_price?: number | null
           tsl_order_id?: string | null
+          tsl_trigger_price?: number | null
           unprotected_since?: string | null
           updated_at?: string
         }
@@ -490,6 +496,7 @@ export type Database = {
           execution_mode?: Database["public"]["Enums"]["execution_mode"]
           id?: string
           last_exit_signal_id?: string | null
+          last_seen_price?: number | null
           leverage?: number | null
           opened_at?: string
           protection_state?: Database["public"]["Enums"]["protection_state"]
@@ -504,7 +511,9 @@ export type Database = {
           tp2_done?: boolean
           tsl_activated_at?: string | null
           tsl_active?: boolean
+          tsl_high_water_price?: number | null
           tsl_order_id?: string | null
+          tsl_trigger_price?: number | null
           unprotected_since?: string | null
           updated_at?: string
         }

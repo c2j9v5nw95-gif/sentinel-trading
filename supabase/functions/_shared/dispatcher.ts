@@ -17,9 +17,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { evaluateHealth } from "./health-gate.ts";
 import { evaluateRisk, recordDecision } from "./risk-engine.ts";
-import { resolveStrategyCode, isExit, type SignalAction } from "./strategy-map.ts";
+import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
+import { withSymbolLock } from "./locks.ts";
+import { executeEntry, executeExit } from "./executor.ts";
 
 const MAX_RETRIES = 2;
 
@@ -164,27 +166,58 @@ export async function dispatchSignal(
       return { signalId: signal.id, status: "rejected", reason: risk.reason, gate: risk.gate };
     }
 
-    // Pass — accepted. Phase 3 will pick these up for execution.
+    // Pass — accepted. Run execution under symbol lock.
     const resolved = await resolveExecutionMode(sb, signal.symbol);
     trail.add("mode_resolved", "info", resolved.source, { mode: resolved.mode });
-    trail.add("exposure_limit", "skip", "phase3_execution");
     trail.add("accepted", "info");
+
+    const lockKind = exitMode ? "exit" : "entry";
+    const locked = await withSymbolLock(sb, signal.symbol, lockKind,
+      { signalId: signal.id, allowPreempt: exitMode },
+      async () => {
+        return exitMode
+          ? await executeExit(sb, signal, resolved.mode, trail)
+          : await executeEntry(sb, signal, resolved.mode, trail);
+      });
+
+    if (!locked.ok && locked.reason === "symbol_busy") {
+      trail.add("lock_busy", "fail", "symbol_in_use", locked.details as Record<string, unknown>);
+      await flushTrail(sb, signal.id, trail);
+      await sb.from("signals").update({
+        status: "queued", retry_count: (signal.retry_count ?? 0) + 1,
+        decision_reason: "symbol_busy_retry",
+      }).eq("id", signal.id);
+      return { signalId: signal.id, status: "requeued", reason: "symbol_busy" };
+    }
+    if (!locked.ok) throw new Error(`exec_error:${locked.details}`);
+
+    const exec = locked.value;
+    const finalStatus = exec.ok ? "processed" : "rejected";
+    trail.add(exec.ok ? "executed" : "exec_failed",
+      exec.ok ? "pass" : "fail", exec.reason,
+      { position_id: exec.position_id, fill_price: exec.fill_price, qty: exec.filled_qty });
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
-      status: "accepted", processed_at: new Date().toISOString(),
-      decision_reason: `gates_passed:${resolved.mode}`,
+      status: finalStatus, processed_at: new Date().toISOString(),
+      decision_reason: exec.ok
+        ? `executed:${resolved.mode}`
+        : `exec_rejected:${exec.reason ?? "unknown"}`,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
-      action: "signal_dispatched", target: signal.id,
+      action: "signal_executed", target: signal.id,
       after: {
-        gate: "risk", outcome: "pass",
-        action, symbol: signal.symbol, strategy: signal.strategy, tag: signal.tag,
-        portion: signal.portion, mode,
-        execution_mode: resolved.mode, mode_source: resolved.source,
-        note: "phase2: execution stub; not sent to Bybit",
+        action, symbol: signal.symbol, mode: resolved.mode, lock_kind: lockKind,
+        ok: exec.ok, reason: exec.reason, position_id: exec.position_id,
+        fill_price: exec.fill_price, filled_qty: exec.filled_qty,
+        protection_state: exec.protection_state,
       },
     });
-    return { signalId: signal.id, status: "accepted", reason: "gates_passed", gate: "risk" };
+    return {
+      signalId: signal.id,
+      status: exec.ok ? "accepted" : "rejected",
+      reason: exec.reason ?? (exec.ok ? "executed" : "exec_failed"),
+      gate: "execution",
+    };
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     const stack = (e as Error).stack ?? null;
