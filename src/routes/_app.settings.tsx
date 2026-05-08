@@ -286,6 +286,7 @@ function SettingsPage() {
       <div className="mt-4 grid grid-cols-1 gap-4">
         <LiveRiskBreakerCard />
         <BybitDiagnosticsPanel />
+        <TelegramNotificationsCard />
       </div>
     </>
   );
