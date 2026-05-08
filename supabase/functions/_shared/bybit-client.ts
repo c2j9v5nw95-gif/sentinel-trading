@@ -64,23 +64,18 @@ export interface BybitClient {
   cancelOrder(symbol: string, orderLinkId: string): Promise<void>;
 }
 
-class LiveBybitClient implements BybitClient {
-  readonly mode: ExecutionMode = "live";
-  // deno-lint-ignore no-unused-vars
-  constructor(private sb: SupabaseClient) {}
-  private nope(): never {
-    throw new Error("mainnet_execution_disabled: enable via Phase 4 deployment only");
-  }
-  async getPosition(_s: string): Promise<PositionSnapshot> { this.nope(); }
-  async getWalletBalance(): Promise<WalletSnapshot> { this.nope(); }
-  async submitOrder(_r: SubmitOrderRequest): Promise<SubmitOrderResult> { this.nope(); }
-  async setLeverage(_s: string, _l: number): Promise<void> { this.nope(); }
-  async setTradingStop(_a: unknown): Promise<void> { this.nope(); }
-  async cancelOrder(_s: string, _o: string): Promise<void> { this.nope(); }
-}
+// LiveBybitClient lives in live-client.ts and is gated by liveExecutionGate.
+// The factory below refuses to instantiate it unless the gate passes — keeping
+// mainnet execution blocked by default while remaining schema/API-ready.
+import { LiveBybitClient, liveExecutionGate } from "./live-client.ts";
 
 export function getClient(mode: ExecutionMode, sb: SupabaseClient): BybitClient {
   if (mode === "paper")   return new PaperBybitClient(sb);
   if (mode === "testnet") return new TestnetBybitClient(sb);
-  return new LiveBybitClient(sb);
+  // mode === "live" — construction is gated. Throw a sync error here; callers
+  // should pre-check via liveExecutionGate() and resolveExecutionMode() to
+  // avoid ever requesting 'live' before all conditions are met.
+  throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
 }
+
+export { liveExecutionGate, LiveBybitClient };
