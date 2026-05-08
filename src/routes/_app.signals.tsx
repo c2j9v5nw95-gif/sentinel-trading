@@ -39,6 +39,7 @@ function SignalsPage() {
                 <th>Tag</th>
                 <th>Portion</th>
                 <th>Status</th>
+                <th>Decision</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -59,10 +60,15 @@ function SignalsPage() {
                         ? "text-danger text-xs uppercase"
                         : s.status === "accepted"
                         ? "text-success text-xs uppercase"
+                        : s.status === "processed"
+                        ? "text-xs uppercase text-muted-foreground"
                         : "text-xs uppercase text-muted-foreground"
                     }
                   >
                     {s.status}
+                  </td>
+                  <td className="text-xs text-muted-foreground max-w-[280px] truncate" title={s.decision_reason ?? ""}>
+                    {s.decision_reason ?? "—"}
                   </td>
                 </tr>
               ))}
