@@ -257,6 +257,12 @@ export async function dispatchSignal(
       message: `Signal moved to dead-letter: ${msg.slice(0, 160)}`,
       context: { signal_id: signal.id },
     });
+    notify({
+      severity: "critical", category: "dead_letter",
+      symbol: signal.symbol ?? null,
+      reason: msg.slice(0, 200),
+      extra: { signal_id: signal.id },
+    });
     return { signalId: signal.id, status: "dead_letter", reason: msg };
   }
 }
