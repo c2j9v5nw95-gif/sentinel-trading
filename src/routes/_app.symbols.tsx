@@ -46,8 +46,9 @@ function SymbolsPage() {
   const setOverride = useMutation({
     mutationFn: async (args: { id: string; value: ModeOverride; applyLiveDefaults?: boolean }) => {
       const dbValue = args.value === "inherit_global" ? null : args.value;
-      const patch: Record<string, unknown> = { execution_mode_override: dbValue };
-      if (args.applyLiveDefaults) Object.assign(patch, LIVE_DEFAULTS);
+      const patch = args.applyLiveDefaults
+        ? { execution_mode_override: dbValue, ...LIVE_DEFAULTS }
+        : { execution_mode_override: dbValue };
       const { error } = await supabase.from("symbols").update(patch).eq("id", args.id);
       if (error) throw error;
     },
