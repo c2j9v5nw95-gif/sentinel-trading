@@ -45,14 +45,12 @@ export class LiveBybitClient extends TestnetBybitClient {
  */
 export async function liveExecutionGate(sb: SupabaseClient): Promise<string | null> {
   const { data: s } = await sb.from("app_settings")
-    .select("live_enabled,emergency_stop,testnet_validated_at")
+    .select("live_enabled,emergency_stop,live_risk_halted")
     .maybeSingle();
   if (!s) return "settings_missing";
   if (!s.live_enabled) return "live_disabled_globally";
   if (s.emergency_stop) return "emergency_stop_active";
-  if (!s.testnet_validated_at) return "testnet_not_validated";
-  const ageMs = Date.now() - new Date(s.testnet_validated_at).getTime();
-  if (ageMs > 24 * 60 * 60_000) return "testnet_validation_stale";
+  if (s.live_risk_halted) return "live_risk_breaker_tripped";
 
   const { count } = await sb.from("invariant_violations")
     .select("id", { count: "exact", head: true })
