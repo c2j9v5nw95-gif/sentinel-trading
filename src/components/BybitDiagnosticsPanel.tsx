@@ -180,7 +180,7 @@ export function BybitDiagnosticsPanel() {
               ))}
             </div>
 
-            {view.last_response && (
+            {view.last_response ? (
               <details className="rounded-md border border-border bg-background/60">
                 <summary className="cursor-pointer px-2 py-1 text-xs text-muted-foreground">
                   Last raw API response
