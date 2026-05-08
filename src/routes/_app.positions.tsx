@@ -46,6 +46,7 @@ function PositionsPage() {
               {data!.map((p) => (
                 <tr key={p.id}>
                   <td className="py-2 font-medium">{p.symbol}</td>
+                  <td><ModeChip mode={p.execution_mode} /></td>
                   <td className={p.side === "long" ? "text-success" : "text-danger"}>
                     {p.side.toUpperCase()}
                   </td>
