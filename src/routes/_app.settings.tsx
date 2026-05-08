@@ -244,22 +244,26 @@ function SettingsPage() {
                 )}
               </div>
 
-              <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
-                <dt className="text-muted-foreground">Virtual starting balance</dt>
-                <dd>{Number(data.paper_starting_balance_usdt).toLocaleString()} USDT</dd>
-                <dt className="text-muted-foreground">Simulated taker fee</dt>
-                <dd>{data.paper_fee_bps} bps</dd>
-                <dt className="text-muted-foreground">Simulated slippage</dt>
-                <dd>{data.paper_slippage_bps} bps</dd>
-                <dt className="text-muted-foreground">Fill latency</dt>
-                <dd>{data.paper_fill_latency_ms} ms</dd>
-                <dt className="text-muted-foreground">Wallet balance (paper)</dt>
-                <dd>{wallet ? `${Number(wallet.balance_usdt).toFixed(2)} USDT` : "—"}</dd>
-                <dt className="text-muted-foreground">Realized PnL (paper)</dt>
-                <dd className={Number(wallet?.realized_pnl ?? 0) >= 0 ? "text-success" : "text-danger"}>
-                  {wallet ? Number(wallet.realized_pnl).toFixed(2) : "—"}
-                </dd>
-              </dl>
+              {currentMode === "live" ? (
+                <LiveWalletPanel />
+              ) : (
+                <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
+                  <dt className="text-muted-foreground">Virtual starting balance</dt>
+                  <dd>{Number(data.paper_starting_balance_usdt).toLocaleString()} USDT</dd>
+                  <dt className="text-muted-foreground">Simulated taker fee</dt>
+                  <dd>{data.paper_fee_bps} bps</dd>
+                  <dt className="text-muted-foreground">Simulated slippage</dt>
+                  <dd>{data.paper_slippage_bps} bps</dd>
+                  <dt className="text-muted-foreground">Fill latency</dt>
+                  <dd>{data.paper_fill_latency_ms} ms</dd>
+                  <dt className="text-muted-foreground">Wallet balance (paper)</dt>
+                  <dd>{wallet ? `${Number(wallet.balance_usdt).toFixed(2)} USDT` : "—"}</dd>
+                  <dt className="text-muted-foreground">Realized PnL (paper)</dt>
+                  <dd className={Number(wallet?.realized_pnl ?? 0) >= 0 ? "text-success" : "text-danger"}>
+                    {wallet ? Number(wallet.realized_pnl).toFixed(2) : "—"}
+                  </dd>
+                </dl>
+              )}
             </div>
           ) : null}
         </Card>
