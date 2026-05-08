@@ -366,6 +366,12 @@ Deno.serve(async (req) => {
       message: `${mode.toUpperCase()} Bybit diagnostic failed: ${topError.code}`,
       context: { mode, error: topError, failed_checks: failed.map(([k]) => k) },
     });
+    notify({
+      severity: "warning", category: "bybit_diagnostic_failure",
+      execution_mode: mode,
+      reason: `${topError.code}: ${topError.message}`,
+      extra: { failed_checks: failed.map(([k]) => k) },
+    });
   }
 
   await persist(sb, u.user.id, mode, ok, checks, permissions, accountType, lastResponse, topError);
