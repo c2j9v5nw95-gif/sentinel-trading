@@ -70,9 +70,12 @@ export async function executeEntry(
   }
 
   const wallet = await client.getWalletBalance();
-  // Mark price: prefer paper_market_prices for paper, request payload otherwise.
-  const { data: priceRow } = await sb.from("paper_market_prices")
-    .select("price,received_at").eq("symbol", signal.symbol).maybeSingle();
+  // Mark price: paper_market_prices for paper, signal payload otherwise.
+  // For testnet/live the executor relies on the TradingView payload price; the
+  // venue is the source of truth for fills (avgFillPrice replaces this).
+  const { data: priceRow } = mode === "paper"
+    ? await sb.from("paper_market_prices").select("price,received_at").eq("symbol", signal.symbol).maybeSingle()
+    : { data: null as { price: number; received_at: string } | null };
   const payloadPrice = Number(signal.payload?.price ?? signal.payload?.close ?? NaN);
   const markPrice = priceRow ? Number(priceRow.price)
     : (Number.isFinite(payloadPrice) && payloadPrice > 0 ? payloadPrice : NaN);
@@ -230,8 +233,9 @@ export async function executeExit(
 
   const orderLink = linkId(`X-${signal.symbol}`);
   const submitSide = side === "long" ? "Sell" : "Buy";
-  const { data: priceRow } = await sb.from("paper_market_prices")
-    .select("price").eq("symbol", signal.symbol).maybeSingle();
+  const { data: priceRow } = mode === "paper"
+    ? await sb.from("paper_market_prices").select("price").eq("symbol", signal.symbol).maybeSingle()
+    : { data: null as { price: number } | null };
   const refPrice = priceRow ? Number(priceRow.price) : (posRow.last_seen_price ?? posRow.entry_price);
 
   const fill = await client.submitOrder({
