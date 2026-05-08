@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppSymbolsRouteImport } from './routes/_app.symbols'
 import { Route as AppStrategiesRouteImport } from './routes/_app.strategies'
+import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
 import { Route as AppSignalsRouteImport } from './routes/_app.signals'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppPositionsRouteImport } from './routes/_app.positions'
@@ -43,6 +44,11 @@ const AppSymbolsRoute = AppSymbolsRouteImport.update({
 const AppStrategiesRoute = AppStrategiesRouteImport.update({
   id: '/strategies',
   path: '/strategies',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSimulatorRoute = AppSimulatorRouteImport.update({
+  id: '/simulator',
+  path: '/simulator',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSignalsRoute = AppSignalsRouteImport.update({
@@ -85,6 +91,7 @@ export interface FileRoutesByFullPath {
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
+  '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
 }
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
+  '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
 }
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/_app/positions': typeof AppPositionsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/signals': typeof AppSignalsRoute
+  '/_app/simulator': typeof AppSimulatorRoute
   '/_app/strategies': typeof AppStrategiesRoute
   '/_app/symbols': typeof AppSymbolsRoute
 }
@@ -125,6 +134,7 @@ export interface FileRouteTypes {
     | '/positions'
     | '/settings'
     | '/signals'
+    | '/simulator'
     | '/strategies'
     | '/symbols'
   fileRoutesByTo: FileRoutesByTo
@@ -137,6 +147,7 @@ export interface FileRouteTypes {
     | '/positions'
     | '/settings'
     | '/signals'
+    | '/simulator'
     | '/strategies'
     | '/symbols'
   id:
@@ -150,6 +161,7 @@ export interface FileRouteTypes {
     | '/_app/positions'
     | '/_app/settings'
     | '/_app/signals'
+    | '/_app/simulator'
     | '/_app/strategies'
     | '/_app/symbols'
   fileRoutesById: FileRoutesById
@@ -195,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/strategies'
       fullPath: '/strategies'
       preLoaderRoute: typeof AppStrategiesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/simulator': {
+      id: '/_app/simulator'
+      path: '/simulator'
+      fullPath: '/simulator'
+      preLoaderRoute: typeof AppSimulatorRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/signals': {
@@ -249,6 +268,7 @@ interface AppRouteChildren {
   AppPositionsRoute: typeof AppPositionsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSignalsRoute: typeof AppSignalsRoute
+  AppSimulatorRoute: typeof AppSimulatorRoute
   AppStrategiesRoute: typeof AppStrategiesRoute
   AppSymbolsRoute: typeof AppSymbolsRoute
 }
@@ -260,6 +280,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppPositionsRoute: AppPositionsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSignalsRoute: AppSignalsRoute,
+  AppSimulatorRoute: AppSimulatorRoute,
   AppStrategiesRoute: AppStrategiesRoute,
   AppSymbolsRoute: AppSymbolsRoute,
 }

@@ -9,6 +9,7 @@ const NAV: { to: string; label: string }[] = [
   { to: "/symbols", label: "Symbols" },
   { to: "/alerts", label: "Alerts" },
   { to: "/audit", label: "Audit" },
+  { to: "/simulator", label: "Simulator" },
   { to: "/settings", label: "Settings" },
 ];
 
