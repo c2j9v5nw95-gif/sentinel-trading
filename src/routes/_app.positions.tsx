@@ -77,6 +77,9 @@ function PositionsPage() {
           </table>
         )}
       </Card>
+      <div className="mt-4">
+        <ExecutionLocksPanel />
+      </div>
     </>
   );
 }
