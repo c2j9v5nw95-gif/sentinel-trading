@@ -1,64 +1,79 @@
-# Per-Symbol Exposure Safety Caps
+# Phase 2: Signal Pipeline (no live execution)
 
-Hard safety limits that override all sizing formulas. If either cap would be exceeded, the trade is rejected and logged as a risk decision — never silently clamped.
+Wire the queue from `signals` (status=queued) through normalization → strategy mapping → Health Gate → Risk Engine → terminal status. Bybit calls remain stubs; the pipeline ends by marking the signal `ready_for_execution` (or `rejected`) with full risk_decisions / audit trails.
 
-## 1. Database (migration)
+## 1. Shared modules (already in place — small hardening only)
 
-Add two nullable columns to `public.symbols`:
+- `parser.ts`, `normalize.ts`, `dedupe.ts`, `strategy-map.ts` already work and are used by `ingest-webhook`. Only changes:
+  - `parser.ts`: also accept `barTime` casing variants and ignore an optional `secret=` line so it doesn't pollute `payload.raw` after auth.
+  - `strategy-map.ts`: add `sideOf(action)` helper and a `requiresPosition(action)` helper for the Risk Engine.
+- New `supabase/functions/_shared/health-gate.ts`:
+  - `evaluateHealth(sb, { symbol, strategy, tag })` → `{ pass, reason, metrics }`.
+  - Reads the latest `health_snapshots` row for `(symbol, strategy, tag)` and the matching `strategies` row; compares to `health_min_winrate`, `health_min_profit_factor`, `health_min_net_profit` (NULL threshold = skip that check).
+  - Returns `pass=true` with `reason="no_thresholds_configured"` if strategy has no thresholds, or `reason="no_health_data"` if no snapshot yet (configurable: default = pass with warning, never silently block until at least one stats alert was received).
+  - HEALTH alerts always pass this gate (it's only consulted for trade signals).
+- New `supabase/functions/_shared/risk-engine.ts`:
+  - `evaluateRisk(sb, signal, mapping)` → `{ outcome: 'pass'|'block', gate, reason, metrics }`.
+  - Sequential gates, first failure wins:
+    1. `kill_switch` — `app_settings.emergency_stop` blocks ALL; `entries_paused` blocks ENTER-* only.
+    2. `risk` — symbol row exists & `enabled=true`; strategy row exists & `enabled=true`.
+    3. `transport_mismatch` — if `symbols.preferred_transport != 'either'` and `signal.transport != preferred_transport`, block.
+    4. `unprotected_pause` — if any open `positions.protection_state='unprotected'`, block ENTER-* (exits always allowed).
+    5. `risk` (concurrency) — count distinct open positions; block ENTER-* when `>= app_settings.max_concurrent_positions`.
+    6. `risk` (no_position) — EXIT-* with no matching open position → block with reason `no_open_position`.
+  - Each call ends with one `risk_decisions` insert (`gate`, `outcome`, `reason`, `metrics`, `signal_id`).
+  - Health Gate is run separately (only for trade signals, before Risk Engine) so the rejection reason cleanly attributes to `gate=health`.
+- New `supabase/functions/_shared/dispatcher.ts`:
+  - `dispatchSignal(sb, signalId)` — pure function that runs one signal end-to-end. Used by both `process-signal` (queue worker) and a future post-insert trigger.
 
-- `max_position_notional_usdt numeric NULL` — hard cap on estimated exposure (USDT notional)
-- `max_margin_usage_usdt numeric NULL` — hard cap on margin allocated (USDT)
+## 2. `record-health` (implement)
 
-CHECK constraints: each must be `> 0` when set. NULL = no cap (uncapped).
+POST `{ signal_id }` (or signal row) and:
+1. Fetch the signal; assert `type='stats'`.
+2. Insert `health_snapshots` row with `symbol`, `strategy`, `tag`, `net_profit`, `winrate`, `profit_factor`, `bar_time`, `source_signal_id`, raw `payload`.
+3. Update `strategies.last_health_at = now()` (upsert by `(name, tag)` if missing — but do NOT auto-create strategies with thresholds; create with NULL thresholds so the gate falls back to the safe default).
+4. Mark signal `status='processed'`, `processed_at=now()`, `decision_reason='health_recorded'`.
+5. Return `{ ok, snapshot_id }`.
 
-No backfill — existing symbols stay NULL (uncapped) until the operator configures them.
+## 3. `process-signal` (implement)
 
-## 2. Sizing module (`supabase/functions/_shared/sizing.ts`)
+Two invocation modes, same handler:
+- POST with `{ signal_id }` → process that one signal.
+- POST with `{}` (cron) → claim up to N (default 25) `signals` rows where `status='queued'` ordered by `received_at`, process in order.
 
-Extend `SymbolSizing` with the two optional caps. Extend `SizingBreakdown` with:
+Per signal:
+1. Optimistic claim: `update signals set status='processing' where id=$1 and status='queued' returning *`. If no row, skip (already taken / dedupe collision).
+2. If `type='stats'`: call record-health logic inline (same module), commit, continue.
+3. If `type='trade'`:
+   - Resolve mapping from `strategy_code` (re-resolve defensively; ingest already populated columns).
+   - **Health Gate** — `evaluateHealth(...)`. On block: `risk_decisions` row with `gate='health'`, mark signal `status='rejected'`, `decision_reason=...`, return.
+   - **Risk Engine** — `evaluateRisk(...)`. On block: signal `status='rejected'`, `decision_reason=...`, return.
+   - On pass: mark signal `status='ready_for_execution'`, `decision_reason='gates_passed'`, `processed_at=now()`. **Do NOT call Bybit.** Phase 3 will pick these rows up.
+4. Always write an `audit_log` entry with `action='signal_dispatched'` and the full decision context.
 
-- `maxExposureUsdt: number | null`
-- `maxMarginUsdt: number | null`
-- `exposureCapExceeded: boolean`
-- `marginCapExceeded: boolean`
-- `capRejectionReason: string | null` (e.g. `"exposure 620.00 > cap 500.00"`)
+## 4. Trigger from ingest
 
-`computeEntrySizing` continues to compute the formula-driven values, then evaluates the caps and sets the rejection fields. It does NOT clamp — clamping would silently shrink a trade the operator didn't authorize. Caller is responsible for blocking.
+`ingest-webhook` already inserts the signal. After insertion, fire-and-forget POST to `process-signal` with `{ signal_id }` using the project's internal function URL + service-role key (no `await` on the response, just `void fetch(...)` with a 5s abort). This gives sub-second latency without blocking the TradingView ACK. The cron-style empty-body invocation remains as a safety net for missed dispatches.
 
-`validateSymbolSizing` additionally rejects non-positive caps (defense in depth alongside the DB CHECK).
+## 5. Status enum check
 
-## 3. execute-entry enforcement
+Confirm `signal_status` enum already includes `queued`, `processing`, `rejected`, `processed`, and add `ready_for_execution` if missing. Migration only if needed (will be checked first via `pg_enum` SELECT).
 
-Order of operations (updated):
+## 6. Dashboard surfacing (light pass)
 
-1. Fetch fresh balance + ticker + symbol info.
-2. `validateSymbolSizing` — abort on invalid config.
-3. `computeEntrySizing` — produces breakdown including cap evaluation.
-4. **NEW pre-flight gate:** if `exposureCapExceeded || marginCapExceeded`:
-   - Insert `risk_decisions` row: `gate = 'exposure_limit'`, `outcome = 'block'`, `reason = capRejectionReason`, `metrics = { estimatedExposureUsdt, marginAllocatedUsdt, maxExposureUsdt, maxMarginUsdt, leverage, multiplier, accountBalancePercent, availableBalanceUsdt, markPrice }`, `signal_id` = current signal.
-   - Mark signal `status = 'rejected'`, `decision_reason = capRejectionReason`.
-   - Write `audit_log` entry `action = 'entry_rejected_exposure_cap'` with the same metrics.
-   - Return without setting leverage or placing any order.
-5. Otherwise proceed with set-leverage → market order → SL attach.
+- `/signals`: show `status`, `decision_reason`, latest matching `risk_decisions.gate` for rejected rows.
+- `/audit` already lists `audit_log`; surface the new `signal_dispatched` action with metric chips (gate, outcome).
+- No new pages.
 
-Enum check: `risk_decisions.gate` and `outcome` are USER-DEFINED enums. The migration must `ALTER TYPE` to add `'exposure_limit'` to the gate enum if not present (and confirm `'block'` exists on the outcome enum). I'll inspect current enum values in the migration and add only what's missing.
+## 7. Out of scope for Phase 2
 
-## 4. Dashboard
-
-**Symbols page (`src/routes/_app.symbols.tsx`):** add two columns `Max Notional` and `Max Margin` (show `—` when NULL). Update the "Sizing model" card to document caps as hard overrides.
-
-**Overview / Positions:** when an open position or recent entry attempt exists, show a small "Sizing snapshot" block per symbol with: available balance, margin allocated, leverage, multiplier, estimated exposure, estimated qty, max exposure cap, max margin cap. Cap rows turn red when the formula value would exceed the cap.
-
-**Audit / Signals page:** rejected signals already render via `decision_reason`; surface `gate=exposure_limit` rejections with a red badge and expand to show the metrics JSON.
-
-## 5. Out of scope
-
-- No changes to exit sizing (caps are entry-only — exits use live Bybit position size).
-- No retroactive cap enforcement on already-open positions.
-- No global (cross-symbol) exposure cap in this pass; that's a separate `app_settings` change if requested later.
+- Bybit calls: `execute-entry`, `execute-exit`, `protection-monitor`, leverage push remain stubs. Their inputs (sizing breakdown, exposure caps, SL params) are already Phase-1/3 defined.
+- Email ingest (`ingest-email`) stays disabled.
+- pg_cron schedule wiring; we'll provide the endpoint and document the cron call but leave actual scheduling for the Phase 3 review.
 
 ## Technical notes
 
-- Caps are evaluated on the *formula* exposure (margin × leverage × multiplier), not on post-fill notional, so the gate runs before any Bybit call.
-- Rejection is logged exactly once per signal even if `process-signal` retries; idempotency keyed on `signal_id`.
-- All numerics compared with explicit `Number(...)` conversion since Postgres `numeric` returns strings via PostgREST.
+- All sb calls use `serviceClient()`; RLS bypassed intentionally (background worker).
+- `risk_decisions.metrics` is `jsonb` — store all numeric inputs as numbers (PostgREST returns `numeric` as string; convert with `Number(...)`).
+- Concurrency count: `select count(*) from positions where closed_at is null` filtered by symbol when needed.
+- Idempotency: optimistic `status` claim guarantees one worker per signal; ingest's unique `dedupe_key` already prevents duplicate inserts.

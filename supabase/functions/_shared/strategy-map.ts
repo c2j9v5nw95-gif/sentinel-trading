@@ -7,6 +7,7 @@ export type ExitReason = "tp1" | "tp2_rest" | "sl_failsafe" | "opposite" | "tren
 export type EntryReason = "long_entry" | "short_entry";
 export type Side = "long" | "short";
 export type Portion = "full" | "tp1" | "rest";
+export type SignalAction = "ENTER-LONG" | "ENTER-SHORT" | "EXIT-LONG" | "EXIT-SHORT" | "HEALTH";
 
 export interface StrategyMapping {
   side: Side;
@@ -38,7 +39,21 @@ export function resolveStrategyCode(code: string | null | undefined): StrategyMa
   return MAP[code.trim().toUpperCase()] ?? null;
 }
 
-export function actionFor(mapping: StrategyMapping): "ENTER-LONG" | "ENTER-SHORT" | "EXIT-LONG" | "EXIT-SHORT" {
+export function actionFor(mapping: StrategyMapping): Exclude<SignalAction, "HEALTH"> {
   if (mapping.kind === "entry") return mapping.side === "long" ? "ENTER-LONG" : "ENTER-SHORT";
   return mapping.side === "long" ? "EXIT-LONG" : "EXIT-SHORT";
+}
+
+export function sideOf(action: SignalAction | null | undefined): Side | null {
+  if (action === "ENTER-LONG" || action === "EXIT-LONG") return "long";
+  if (action === "ENTER-SHORT" || action === "EXIT-SHORT") return "short";
+  return null;
+}
+
+export function isEntry(action: SignalAction | null | undefined): boolean {
+  return action === "ENTER-LONG" || action === "ENTER-SHORT";
+}
+
+export function isExit(action: SignalAction | null | undefined): boolean {
+  return action === "EXIT-LONG" || action === "EXIT-SHORT";
 }

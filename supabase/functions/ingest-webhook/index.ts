@@ -116,7 +116,19 @@ Deno.serve(async (req) => {
     signal_id: signal?.id ?? null,
   });
 
-  // TODO Phase 2: trigger process-signal here (pg_net or DB trigger)
+  // Fire-and-forget dispatcher trigger (sub-second latency, doesn't block ACK).
+  if (signal?.id) {
+    const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/process-signal`;
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, apikey: key },
+      body: JSON.stringify({ signal_id: signal.id }),
+      signal: ctrl.signal,
+    }).catch(() => { /* swallow; cron is the safety net */ }).finally(() => clearTimeout(t));
+  }
 
   return new Response(
     JSON.stringify({ ok: true, signal_id: signal?.id ?? null, dedupe: dedupeHit }),
