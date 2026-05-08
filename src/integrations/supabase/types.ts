@@ -34,6 +34,7 @@ export type Database = {
           paper_slippage_bps: number
           paper_starting_balance_usdt: number
           singleton: boolean
+          testnet_enabled: boolean
           updated_at: string
           webhook_secret_hint: string | null
           webhook_secret_rotated_at: string | null
@@ -58,6 +59,7 @@ export type Database = {
           paper_slippage_bps?: number
           paper_starting_balance_usdt?: number
           singleton?: boolean
+          testnet_enabled?: boolean
           updated_at?: string
           webhook_secret_hint?: string | null
           webhook_secret_rotated_at?: string | null
@@ -82,6 +84,7 @@ export type Database = {
           paper_slippage_bps?: number
           paper_starting_balance_usdt?: number
           singleton?: boolean
+          testnet_enabled?: boolean
           updated_at?: string
           webhook_secret_hint?: string | null
           webhook_secret_rotated_at?: string | null
@@ -1155,7 +1158,7 @@ export type Database = {
       app_role: "operator"
       auth_status: "ok" | "bad_secret" | "malformed"
       entry_reason: "long_entry" | "short_entry"
-      execution_mode: "live" | "paper"
+      execution_mode: "live" | "paper" | "testnet"
       exit_reason:
         | "tp1"
         | "tp2_rest"
@@ -1346,7 +1349,7 @@ export const Constants = {
       app_role: ["operator"],
       auth_status: ["ok", "bad_secret", "malformed"],
       entry_reason: ["long_entry", "short_entry"],
-      execution_mode: ["live", "paper"],
+      execution_mode: ["live", "paper", "testnet"],
       exit_reason: ["tp1", "tp2_rest", "sl_failsafe", "opposite", "trend_fail"],
       invariant_severity: ["info", "warning", "critical"],
       lock_kind: ["entry", "exit", "replay", "reconcile", "protect", "manual"],
