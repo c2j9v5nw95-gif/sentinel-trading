@@ -776,7 +776,13 @@ export type Database = {
         | "EXIT-SHORT"
         | "HEALTH"
       signal_portion: "full" | "tp1" | "rest"
-      signal_status: "queued" | "processing" | "accepted" | "rejected" | "error"
+      signal_status:
+        | "queued"
+        | "processing"
+        | "accepted"
+        | "rejected"
+        | "error"
+        | "processed"
       signal_type: "trade" | "stats"
       transport_kind: "webhook" | "email"
       transport_pref: "webhook" | "email" | "either"
@@ -950,7 +956,14 @@ export const Constants = {
         "HEALTH",
       ],
       signal_portion: ["full", "tp1", "rest"],
-      signal_status: ["queued", "processing", "accepted", "rejected", "error"],
+      signal_status: [
+        "queued",
+        "processing",
+        "accepted",
+        "rejected",
+        "error",
+        "processed",
+      ],
       signal_type: ["trade", "stats"],
       transport_kind: ["webhook", "email"],
       transport_pref: ["webhook", "email", "either"],
