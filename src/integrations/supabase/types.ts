@@ -783,6 +783,7 @@ export type Database = {
         | "rejected"
         | "error"
         | "processed"
+        | "dead_letter"
       signal_type: "trade" | "stats"
       transport_kind: "webhook" | "email"
       transport_pref: "webhook" | "email" | "either"
@@ -963,6 +964,7 @@ export const Constants = {
         "rejected",
         "error",
         "processed",
+        "dead_letter",
       ],
       signal_type: ["trade", "stats"],
       transport_kind: ["webhook", "email"],
