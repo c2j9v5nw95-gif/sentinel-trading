@@ -140,6 +140,13 @@ async function processPosition(sb: SupabaseClient, pos: PositionRow): Promise<st
       protection_state: "sl_and_tsl",
     }).eq("id", pos.id);
     await logEvent(sb, pos.id, "tsl_activated", { price, trigger, callbackPct });
+    if (pos.execution_mode !== "paper") {
+      notify({
+        severity: "info", category: "tsl_update",
+        execution_mode: pos.execution_mode, symbol: pos.symbol, side: pos.side,
+        price, reason: `TSL activated @ ${callbackPct * 100}% callback`,
+      });
+    }
     return "tsl_activated";
   }
 
