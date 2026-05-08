@@ -93,9 +93,16 @@ function SymbolsPage() {
             Exits always use the live Bybit position size — multiplier and balance % are
             entry-only. Leverage is applied via Bybit V5 before each entry.
           </p>
+          <p>
+            <span className="font-medium text-destructive">Hard caps override sizing.</span>{" "}
+            If estimated exposure exceeds <code>max_position_notional_usdt</code> or
+            margin exceeds <code>max_margin_usage_usdt</code>, the entry is rejected and
+            logged as a risk decision (<code>gate=exposure_limit</code>,{" "}
+            <code>outcome=block</code>). Trades are never silently shrunk.
+          </p>
           <p className="text-xs">
             Validation: balance % ∈ [0.1, 100] · multiplier ∈ [0.1, 3.0] · leverage capped
-            by the symbol's Bybit limit.
+            by the symbol's Bybit limit · caps must be &gt; 0 when set (blank = no cap).
           </p>
         </div>
       </Card>
