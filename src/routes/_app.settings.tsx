@@ -4,6 +4,7 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
+import { BybitDiagnosticsPanel } from "@/components/BybitDiagnosticsPanel";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -42,6 +43,22 @@ function SettingsPage() {
         .is("resolved_at", null)
         .is("acknowledged_at", null);
       return count ?? 0;
+    },
+    refetchInterval: 10_000,
+  });
+
+  // Latest live-mode Bybit diagnostic — required for live-gate.
+  const { data: liveDiag } = useQuery({
+    queryKey: ["bybit_diagnostics", "live", "latest"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("bybit_diagnostics")
+        .select("ok, created_at")
+        .eq("mode", "live")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
     },
     refetchInterval: 10_000,
   });
