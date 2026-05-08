@@ -120,19 +120,11 @@ Deno.serve(async (req) => {
   }
   checks.credentials_present = { ok: true };
 
-  // Live-mode safety gate: only allow live diagnostics when live_enabled is true.
+  // NOTE: read-only live diagnostics are always permitted — they're how the
+  // operator validates the live API keys BEFORE flipping live_enabled on.
+  // Mutating actions (safe_order_test) still require live_enabled below.
   if (mode === "live") {
-    const { data: settings } = await sb.from("app_settings").select("live_enabled").maybeSingle();
-    if (!settings?.live_enabled) {
-      const err = {
-        code: "live_disabled",
-        message: "Global live_enabled flag is false. Live diagnostics are blocked until it is turned on.",
-      };
-      checks.live_gate = { ok: false, error: err };
-      await persist(sb, u.user.id, mode, false, checks, null, null, null, err);
-      return json({ ok: false, mode, checks, error: err });
-    }
-    checks.live_gate = { ok: true };
+    checks.live_gate = { ok: true, detail: { note: "read-only checks allowed regardless of live_enabled" } };
   }
 
   const rest = new BybitRest({ ...creds, recvWindowMs: 5000 });
