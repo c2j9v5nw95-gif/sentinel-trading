@@ -282,7 +282,8 @@ function SettingsPage() {
           </p>
         </Card>
       </div>
-      <div className="mt-4">
+      <div className="mt-4 grid grid-cols-1 gap-4">
+        <LiveRiskBreakerCard />
         <BybitDiagnosticsPanel />
       </div>
     </>
