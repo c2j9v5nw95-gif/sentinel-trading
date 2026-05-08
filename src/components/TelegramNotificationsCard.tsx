@@ -63,11 +63,13 @@ export function TelegramNotificationsCard() {
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
       if (!settings) return;
-      const { error } = await supabase
-        .from("notification_settings" as never)
+      const { error } = await (supabase
+        .from("notification_settings" as never) as never as {
+          update: (p: Record<string, unknown>) => { eq: (k: string, v: string) => Promise<{ error: unknown }> };
+        })
         .update(patch)
         .eq("id", settings.id);
-      if (error) throw error;
+      if (error) throw error as Error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["notification_settings"] }),
   });
