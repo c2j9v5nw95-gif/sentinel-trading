@@ -302,13 +302,21 @@ async function persistRun(sb: SupabaseClient, violations: Violation[]) {
         detail: viol.detail ?? {},
         run_id: runId,
       });
-      // Critical -> system alert
+      // Critical -> system alert + Telegram
       if (viol.severity === "critical") {
         await sb.from("system_alerts").insert({
           severity: "critical",
           category: `invariant:${viol.rule_code}`,
           message: viol.message,
           context: viol.detail ?? {},
+        });
+        const isUnprotected = viol.rule_code?.includes("unprotected") || viol.target_kind === "position" && viol.rule_code?.includes("protect");
+        notify({
+          severity: "critical",
+          category: isUnprotected ? "unprotected_position" : "invariant_violation",
+          symbol: viol.target_kind === "position" || viol.target_kind === "symbol" ? viol.target_key : null,
+          reason: `${viol.rule_label}: ${viol.message}`,
+          extra: viol.detail ?? {},
         });
       }
     }
