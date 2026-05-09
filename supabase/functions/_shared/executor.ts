@@ -16,6 +16,7 @@ import { computeEntrySizing, validateSymbolSizing } from "./sizing.ts";
 import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
 import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
+import { fetchLastPrice } from "./bybit-public.ts";
 
 export interface ExecOutcome {
   ok: boolean;
