@@ -200,6 +200,10 @@ export class BybitRest {
           // 403 with non-JSON body == upstream WAF/edge block, not Bybit itself.
           const kind: "forbidden" | "bad_json" =
             res.status === 403 ? "forbidden" : "bad_json";
+          console.log(JSON.stringify({
+            evt: "bybit_transport_error",
+            label, kind, ...diagnostics,
+          }));
           throw new BybitTransportError(kind, diagnostics);
         }
 
