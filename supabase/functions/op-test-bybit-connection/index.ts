@@ -122,6 +122,17 @@ Deno.serve(async (req) => {
 
   const creds = credsFor(mode);
   const checks: Record<string, CheckResult> = {};
+  // Stash base URL info into checks._meta so the dispatcher's live gate can
+  // verify a passing diagnostic was run against the CURRENT active base URL.
+  checks._meta = {
+    ok: true,
+    detail: {
+      base_url: creds.baseUrl,
+      is_alternate: creds.is_alternate,
+      base_source: creds.base_source,
+      default_base: DEFAULT_LIVE_BASE,
+    },
+  } as CheckResult;
   let permissions: unknown = null;
   let accountType: string | null = null;
   let lastResponse: unknown = null;
