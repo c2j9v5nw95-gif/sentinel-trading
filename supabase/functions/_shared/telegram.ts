@@ -66,8 +66,107 @@ function fmtNum(n: number | null | undefined, digits = 4): string | null {
   return v.toLocaleString("en-US", { maximumFractionDigits: digits });
 }
 
+function fmtDuration(seconds: number | null | undefined): string | null {
+  if (seconds == null || !Number.isFinite(Number(seconds)) || Number(seconds) < 0) return null;
+  const s = Math.floor(Number(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
+function fmtSignedPct(n: number | null | undefined, digits = 2): string | null {
+  const v = fmtNum(n, digits);
+  if (v == null) return null;
+  return Number(n) >= 0 ? `+${v}%` : `${v}%`;
+}
+
+function fmtSignedUsdt(n: number | null | undefined, digits = 2): string | null {
+  const v = fmtNum(n, digits);
+  if (v == null) return null;
+  return Number(n) >= 0 ? `+${v} USDT` : `${v} USDT`;
+}
+
+function buildEntryMessage(p: AlertPayload): string {
+  const sevTag = `[${p.severity.toUpperCase()}]`;
+  const lines: string[] = [];
+  lines.push(`🟢 <b>ENTRY</b> — <b>${escapeHtml(p.symbol ?? "?")}</b>${p.side ? ` ${escapeHtml(p.side.toUpperCase())}` : ""} ${sevTag}`);
+  if (p.execution_mode) lines.push(`Mode: <b>${escapeHtml(p.execution_mode)}</b>`);
+  const meta: string[] = [];
+  if (p.leverage != null) meta.push(`${fmtNum(p.leverage, 2)}x`);
+  if (p.qty != null) meta.push(`Qty ${fmtNum(p.qty, 6)}`);
+  if (p.entry_price ?? p.price) meta.push(`@ ${fmtNum(p.entry_price ?? p.price)}`);
+  if (meta.length) lines.push(meta.join(" · "));
+  if (p.exposure != null) lines.push(`Exposure: ${fmtNum(p.exposure, 2)} USDT`);
+  if (p.reason) lines.push(`Reason: ${escapeHtml(p.reason)}`);
+
+  // Protection block
+  const protLines: string[] = [];
+  if (p.sl_price != null) {
+    const slPctTxt = p.sl_pct != null ? ` (−${fmtNum(p.sl_pct, 2)}%)` : "";
+    const mark = p.confirmed_by_venue === false ? "⚠️" : "✅";
+    protLines.push(`SL @ ${fmtNum(p.sl_price)}${slPctTxt} ${mark}${p.confirmed_by_venue === false ? " not confirmed" : " confirmed"}`);
+  } else if (p.confirmed_by_venue === false) {
+    protLines.push(`⚠️ SL not confirmed`);
+  }
+  if (p.tsl_enabled) {
+    const a = p.tsl_activation_pct != null ? `+${fmtNum(p.tsl_activation_pct, 2)}%` : "?";
+    const c = p.tsl_callback_pct != null ? `${fmtNum(p.tsl_callback_pct, 2)}%` : "?";
+    protLines.push(`TSL: arms at ${a}, callback ${c}`);
+  } else if (p.tsl_enabled === false) {
+    protLines.push(`TSL: disabled`);
+  }
+  if (protLines.length) {
+    lines.push("");
+    lines.push(`<b>Protection</b>`);
+    for (const l of protLines) lines.push(l);
+  }
+  lines.push(`<i>${new Date().toISOString()}</i>`);
+  if (p.dashboard_url) lines.push(`<a href="${escapeHtml(p.dashboard_url)}">Open dashboard</a>`);
+  return lines.join("\n");
+}
+
+function buildExitMessage(p: AlertPayload): string {
+  const win = (p.pnl ?? 0) >= 0;
+  const headEmoji = win ? "✅" : "❌";
+  const catLabel =
+    p.category === "tp_hit" ? "TP HIT" :
+    p.category === "sl_hit" ? "SL HIT" :
+    "EXIT";
+  const lines: string[] = [];
+  lines.push(`${headEmoji} <b>${catLabel}</b> — <b>${escapeHtml(p.symbol ?? "?")}</b>${p.side ? ` ${escapeHtml(p.side.toUpperCase())}` : ""}`);
+  if (p.execution_mode) lines.push(`Mode: <b>${escapeHtml(p.execution_mode)}</b>`);
+  if (p.reason) lines.push(`Reason: ${escapeHtml(p.reason)}`);
+  if (p.entry_price != null && (p.exit_price != null || p.price != null)) {
+    lines.push(`Entry: ${fmtNum(p.entry_price)} → Exit: ${fmtNum(p.exit_price ?? p.price)}`);
+  } else if (p.exit_price != null || p.price != null) {
+    lines.push(`Exit: ${fmtNum(p.exit_price ?? p.price)}`);
+  }
+  if (p.qty != null) {
+    const lev = p.leverage != null ? ` · ${fmtNum(p.leverage, 2)}x` : "";
+    lines.push(`Qty: ${fmtNum(p.qty, 6)}${lev}`);
+  }
+  const pnlUsdt = fmtSignedUsdt(p.pnl);
+  const pnlPct = fmtSignedPct(p.pnl_pct);
+  if (pnlUsdt || pnlPct) {
+    lines.push(`PnL: ${[pnlUsdt, pnlPct ? `(${pnlPct})` : null].filter(Boolean).join(" ")}`);
+  }
+  const dur = fmtDuration(p.hold_seconds);
+  if (dur) lines.push(`Hold: ${dur}`);
+  lines.push(`<i>${new Date().toISOString()}</i>`);
+  if (p.dashboard_url) lines.push(`<a href="${escapeHtml(p.dashboard_url)}">Open dashboard</a>`);
+  return lines.join("\n");
+}
+
 function buildMessage(p: AlertPayload): string {
   if (p.raw_text) return p.raw_text;
+  if (p.category === "live_entry") return buildEntryMessage(p);
+  if (p.category === "tp_hit" || p.category === "sl_hit" || p.category === "live_exit") {
+    return buildExitMessage(p);
+  }
   const emoji = SEVERITY_EMOJI[p.severity];
   const lines: string[] = [];
   lines.push(`${emoji} <b>${escapeHtml(p.category.toUpperCase())}</b> [${p.severity.toUpperCase()}]`);
