@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
       headers,
       body_text: bodyText,
       auth_status: "malformed",
+      auth_method: authMethod,
     });
     return new Response("Bad payload", { status: 400 });
   }
