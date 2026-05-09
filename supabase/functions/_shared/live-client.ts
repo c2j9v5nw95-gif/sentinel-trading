@@ -5,6 +5,8 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { VenueBybitClient } from "./venue-client.ts";
+import { bridgeConfigured } from "./bridge-rest.ts";
+import { bridgeRecentlyHealthy, pingBridgeHealth, recordBridgeHealth } from "./bridge-health.ts";
 
 /** Official Bybit mainnet endpoint. Always the safe default. */
 export const DEFAULT_LIVE_BASE = "https://api.bybit.com";
@@ -104,7 +106,7 @@ export class LiveBybitClient extends VenueBybitClient {
  */
 export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInput = {}): Promise<string | null> {
   const { data: s } = await sb.from("app_settings")
-    .select("live_enabled,emergency_stop,live_risk_halted")
+    .select("live_enabled,emergency_stop,live_risk_halted,use_execution_bridge")
     .maybeSingle();
   if (!s) return "settings_missing";
   if (!s.live_enabled) return "live_disabled_globally";
@@ -118,15 +120,31 @@ export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInp
     .is("acknowledged_at", null);
   if ((count ?? 0) > 0) return "critical_invariants_open";
 
-  if (!Deno.env.get("BYBIT_LIVE_API_KEY") || !Deno.env.get("BYBIT_LIVE_API_SECRET")) {
-    return "live_api_keys_missing";
+  // Execution-bridge precheck. When the bridge is configured AND enabled in
+  // app_settings, live execution MUST go through it; we fail-fast if it isn't
+  // demonstrably healthy. This eliminates the edge-runtime egress 403 class
+  // of failure entirely.
+  const useBridge = (s as any).use_execution_bridge !== false && bridgeConfigured();
+  if (useBridge) {
+    let reason = await bridgeRecentlyHealthy(sb, 120);
+    if (reason) {
+      // Try one fresh probe before giving up — bridge may have just come up.
+      const probe = await pingBridgeHealth();
+      await recordBridgeHealth(sb, probe);
+      if (!probe.ok) return `bridge_unhealthy:${probe.error ?? reason}`;
+      reason = null;
+    }
+  } else if (!useBridge) {
+    // Bridge not in use → fall back to direct path; require live API keys.
+    if (!Deno.env.get("BYBIT_LIVE_API_KEY") || !Deno.env.get("BYBIT_LIVE_API_SECRET")) {
+      return "live_api_keys_missing";
+    }
   }
 
-  // Alternate-endpoint guard: if operator has overridden BYBIT_API_BASE_URL away
-  // from the official mainnet, require a recent passing diagnostic against the
-  // CURRENT base URL before allowing live execution.
+  // Alternate-endpoint guard: only meaningful when calling Bybit directly.
+  // When routing via bridge, the bridge owns the base URL.
   const base = liveBaseUrlInfo();
-  if (base.is_alternate) {
+  if (!useBridge && base.is_alternate) {
     const lookup = await findPassingAlternateDiagnostic(sb, base.url, input);
     if (!lookup.match) {
       return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, symbol=${input.symbol ?? "any"}, within ${Math.round(alternateDiagnosticFreshnessMs() / 60000)}m; looked_at=${lookup.rows_seen}; latest_rejection=${lookup.rejections[0]?.reason ?? "none"}; latest_passed_at=${lookup.rejections[0]?.passed_at ?? "none"}; latest_age_min=${lookup.rejections[0] ? Math.round(lookup.rejections[0].age_ms / 60000) : "n/a"})`;

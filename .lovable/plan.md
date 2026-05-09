@@ -1,99 +1,87 @@
-## Goal
+# Execution Bridge Architecture
 
-Stop chasing endpoints. Pin live execution to `api.bybit.com` and add deterministic, side-by-side request/response tracing so the next failure isolates the root cause to one of: runtime/IP block, malformed request, signing mismatch, payload shape, account-mode mismatch, or regional Bybit protection.
+## Problem (recap)
 
-## Step 1 — Revert base URL
+Supabase/Lovable Edge runtime egress lands on a CloudFront POP that Bybit's WAF returns `403 The Amazon CloudFront distribution is configured to block access from your country` for. Diagnostics from a different POP succeed; signing, payload, and request parity are confirmed identical. Endpoint hopping (`api.bybit.com` ↔ `api.bytick.com`) is not solving it. We move execution off the edge runtime onto a fixed-IP VPS that is whitelisted in the Bybit API key.
 
-- Update the `BYBIT_API_BASE_URL` secret to `https://api.bybit.com` (operator action via secrets tool — I'll prompt for confirmation before changing).
-- No code change needed; `liveBaseUrlInfo()` already prefers env and falls back to the official mainnet default. Once the secret matches the default, the gate treats it as `is_alternate=false` and skips the alternate-base diagnostic gate automatically.
-- Add a one-line operator banner in `BybitDiagnosticsPanel` confirming "Active base URL = official mainnet, alternate-base gate inactive".
+## Target topology
 
-## Step 2 — Single shared Bybit transport (no behavioral drift)
+```text
+TradingView ──▶ Supabase (ingest-webhook)
+                  │
+                  ├─ dedupe / parser / risk engine / health gate / live gate
+                  ├─ audit_log, error_log, signals, bybit_request_traces
+                  ├─ Telegram, diagnostics, state machine
+                  │
+                  ▼
+            Execution Bridge (VPS, fixed public IP, Bybit-supported region)
+                  │  HTTPS + HMAC-signed, replay-protected, idempotent
+                  ▼
+              Bybit V5 REST  (api.bybit.com)
+```
 
-Both diagnostics and executor already go through `BybitRest`. Lock parity by:
+Supabase keeps everything except the actual signed Bybit call. The bridge is a thin signed-passthrough that owns the Bybit API key/secret and is the only thing whose egress IP Bybit sees.
 
-- Making `getPosition(symbol)` in `venue-client.ts` and the diagnostics `read_positions_by_symbol` call use a single shared helper `buildPositionListRequest({ symbol })` so query keys/order/casing cannot drift.
-- Same treatment for the order-create reachability probe (`buildOrderCreateProbe()` → used by diagnostics; executor calls it with real qty/side).
-- Add a unit-style assert at handler boot that the helpers produce the expected canonical query strings.
+## Bridge service (Node 20 + Fastify, deployed to a VPS)
 
-## Step 3 — Full redacted request/response trace
+Single small service, shipped from this repo under `bridge/`. Endpoints:
 
-Extend `bybit-rest.ts` so EVERY call (not just transport errors) writes a single structured `bybit_trace` log line on completion containing:
+- `POST /v1/bybit/position/list` → calls Bybit `/v5/position/list`
+- `POST /v1/bybit/order/create`  → calls Bybit `/v5/order/create`
+- `POST /v1/bybit/order/cancel`  → `/v5/order/cancel`
+- `POST /v1/bybit/position/set-trading-stop` → `/v5/position/trading-stop`
+- `GET  /v1/health`              → `{ ok, version, bybit_reachable, public_ip, region, uptime_s }`
+- `GET  /v1/diag`                → runs canonical diagnostic against Bybit, returns same shape as `bybit-diagnostics`
 
-Request side (already partially logged):
-- `label`, `attempt`, `base_url`, `endpoint`, `method`
-- `query` (object) + `query_string` (exact serialized form used for signing)
-- `body_keys`, `body_size`, `body_sha256_prefix` (first 8 hex chars — proves body parity without leaking)
-- `recv_window_ms`, `timestamp_ms`
-- `sign_payload_prefix` (`ts+key+recv+...` first 32 chars, redacting key to prefix only)
-- `sign_len`, `api_key_prefix`
-- `idempotency_key`
+Bridge owns:
+- `BYBIT_LIVE_API_KEY`, `BYBIT_LIVE_API_SECRET` (moved off Supabase secrets in a follow-up; for the cutover both sides hold them)
+- canonical V5 signer (lifted from `_shared/bybit-rest.ts` so byte-for-byte identical signing)
+- `recvWindow=5000`, idempotency on `orderLinkId`, in-memory LRU dedupe (5 min) keyed by `orderLinkId` so retries return the original response
+- structured JSON: `{ ok, http_status, ret_code, ret_msg, result, trace: { cf_ray, server, amz_cf_pop, request_id, body_snippet, duration_ms } }`
+- fail-fast: no internal retry loops; one attempt, surface real error
 
-Response side (new):
-- `http_status`, `content_type`, `content_length`
-- `cf_ray`, `server`, `x-bapi-request-id`, `x-amz-cf-id`, `x-amz-cf-pop`, `via`
-- `ret_code`, `ret_msg` when JSON
-- `body_snippet` (first 500 chars) — always on non-2xx, on transport error, OR when env `BYBIT_TRACE_BODY=1`
-- `duration_ms`
+## Bridge ↔ Supabase auth
 
-Failure-fast rules:
-- Drop the existing one-shot retry on 5xx/429 for `/v5/position/list` and `/v5/order/create` while we audit (`MAX_ATTEMPTS=1` for these two endpoints behind a `BYBIT_AUDIT_MODE=1` flag). Other endpoints keep current behavior.
-- `BybitTransportError` keeps full diagnostics; gate already surfaces it. No silent retries.
+Shared secret `EXECUTION_BRIDGE_SECRET` (added to both sides). Every Supabase→bridge request carries:
 
-## Step 4 — Diagnostics surfaces the same trace
+- `X-Bridge-Timestamp`: ms epoch (reject if `|now - ts| > 30s`)
+- `X-Bridge-Nonce`: uuid (replay cache 5 min)
+- `X-Bridge-Signature`: `hex(hmac_sha256(secret, ts + "." + nonce + "." + method + "." + path + "." + sha256(body)))`
+- `X-Idempotency-Key`: `orderLinkId` for order-mutating calls
 
-`op-test-bybit-connection` already mirrors the executor `getPosition` shape (`read_positions_by_symbol`). Extend it to also persist the new response-side fields (cf_ray, server, x-bapi-request-id, body_sha256_prefix, sign_payload_prefix) into `checks._meta.detail`, so a single SQL query can diff a passing diagnostic vs the failing executor request line-by-line.
+Bridge: HTTPS only (Caddy or Cloudflare proxy in front for TLS), `Strict-Transport-Security`, no CORS, IP-allowlist optional.
 
-## Step 5 — Audit UI on /signals
+## Supabase side changes
 
-When a signal fails with `bybit_transport_forbidden`, the existing Live Gate Debug Panel gains a "Transport Audit" card that shows, side by side:
+- New secrets: `EXECUTION_BRIDGE_URL`, `EXECUTION_BRIDGE_SECRET`
+- New `_shared/bridge-client.ts`: thin signed-fetch helper. Handles signing, 30s timeout, fail-fast, persists trace into `bybit_request_traces` (label `bridge:<endpoint>`)
+- Replace direct Bybit calls in `_shared/bybit-rest.ts` callsites used by `_shared/executor.ts` and `_shared/venue-client.ts` for **live** mode with bridge calls. Diagnostics keeps the existing direct path so we can keep comparing.
+- `BYBIT_AUDIT_MODE` retired in code paths that now go through the bridge (kept env var to not break secret list).
+- New `op-bridge-health` edge function: pings bridge `/v1/health`, persists into a new `bridge_health_checks` table, raises `system_alerts(severity=critical, category=bridge_unreachable)` after 2 consecutive failures, also wired into `notify()` (Telegram).
+- `live-gate` (`live-client.ts`) gains a precheck: bridge must be `ok` within last 60s, else block signal with reason `bridge_unreachable` (fail signals fast — no Bybit attempt).
+- New table `bridge_health_checks(id, checked_at, ok, latency_ms, public_ip, bybit_reachable, http_status, error)`; RLS operator-read; insert from edge function via service role.
 
-| field | last passing diagnostic | failing executor call |
-| --- | --- | --- |
-| base_url, endpoint, query_string | ✓ | ✗ |
-| sign_payload_prefix, body_sha256_prefix | ✓ | ✗ |
-| http_status, server, cf_ray, x-bapi-request-id | ✓ | ✗ |
-| body_snippet | ✓ | ✗ |
+## UI
 
-Data source: read latest `bybit_diagnostics` row for the symbol, plus the matching `bybit_trace` log line for the failed signal (looked up by `signal_id` in edge logs via existing logs query path, or persisted into a new `bybit_request_traces` table — see Decision below).
+- New `BridgeStatusPanel` on Kontrollsenter: last health check, latency, bridge public IP, Bybit reachable, last 20 checks sparkline, manual "Run health check" button that invokes `op-bridge-health`.
+- Add bridge trace rows to existing `BybitDiagnosticsPanel` (filter by `label LIKE 'bridge:%'`).
 
-## Step 6 — Replay & verify
+## Operational
 
-Once deployed:
-1. Confirm secret = `https://api.bybit.com`, gate logs `is_alternate=false`.
-2. Run live diagnostics for PENGUUSDT (will include trace fields).
-3. Replay one PENGUUSDT signal.
-4. Inspect the audit card — three outcomes determine the diagnosis:
-   - Same query/sign/body fingerprints, same headers, same 200 response → bug elsewhere.
-   - Same fingerprints, executor gets 403/CloudFront body → **runtime/IP block** specific to that worker invocation.
-   - Different fingerprints → **request shape / signing drift** (helper not actually shared).
-   - 200 on `/v5/position/list` but 403/error on `/v5/order/create` → **account-mode / order payload** issue, not transport.
+- Bridge logs structured JSON to stdout; ship via journald.
+- README in `bridge/README.md` covering: VPS sizing (1 vCPU / 1GB is enough), supported regions (AWS Tokyo / GCP asia-northeast1 / Hetzner Helsinki — pick one Bybit allows; user to confirm region), `systemd` unit, Caddy TLS config, how to whitelist the VPS public IP in the Bybit API key page, secret rotation, and a `curl` smoke test.
+- Cutover: deploy bridge, whitelist IP, set `EXECUTION_BRIDGE_URL` + `EXECUTION_BRIDGE_SECRET`, flip a new `app_settings.use_execution_bridge` boolean (default true). If bridge fails health gate, signals fail fast; reverting the flag falls back to direct edge-runtime calls.
 
-## Decision needed before I implement
+## Out of scope this round
 
-I want one answer before starting:
+- Multi-bridge HA / round-robin
+- Moving paper/testnet through the bridge (stays direct)
+- Migrating existing Bybit secrets off Supabase (kept dual until bridge is proven)
 
-**Where to store the trace for the audit UI?**
-1. **Edge function logs only** (parse via existing `edge_function_logs` query keyed by `signal_id`). No schema change. Slightly slower UI, log retention is bounded.
-2. **New `bybit_request_traces` table** (insert one row per Bybit call with the redacted trace). Persistent, queryable, easier UI, costs ~1 insert per Bybit request.
+## Open questions for you
 
-I recommend **option 2** for executor calls only (skip table writes for paper/testnet) so the audit survives log retention and the UI is a simple SQL query.
+1. Do you already have a VPS / preferred provider + region (AWS Tokyo, GCP asia-northeast1, Hetzner Helsinki, your own)? This determines the IP we whitelist.
+2. OK with Caddy auto-TLS on a subdomain you own (e.g. `bridge.yourdomain.com`), or do you want Cloudflare in front?
+3. Do you want me to land **only the Supabase-side bridge client + health gate + UI + flag** in this turn (so the moment you stand up the VPS it works), or also commit the `bridge/` Node service code now so you can `scp` and `systemctl start` it?
 
-## Out of scope (intentionally)
-
-- No further endpoint switching.
-- No retry-policy changes outside the two audited endpoints.
-- No changes to signing algorithm or auth headers — we are verifying parity, not rewriting.
-
-## Technical detail (for reviewers)
-
-Files touched:
-- `supabase/functions/_shared/bybit-rest.ts` — trace logging, audit-mode no-retry, sha256 prefix helper.
-- `supabase/functions/_shared/venue-client.ts` — use shared `buildPositionListRequest` / `buildOrderCreateProbe`.
-- `supabase/functions/_shared/bybit-requests.ts` (new) — canonical request builders + boot-time assertions.
-- `supabase/functions/op-test-bybit-connection/index.ts` — persist response-side trace fields under `checks._meta.detail`.
-- `supabase/functions/_shared/live-client.ts` — already auto-detects default base; only banner-state hint added.
-- `src/components/BybitDiagnosticsPanel.tsx` + `src/routes/_app.signals.tsx` — Transport Audit card.
-- (If option 2 chosen) migration: `bybit_request_traces` table + RLS (operator read).
-
-Secrets: update `BYBIT_API_BASE_URL` → `https://api.bybit.com`. Optional new env: `BYBIT_AUDIT_MODE=1`, `BYBIT_TRACE_BODY=1`.
+Confirm those three and I'll implement.
