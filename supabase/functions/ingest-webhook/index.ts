@@ -177,6 +177,7 @@ Deno.serve(async (req) => {
     headers,
     body_text: bodyText,
     auth_status: "ok",
+    auth_method: authMethod,
     signal_id: signal?.id ?? null,
   });
 
