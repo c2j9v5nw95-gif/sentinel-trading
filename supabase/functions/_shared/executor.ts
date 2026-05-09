@@ -63,7 +63,7 @@ function initializeClient(
   signal: any,
   mode: ExecutionMode,
   trail: Trail,
-  opts?: { liveGatePassed?: boolean },
+  opts?: { liveGatePassed?: boolean; useBridge?: boolean },
 ): { ok: true; client: BybitClient } | { ok: false; reason: "client_init_failed"; error: string } {
   trail.add("executor_loaded", "info", undefined, { mode });
   logExecutorHeartbeat("executor_loaded", signal, mode);
@@ -101,7 +101,7 @@ export async function executeEntry(
   signal: any,
   mode: ExecutionMode,
   trail: Trail,
-  opts?: { liveGatePassed?: boolean },
+  opts?: { liveGatePassed?: boolean; useBridge?: boolean },
 ): Promise<ExecOutcome> {
   const initialized = initializeClient(sb, signal, mode, trail, opts);
   if (!initialized.ok) return { ok: false, reason: initialized.reason };
@@ -381,7 +381,7 @@ export async function executeExit(
   signal: any,
   mode: ExecutionMode,
   trail: Trail,
-  opts?: { liveGatePassed?: boolean },
+  opts?: { liveGatePassed?: boolean; useBridge?: boolean },
 ): Promise<ExecOutcome> {
   const initialized = initializeClient(sb, signal, mode, trail, opts);
   if (!initialized.ok) return { ok: false, reason: initialized.reason };
