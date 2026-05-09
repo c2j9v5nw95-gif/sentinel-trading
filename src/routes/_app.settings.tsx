@@ -9,6 +9,7 @@ import { LiveRiskBreakerCard } from "@/components/LiveRiskBreakerCard";
 import { TelegramNotificationsCard } from "@/components/TelegramNotificationsCard";
 import { LiveWalletPanel } from "@/components/LiveWalletPanel";
 import { WebhookSettingsCard } from "@/components/WebhookSettingsCard";
+import { BridgeStatusPanel } from "@/components/BridgeStatusPanel";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -272,6 +273,7 @@ function SettingsPage() {
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4">
         <LiveRiskBreakerCard />
+        <BridgeStatusPanel />
         <BybitDiagnosticsPanel />
         <WebhookSettingsCard />
         <TelegramNotificationsCard />
