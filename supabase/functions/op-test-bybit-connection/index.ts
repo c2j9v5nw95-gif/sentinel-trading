@@ -17,7 +17,8 @@
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { BybitRest, BybitError, BybitTransportError } from "../_shared/bybit-rest.ts";
+import { BybitRest, BybitError, BybitTransportError, type BybitTrace } from "../_shared/bybit-rest.ts";
+import { buildPositionListRequest, buildOrderCreateRequest } from "../_shared/bybit-requests.ts";
 import { liveBaseUrlInfo, DEFAULT_LIVE_BASE } from "../_shared/live-client.ts";
 import { notify } from "../_shared/telegram.ts";
 
