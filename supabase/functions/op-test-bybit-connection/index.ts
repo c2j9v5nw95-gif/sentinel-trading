@@ -159,9 +159,29 @@ Deno.serve(async (req) => {
     checks.live_gate = { ok: true, detail: { note: "read-only checks allowed regardless of live_enabled" } };
   }
 
+  // Capture per-endpoint trace summaries (response headers + sign fingerprints)
+  // so the panel can diff a passing diagnostic against a failing executor call.
+  const traceByEndpoint: Record<string, Partial<BybitTrace>> = {};
   const rest = new BybitRest({
     apiKey: creds.apiKey, apiSecret: creds.apiSecret, baseUrl: creds.baseUrl,
     recvWindowMs: 5000, label: `diag-${mode}`,
+    traceWriter: (t) => {
+      // Last attempt wins per endpoint+query_string combo.
+      const key = `${t.method} ${t.endpoint}${t.query_string ? "?" + t.query_string : ""}`;
+      traceByEndpoint[key] = {
+        label: t.label, base_url: t.base_url, endpoint: t.endpoint, method: t.method,
+        query: t.query, query_string: t.query_string,
+        body_keys: t.body_keys, body_size: t.body_size, body_sha256_prefix: t.body_sha256_prefix,
+        sign_payload_prefix: t.sign_payload_prefix, sign_len: t.sign_len,
+        timestamp_ms: t.timestamp_ms, recv_window_ms: t.recv_window_ms,
+        http_status: t.http_status, content_type: t.content_type,
+        cf_ray: t.cf_ray, server: t.server, bapi_request_id: t.bapi_request_id,
+        amz_cf_id: t.amz_cf_id, amz_cf_pop: t.amz_cf_pop, via: t.via,
+        ret_code: t.ret_code, ret_msg: t.ret_msg,
+        body_snippet: t.body_snippet, duration_ms: t.duration_ms,
+        ok: t.ok, error_kind: t.error_kind,
+      };
+    },
   });
 
   // 1) API auth + 2) account info  (signed call: /v5/account/info)
