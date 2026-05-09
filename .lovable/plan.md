@@ -1,64 +1,119 @@
-## Mål
+# Performance-side med regelbaserte sizing-tiers
 
-Trygt switche fra paper til live trading på Bybit. Live-modusen har flere harde gates som må være grønne, både i UI og i edge-funksjonene. Denne planen er en **sjekkliste + flyt**, ikke en kode-endring (alt er allerede implementert).
+## Problemet i dag
 
-## To måter å gå live på
+- `health_snapshots` (winrate, PF, net_profit) finnes i DB men vises **ingensteds** i UI.
+- Sizing (`account_balance_percent`, `leverage`, SL, TSL) er **statisk** per symbol — den endrer seg ikke selv om strategien begynner å prestere dårligere.
+- Helse-gates (`min_winrate`, `min_pf`, `min_net_profit`) finnes per *strategi*, ikke per *symbol*, og er kun pass/fail — du kan ikke si "winrate < 55 → halver størrelsen".
 
-1. **Globalt live** (`app_settings.live_enabled = true`) — alle symboler uten override går live.
-2. **Per-symbol live** (`symbols.execution_mode_override = 'live'`) — anbefalt: behold global = paper, og sett kun PENGUUSDT til live i Symbols-siden. Andre symboler forblir trygt på paper.
+Du vil ha **både** globale regler (winrate-tiers, net_profit ≤ 0 stenger) **og** per-coin overrides.
 
-Anbefaling: **start med per-symbol live på ÉN coin** med små caps, ikke globalt.
+## Løsning
 
-## Live-gates (alle må være grønne)
+### 1. Ny side `/performance`
 
-Dette er sjekket både i `liveExecutionGate` (edge) og i Settings-siden (UI):
+Tabell med én rad per **(symbol × strategy × tag)** som har en snapshot:
 
-| Gate | Hvor | Hvordan fikse |
-|---|---|---|
-| `BYBIT_LIVE_API_KEY` + `BYBIT_LIVE_API_SECRET` satt | Cloud secrets | Allerede satt ✅ |
-| `app_settings.live_enabled = true` (kun for global) | Settings-side | Trykk "Live" radio + skriv `ENABLE LIVE` |
-| `app_settings.emergency_stop = false` | Settings-side | Skal være av |
-| `app_settings.live_risk_halted = false` | Live risk-banner | Skal være av |
-| Ingen åpne kritiske invariant-violations | Invariants-side | Acknowledge alle åpne |
-| Bybit live diagnostic OK siste 24t | Settings → "Test live connection" | Kjør test, alle read-only checks må være ✓ |
-| (Per-symbol vei) `symbols.execution_mode_override = 'live'` | Symbols-side | Per-symbol mode-dropdown → live + skriv `ENABLE LIVE` |
+| Symbol | Strategy/tag | Winrate | PF | Net profit | Effektiv % equity | Effektiv leverage | Status | Kilde | Edit |
+|---|---|---|---|---|---|---|---|---|---|
 
-I tillegg finnes en *risk breaker* som auto-pauser entries (men ikke exits) hvis:
-- åpne posisjoner > `live_risk_max_open_positions` (default 1)
-- total eksponering > `live_risk_max_total_exposure_pct` (default 50%)
-- per-symbol eksponering > `live_risk_max_symbol_exposure_pct` (default 30%)
-- urealisert drawdown > `live_risk_max_unrealized_drawdown_pct` (default 5%)
-- daglig tap > `live_risk_max_daily_loss_pct` (default 5%)
-- ≥ `live_risk_max_consecutive_losses` tap på rad (default 4)
+- **Effektiv %/leverage** = det som faktisk vil bli brukt ved neste signal, beregnet fra reglene (eller override).
+- **Kilde** viser hvor verdien kom fra: `tier:winrate≥70`, `override:PENGUUSDT`, eller `default`.
+- **Status:** grønn (handler), rød (blokkert av gate), gul (mangler data / venter).
 
-## Anbefalt flyt (per-symbol live for PENGUUSDT)
+### 2. Globale sizing-regler (`sizing_rules`-tabell, ny)
 
-1. **Verifiser API-nøkler**: gå til Settings → Bybit Diagnostics → "Run live test". Alle read-only checks skal være ✓ (account, balance, position read, order read). `safe_order_test` kan være rød — den krever at live allerede er på.
-2. **Sjekk balanse**: live wallet skal vise faktisk saldo i USDT.
-3. **Acknowledge alle kritiske invariants** hvis noen er åpne (Invariants-siden).
-4. **Sett konservative caps på PENGUUSDT** før du flipper:
-   - `account_balance_percent`: f.eks. 1–2 % (ikke standard 5)
-   - `leverage`: f.eks. 3–5x (ikke 10)
-   - `max_position_notional_usdt`: hard cap, f.eks. $50
-   - `max_margin_usage_usdt`: hard cap, f.eks. $10
-   - `sl_pct`: behold 1.5 (eller stramere)
-5. **Bytt mode på PENGUUSDT-raden** i Symbols → `live`. Bekreft `ENABLE LIVE`-frasen. Systemet vil:
-   - Sette `execution_mode_override = 'live'`
-   - **Overskrive sizing til defaults** (`balance%=5, leverage=10, multiplier=1.0`) ⚠️
-   - Du må deretter justere tilbake til de konservative verdiene fra steg 4 via Edit-knappen.
-6. **Send én test-alert** fra TradingView. Sjekk Signals-siden:
-   - Status skal bli `processed`
-   - Decision trail skal vise `entry_submitted: pass` og `sl_armed: pass`
-   - Telegram-varsel `live_entry` skal komme
-7. **Verifiser på Bybit-app**: at posisjonen finnes, leverage er riktig, SL er satt.
-8. **Følg med på exit**: når exit-alert kommer, sjekk at `exit_submitted: pass` og at posisjonen er flat på Bybit.
+Ordnet liste med betingelser → effekt. Evalueres top-down, første match vinner.
 
-## Hva planen IKKE gjør
+```text
+Eksempel:
+1. net_profit ≤ 0          → BLOCK
+2. winrate ≥ 70            → balance_pct = 15
+3. winrate ≥ 55            → balance_pct = 5
+4. (default)               → balance_pct = symbol.account_balance_percent
+```
 
-- Ingen kode-endringer — alt er allerede på plass.
-- Endrer ikke risk-breaker-defaults (de kan strammes i Settings hvis ønsket).
-- Skrur ikke på global live — kun per-symbol PENGUUSDT.
+Hver regel har:
+- `priority` (sortering)
+- `enabled`
+- `condition` (jsonb: `{metric: "winrate", op: ">=", value: 70}` evt. AND-array)
+- `action` (jsonb: `{block: true}` eller `{set: {account_balance_percent: 15, leverage: 10}}`)
+- `label` (fritekst)
 
-## Rekkefølge nå
+Redigeres på en egen "Rules"-fane på `/performance` — drag-and-drop for prioritet, "Add rule"-knapp.
 
-Bekreft hvilken vei du vil gå (per-symbol vs. global), så veileder jeg deg gjennom punkt 4–5 med eksakte caps. Eller om du heller vil ha en **"go live"-wizard** som slår sammen disse stegene i én UI-flyt.
+### 3. Per-coin overrides
+
+På samme `/performance`-side, "Edit"-drawer per rad:
+
+- **Sizing override** (per (symbol, strategy, tag)): hvis satt, brukes i stedet for regelresultatet.
+  - account_balance_percent, leverage, position_size_multiplier, max_notional, max_margin
+- **Risk parameters** (per symbol): sl_pct, tsl_enabled, tsl_activation_profit_pct, tsl_callback_pct
+- **Force block / force allow** (overstyrer reglenes BLOCK)
+
+Ny tabell `symbol_strategy_overrides (symbol, strategy, tag, balance_pct, leverage, multiplier, max_notional, max_margin, force_state)` — alt nullable, kun satte felt overstyrer.
+
+### 4. Evalueringskjede ved signal
+
+I `executor.ts` / sizing-koden, ny helper `resolveSizing(symbol, strategy, tag)`:
+
+```text
+1. Hent siste health_snapshot (samme nøkkel som health-gate)
+2. Hvis override.force_state = 'block' → BLOCK
+3. Hvis override.force_state = 'allow' → bruk override-verdier (hopp over regler)
+4. Evaluer sizing_rules top-down mot snapshot:
+     - første matchende regel med {block:true}     → BLOCK
+     - første matchende regel med {set:{...}}      → bruk dem som base
+5. Override-felter som er satt overstyrer base
+6. Resterende felter faller tilbake til symbols-raden
+→ returner {balance_pct, leverage, multiplier, max_notional, max_margin, blocked, source}
+```
+
+`source` logges i `risk_decisions.metrics` så du i Signals-trailen ser nøyaktig hvilken regel som ga sizingen.
+
+## DB-endringer (ny migrasjon)
+
+```sql
+create table public.sizing_rules (
+  id uuid primary key default gen_random_uuid(),
+  priority int not null,
+  enabled boolean not null default true,
+  label text not null,
+  condition jsonb not null,
+  action jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.symbol_strategy_overrides (
+  id uuid primary key default gen_random_uuid(),
+  symbol text not null,
+  strategy text not null,
+  tag text not null default '',
+  account_balance_percent numeric,
+  leverage numeric,
+  position_size_multiplier numeric,
+  max_position_notional_usdt numeric,
+  max_margin_usage_usdt numeric,
+  force_state text check (force_state in ('block','allow')),
+  unique (symbol, strategy, tag)
+);
+-- + RLS: operator manages både
+```
+
+## Endringer i kode
+
+- **Ny migrasjon** for to tabellene over.
+- **Ny:** `src/routes/_app.performance.tsx` — to faner: "Symbols" (radene) og "Rules".
+- **Ny:** `src/components/RuleEditor.tsx`, `src/components/SizingOverrideDrawer.tsx`.
+- **Ny:** `supabase/functions/_shared/sizing-resolver.ts` — `resolveSizing()`.
+- **Endret:** `executor.ts` — bruk `resolveSizing()` i stedet for å lese `symbols`-raden direkte.
+- **Endret:** sidebar — ny lenke "Performance".
+- **Beholdes:** Symbols-siden (basisparametre) og Strategies-siden (gates), men det meste av daglig styring flytter til Performance.
+
+## Spørsmål før implementering
+
+1. **`net_profit`-blokk:** skal det være en *forhåndsdefinert* default-regel jeg seeder (`net_profit ≤ 0 → BLOCK`), eller skal du legge den inn selv via UI? Anbefaler seeded.
+2. **Eksisterende `strategies.health_min_*`-gates:** behold parallelt (fungerer fortsatt som "hard floor"), eller migrer til regelmotoren og fjern? Anbefaler behold som baseline-floor.
+3. **Tier-eksempelet "55–70 → 5%":** når winrate er nøyaktig 55, treffer den den tieren? (Antar `≥`, dvs. 55 = ja.) OK?
+4. **Override-granularitet:** per (symbol, strategy, tag) som foreslått, eller bare per symbol? Per-tuple er kraftigere men mer å vedlikeholde.

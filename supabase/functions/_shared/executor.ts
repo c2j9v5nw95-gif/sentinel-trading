@@ -17,6 +17,7 @@ import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strate
 import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
 import { fetchLastPrice } from "./bybit-public.ts";
+import { resolveSizing } from "./sizing-resolver.ts";
 
 export interface ExecOutcome {
   ok: boolean;
@@ -74,8 +75,37 @@ export async function executeEntry(
     return { ok: false, reason: "position_already_open" };
   }
 
+  // Resolve effective sizing from health snapshot + global rules + per-tuple override.
+  const resolved = await resolveSizing(sb, {
+    symbol: signal.symbol,
+    strategy: signal.strategy ?? "",
+    tag: signal.tag ?? "",
+    symbolRow: sym,
+  });
+  trail.add("sizing_resolved", "info", resolved.block_reason ?? resolved.source.matched_rule_label ?? "default",
+    resolved.source as unknown as Record<string, unknown>);
+
+  if (resolved.blocked) {
+    await sb.from("risk_decisions").insert({
+      signal_id: signal.id, gate: "exposure_limit", outcome: "block",
+      reason: resolved.block_reason ?? "blocked_by_rule",
+      metrics: resolved.source as unknown as Record<string, unknown>,
+    });
+    return { ok: false, reason: `sizing_blocked:${resolved.block_reason ?? "rule"}` };
+  }
+
+  // Build the SymbolSizing-shaped object the math helper expects.
+  const effectiveSym = {
+    ...sym,
+    account_balance_percent: resolved.account_balance_percent,
+    leverage: resolved.leverage,
+    position_size_multiplier: resolved.position_size_multiplier,
+    max_position_notional_usdt: resolved.max_position_notional_usdt,
+    max_margin_usage_usdt: resolved.max_margin_usage_usdt,
+  };
+
   // Sizing.
-  const errs = validateSymbolSizing(sym);
+  const errs = validateSymbolSizing(effectiveSym);
   if (errs.length) {
     trail.add("entry_sizing_invalid", "fail", errs.join(";"));
     return { ok: false, reason: `sizing_invalid:${errs.join(";")}` };
@@ -106,7 +136,7 @@ export async function executeEntry(
     return { ok: false, reason: "no_mark_price" };
   }
 
-  const breakdown = computeEntrySizing(sym, {
+  const breakdown = computeEntrySizing(effectiveSym, {
     availableBalanceUsdt: wallet.availableBalance,
     markPrice,
   });
