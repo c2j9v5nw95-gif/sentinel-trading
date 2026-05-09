@@ -83,23 +83,43 @@ export async function liveExecutionGate(sb: SupabaseClient): Promise<string | nu
   // CURRENT base URL before allowing live execution.
   const base = liveBaseUrlInfo();
   if (base.is_alternate) {
-    const since = new Date(Date.now() - ALTERNATE_DIAGNOSTIC_FRESHNESS_MS).toISOString();
-    const { data: rows } = await sb.from("bybit_diagnostics")
-      .select("ok,checks,created_at")
-      .eq("mode", "live")
-      .eq("ok", true)
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(5);
-    const matched = (rows ?? []).find((r) => {
-      const meta = (r.checks as Record<string, unknown> | null)?._meta as
-        { base_url?: string } | undefined;
-      return meta?.base_url === base.url;
-    });
-    if (!matched) {
-      return `alternate_base_requires_passing_diagnostic:${base.url}`;
+    const match = await findPassingAlternateDiagnostic(sb, base.url);
+    if (!match) {
+      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, within ${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m)`;
     }
   }
 
+  return null;
+}
+
+/** Helper: find a recent passing diagnostic for the given base_url. */
+export async function findPassingAlternateDiagnostic(
+  sb: SupabaseClient,
+  baseUrl: string,
+): Promise<{ id: string; created_at: string; age_ms: number; base_url: string } | null> {
+  const since = new Date(Date.now() - ALTERNATE_DIAGNOSTIC_FRESHNESS_MS).toISOString();
+  const { data: rows } = await sb.from("bybit_diagnostics")
+    .select("id,ok,checks,created_at")
+    .eq("mode", "live")
+    .eq("ok", true)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  for (const r of rows ?? []) {
+    const meta = (r.checks as Record<string, unknown> | null)?._meta as
+      { detail?: { base_url?: string }; base_url?: string } | undefined;
+    // Support both shapes: _meta.detail.base_url (current writer) and
+    // legacy _meta.base_url (older rows).
+    const recordedBase = meta?.detail?.base_url ?? meta?.base_url;
+    if (recordedBase === baseUrl) {
+      const created = new Date(r.created_at as string).getTime();
+      return {
+        id: r.id as string,
+        created_at: r.created_at as string,
+        age_ms: Date.now() - created,
+        base_url: recordedBase,
+      };
+    }
+  }
   return null;
 }
