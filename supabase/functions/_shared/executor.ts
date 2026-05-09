@@ -17,6 +17,7 @@ import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strate
 import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
 import { fetchLastPrice } from "./bybit-public.ts";
+import { resolveSizing } from "./sizing-resolver.ts";
 
 export interface ExecOutcome {
   ok: boolean;
