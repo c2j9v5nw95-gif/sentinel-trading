@@ -38,6 +38,17 @@ function signalAgeMs(signal: any): number {
   return Number.isFinite(ts) ? Date.now() - ts : 0;
 }
 
+function isExecutorError(reason?: string): boolean {
+  return !!reason && (
+    reason === "client_init_failed" ||
+    reason.startsWith("order_submit_failed:") ||
+    reason.startsWith("entry_fill_failed:") ||
+    reason.startsWith("exit_fill_failed:") ||
+    reason === "sl_unconfirmed_auto_closed" ||
+    reason === "drift_no_local_row"
+  );
+}
+
 async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
   const payload = signal.payload ?? {};
   const num = (v: unknown) => {
@@ -244,14 +255,14 @@ export async function dispatchSignal(
     if (!locked.ok) throw new Error(`exec_error:${locked.details}`);
 
     const exec = locked.value;
-    const initFailed = exec.reason === "client_init_failed";
-    const finalStatus = exec.ok ? "processed" : initFailed ? "error" : "rejected";
+    const executorError = isExecutorError(exec.reason);
+    const finalStatus = exec.ok ? "processed" : executorError ? "error" : "rejected";
     trail.add(exec.ok ? "executed" : "exec_failed",
       exec.ok ? "pass" : "fail", exec.reason,
       { position_id: exec.position_id, fill_price: exec.fill_price, qty: exec.filled_qty });
-    if (initFailed) {
+    if (executorError) {
       await sb.from("error_log").insert({
-        source: "executor", message: "client_init_failed",
+        source: "executor", message: exec.reason ?? "executor_error",
         context: { signal_id: signal.id, symbol: signal.symbol, mode: resolved.mode, action },
       });
     }
@@ -260,8 +271,8 @@ export async function dispatchSignal(
       status: finalStatus, processed_at: new Date().toISOString(),
       decision_reason: exec.ok
         ? `executed:${resolved.mode}`
-        : initFailed
-          ? "client_init_failed"
+        : executorError
+          ? (exec.reason ?? "executor_error")
         : `exec_rejected:${exec.reason ?? "unknown"}`,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
