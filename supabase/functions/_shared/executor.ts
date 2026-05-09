@@ -176,11 +176,29 @@ export async function executeEntry(
   let markPrice = priceRow ? Number(priceRow.price)
     : (Number.isFinite(payloadPrice) && payloadPrice > 0 ? payloadPrice : NaN);
 
+  // Use the bridge for public market data when available — same WAF reason as
+  // signed calls. In live mode prefer bridge whenever the operator-controlled
+  // flag enabled it; in paper mode always go direct.
+  const publicViaBridge = mode === "live" && opts?.useBridge === true;
+  const publicErrSink = async (info: {
+    symbol: string; endpoint: string; via: "direct" | "bridge";
+    http_status: number | null; error_kind: string; body_snippet?: string;
+  }) => {
+    try {
+      await sb.from("error_log").insert({
+        source: "bybit_public",
+        request_id: signal.id ?? null,
+        message: `public_${info.endpoint}_fail:${info.error_kind}`,
+        context: { ...info, signal_id: signal.id, mode },
+      });
+    } catch { /* swallow */ }
+  };
+
   if (!Number.isFinite(markPrice) || markPrice <= 0) {
-    const fallback = await fetchLastPrice(signal.symbol);
+    const fallback = await fetchLastPrice(signal.symbol, { useBridge: publicViaBridge, onError: publicErrSink });
     if (fallback != null) {
       markPrice = fallback;
-      trail.add("entry_price_fallback", "info", "bybit_public_ticker", { price: fallback });
+      trail.add("entry_price_fallback", "info", publicViaBridge ? "bridge_public_ticker" : "bybit_public_ticker", { price: fallback, via: publicViaBridge ? "bridge" : "direct" });
     }
   }
 
@@ -189,7 +207,7 @@ export async function executeEntry(
     return { ok: false, reason: "no_mark_price" };
   }
 
-  const instrumentRules = mode === "paper" ? null : await fetchInstrumentRules(signal.symbol);
+  const instrumentRules = mode === "paper" ? null : await fetchInstrumentRules(signal.symbol, { useBridge: publicViaBridge, onError: publicErrSink });
   if (instrumentRules) {
     trail.add("instrument_rules", "info", undefined, instrumentRules as Record<string, unknown>);
   }
