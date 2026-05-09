@@ -120,10 +120,11 @@ export class BybitRest {
           body: isPost ? bodyStr : undefined,
         });
 
-        // Rate-limit: respect Retry-After
-        if (res.status === 429) {
+        // Fast transient retry only. Never keep a trade signal alive for long.
+        if (isRetryableHttpStatus(res.status) && attempt < MAX_ATTEMPTS) {
           const retryAfter = Number(res.headers.get("Retry-After") ?? "1");
-          await sleep(jitter(Math.min(retryAfter * 1000, 8000)));
+          const delayMs = res.status === 429 ? Math.min(retryAfter * 250, 750) : 250 * attempt;
+          await sleep(jitter(delayMs));
           continue;
         }
 
@@ -132,7 +133,11 @@ export class BybitRest {
         try {
           json = JSON.parse(text) as BybitResponse<T>;
         } catch {
-          throw new BybitError(`bad_json:${res.status}`, -1, text.slice(0, 200), res.status, opts.endpoint);
+          const server = res.headers.get("server") ?? undefined;
+          const cfRay = res.headers.get("cf-ray") ?? undefined;
+          throw new BybitError(`bad_json:${res.status}`, -1,
+            text.slice(0, 200), res.status, opts.endpoint,
+            { body: text.slice(0, 500), headers: { server, cf_ray: cfRay } });
         }
 
         if (json.retCode === 0) return json;
