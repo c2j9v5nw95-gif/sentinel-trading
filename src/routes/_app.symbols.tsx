@@ -63,7 +63,8 @@ function SymbolsPage() {
 
   const updateSymbol = useMutation({
     mutationFn: async (args: { id: string; patch: Record<string, unknown> }) => {
-      const { error } = await supabase.from("symbols").update(args.patch).eq("id", args.id);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await supabase.from("symbols").update(args.patch as any).eq("id", args.id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["symbols"] }),
