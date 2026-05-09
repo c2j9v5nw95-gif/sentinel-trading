@@ -289,6 +289,33 @@ Deno.serve(async (req) => {
     }
   }
 
+  // 9) order endpoint reachability — hits the EXACT same POST /v5/order/create
+  // path the executor uses with deliberately-invalid qty=0. Lets us prove
+  // whether Cloudflare/WAF lets us through, separately from API logic.
+  if (checks.api_auth.ok) {
+    const t = await timed(() => rest.request({
+      endpoint: "/v5/order/create", method: "POST",
+      body: {
+        category: "linear", symbol, side: "Buy", orderType: "Market",
+        qty: "0", reduceOnly: false,
+        orderLinkId: `REACH-${Date.now().toString(36)}`,
+        timeInForce: "IOC",
+      },
+    }));
+    if (t.err) {
+      const err = explainBybitError(t.err);
+      // A bybit_<retCode> response (any retCode) means we REACHED the endpoint
+      // — which is what we want to verify. Only transport errors fail this.
+      const reached = err.code.startsWith("bybit_") && !err.code.startsWith("bybit_transport_");
+      checks.order_endpoint_reachability = reached
+        ? { ok: true, detail: { reached_endpoint: true, base_url: creds.baseUrl, endpoint: "/v5/order/create", note: err.message }, ms: t.ms }
+        : { ok: false, error: err, ms: t.ms };
+      if (!reached) topError ??= err;
+    } else {
+      checks.order_endpoint_reachability = { ok: true, detail: { reached_endpoint: true, base_url: creds.baseUrl }, ms: t.ms };
+    }
+  }
+
   // OPTIONAL safe order test — disabled by default
   const safeReq = body.safe_order;
   if (safeReq?.enabled) {
