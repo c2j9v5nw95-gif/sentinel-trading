@@ -16,7 +16,7 @@ import { computeEntrySizing, validateSymbolSizing } from "./sizing.ts";
 import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
 import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
-import { fetchLastPrice } from "./bybit-public.ts";
+import { fetchInstrumentRules, fetchLastPrice } from "./bybit-public.ts";
 import { resolveSizing } from "./sizing-resolver.ts";
 
 export interface ExecOutcome {
@@ -184,9 +184,17 @@ export async function executeEntry(
     return { ok: false, reason: "no_mark_price" };
   }
 
+  const instrumentRules = mode === "paper" ? null : await fetchInstrumentRules(signal.symbol);
+  if (instrumentRules) {
+    trail.add("instrument_rules", "info", undefined, instrumentRules as Record<string, unknown>);
+  }
+
   const breakdown = computeEntrySizing(effectiveSym, {
     availableBalanceUsdt: wallet.availableBalance,
     markPrice,
+    qtyStep: instrumentRules?.qtyStep,
+    minQty: instrumentRules?.minQty,
+    symbolMaxLeverage: instrumentRules?.maxLeverage,
   });
   trail.add("sizing", "info", undefined, breakdown as unknown as Record<string, unknown>);
 
@@ -221,11 +229,22 @@ export async function executeEntry(
   const submitSide = side === "long" ? "Buy" : "Sell";
   trail.add("order_submit_attempted", "info", undefined, { purpose: "entry", side: submitSide, qty: breakdown.estimatedQty });
   logExecutorHeartbeat("order_submit_attempted", signal, mode, { purpose: "entry", side: submitSide, qty: breakdown.estimatedQty });
-  const fill = await client.submitOrder({
-    symbol: signal.symbol, side: submitSide, qty: breakdown.estimatedQty,
-    reduceOnly: false, orderLinkId: orderLink, signalId: signal.id, positionId: posRow.id,
-    orderType: "Market", price: markPrice, purpose: "entry",
-  });
+  let fill;
+  try {
+    fill = await client.submitOrder({
+      symbol: signal.symbol, side: submitSide, qty: breakdown.estimatedQty,
+      reduceOnly: false, orderLinkId: orderLink, signalId: signal.id, positionId: posRow.id,
+      orderType: "Market", price: markPrice, purpose: "entry",
+    });
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    await sb.from("positions").update({
+      qty_open: 0, closed_at: new Date().toISOString(), protection_state: "closed",
+    }).eq("id", posRow.id);
+    await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink });
+    trail.add("entry_submit_failed", "fail", msg);
+    return { ok: false, reason: `order_submit_failed:${msg.slice(0, 160)}`, position_id: posRow.id };
+  }
 
   trail.add("entry_submitted", fill.status === "filled" ? "pass" : "fail", fill.message,
     { fill_price: fill.avgFillPrice, qty: fill.filledQty });
