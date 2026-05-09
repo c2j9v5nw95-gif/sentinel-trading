@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { useMemo, useState } from "react";
 
-export const Route = createFileRoute("/_app/performance")({
+export const Route = createFileRoute("/_app/kontrollsenter")({
   component: PerformancePage,
 });
 
