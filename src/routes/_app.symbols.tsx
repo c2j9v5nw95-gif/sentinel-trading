@@ -11,7 +11,6 @@ export const Route = createFileRoute("/_app/symbols")({
 
 type ModeOverride = "inherit_global" | "paper" | "testnet" | "live";
 
-// Live default sizing per spec.
 const LIVE_DEFAULTS = {
   account_balance_percent: 5,
   leverage: 10,
@@ -20,13 +19,33 @@ const LIVE_DEFAULTS = {
 
 const LIVE_CONFIRM_PHRASE = "ENABLE LIVE";
 
+type SymbolRow = {
+  id: string;
+  symbol: string;
+  enabled: boolean;
+  execution_mode_override: string | null;
+  preferred_transport: string;
+  account_balance_percent: number;
+  leverage: number;
+  position_size_multiplier: number;
+  margin_mode: string;
+  sl_pct: number;
+  tsl_enabled: boolean;
+  tsl_activation_profit_pct: number;
+  tsl_callback_pct: number;
+  tp2_enabled: boolean;
+  tp1_exit_percent: number;
+  max_position_notional_usdt: number | null;
+  max_margin_usage_usdt: number | null;
+};
+
 function SymbolsPage() {
   const qc = useQueryClient();
   const { data } = useQuery({
     queryKey: ["symbols"],
     queryFn: async () => {
       const { data } = await supabase.from("symbols").select("*").order("symbol");
-      return data ?? [];
+      return (data ?? []) as SymbolRow[];
     },
   });
 
@@ -39,28 +58,25 @@ function SymbolsPage() {
   });
   const balanceUsdt = Number(wallet?.equity_usdt ?? 10000);
 
-  const [pendingLive, setPendingLive] = useState<null | {
-    id: string; symbol: string;
-  }>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingLive, setPendingLive] = useState<null | { id: string; symbol: string }>(null);
 
-  const setOverride = useMutation({
-    mutationFn: async (args: { id: string; value: ModeOverride; applyLiveDefaults?: boolean }) => {
-      const dbValue = args.value === "inherit_global" ? null : args.value;
-      const patch = args.applyLiveDefaults
-        ? { execution_mode_override: dbValue, ...LIVE_DEFAULTS }
-        : { execution_mode_override: dbValue };
-      const { error } = await supabase.from("symbols").update(patch).eq("id", args.id);
+  const updateSymbol = useMutation({
+    mutationFn: async (args: { id: string; patch: Record<string, unknown> }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await supabase.from("symbols").update(args.patch as any).eq("id", args.id);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["symbols"] }),
   });
 
-  const onModeChange = (s: any, value: ModeOverride) => {
+  const onModeChange = (s: SymbolRow, value: ModeOverride) => {
     if (value === "live") {
       setPendingLive({ id: s.id, symbol: s.symbol });
       return;
     }
-    setOverride.mutate({ id: s.id, value });
+    const dbValue = value === "inherit_global" ? null : value;
+    updateSymbol.mutate({ id: s.id, patch: { execution_mode_override: dbValue } });
   };
 
   return (
@@ -71,10 +87,7 @@ function SymbolsPage() {
       />
       <Card>
         {(data?.length ?? 0) === 0 ? (
-          <EmptyState
-            title="No symbols configured"
-            hint="Add a symbol to enable trading on it."
-          />
+          <EmptyState title="No symbols configured" hint="Add a symbol to enable trading on it." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm tabular">
@@ -94,55 +107,27 @@ function SymbolsPage() {
                   <th>TP1 %</th>
                   <th title="Hard cap on estimated exposure (USDT)">Max Notional</th>
                   <th title="Hard cap on margin allocated (USDT)">Max Margin</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {data!.map((s) => {
-                  const isLive = s.execution_mode_override === "live";
-                  return (
-                    <tr key={s.id} className={isLive ? "bg-danger/10" : ""}>
-                      <td className="py-2 font-medium">{s.symbol}</td>
-                      <td>{s.enabled ? "✓" : "—"}</td>
-                      <td>
-                        <select
-                          value={s.execution_mode_override ?? "inherit_global"}
-                          disabled={setOverride.isPending}
-                          onChange={(e) => onModeChange(s, e.target.value as ModeOverride)}
-                          className={`rounded border bg-background px-1.5 py-0.5 text-xs ${
-                            isLive ? "border-danger text-danger font-bold" : "border-border"
-                          }`}
-                        >
-                          <option value="inherit_global">inherit</option>
-                          <option value="paper">paper</option>
-                          <option value="testnet">testnet</option>
-                          <option value="live">live</option>
-                        </select>
-                        {s.execution_mode_override
-                          ? <span className="ml-1"><ModeChip mode={s.execution_mode_override} /></span>
-                          : null}
-                      </td>
-                      <td className="text-xs">{s.preferred_transport}</td>
-                      <td>{s.account_balance_percent}</td>
-                      <td>{s.leverage}x</td>
-                      <td>{s.position_size_multiplier}</td>
-                      <td className="text-xs">{s.margin_mode}</td>
-                      <td>{s.sl_pct}</td>
-                      <td className="text-xs">
-                        {s.tsl_enabled
-                          ? `${s.tsl_activation_profit_pct} / ${s.tsl_callback_pct}`
-                          : "off"}
-                      </td>
-                      <td>{s.tp2_enabled ? "✓" : "—"}</td>
-                      <td>{s.tp1_exit_percent}</td>
-                      <td className={s.max_position_notional_usdt == null ? "text-muted-foreground" : ""}>
-                        {s.max_position_notional_usdt == null ? "—" : `${s.max_position_notional_usdt} USDT`}
-                      </td>
-                      <td className={s.max_margin_usage_usdt == null ? "text-muted-foreground" : ""}>
-                        {s.max_margin_usage_usdt == null ? "—" : `${s.max_margin_usage_usdt} USDT`}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {data!.map((s) => (
+                  <SymbolRowView
+                    key={s.id}
+                    s={s}
+                    editing={editingId === s.id}
+                    busy={updateSymbol.isPending}
+                    onEdit={() => setEditingId(s.id)}
+                    onCancel={() => setEditingId(null)}
+                    onModeChange={(v) => onModeChange(s, v)}
+                    onSave={(patch) =>
+                      updateSymbol.mutate(
+                        { id: s.id, patch },
+                        { onSuccess: () => setEditingId(null) },
+                      )
+                    }
+                  />
+                ))}
               </tbody>
             </table>
           </div>
@@ -182,14 +167,334 @@ function SymbolsPage() {
           balanceUsdt={balanceUsdt}
           onCancel={() => setPendingLive(null)}
           onConfirm={() => {
-            setOverride.mutate(
-              { id: pendingLive.id, value: "live", applyLiveDefaults: true },
+            updateSymbol.mutate(
+              {
+                id: pendingLive.id,
+                patch: { execution_mode_override: "live", ...LIVE_DEFAULTS },
+              },
               { onSuccess: () => setPendingLive(null) },
             );
           }}
         />
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Row (read + edit)
+// ---------------------------------------------------------------------------
+
+type Draft = {
+  enabled: boolean;
+  preferred_transport: string;
+  account_balance_percent: string;
+  leverage: string;
+  position_size_multiplier: string;
+  margin_mode: string;
+  sl_pct: string;
+  tsl_enabled: boolean;
+  tsl_activation_profit_pct: string;
+  tsl_callback_pct: string;
+  tp2_enabled: boolean;
+  tp1_exit_percent: string;
+  max_position_notional_usdt: string;
+  max_margin_usage_usdt: string;
+};
+
+const toDraft = (s: SymbolRow): Draft => ({
+  enabled: s.enabled,
+  preferred_transport: s.preferred_transport,
+  account_balance_percent: String(s.account_balance_percent),
+  leverage: String(s.leverage),
+  position_size_multiplier: String(s.position_size_multiplier),
+  margin_mode: s.margin_mode,
+  sl_pct: String(s.sl_pct),
+  tsl_enabled: s.tsl_enabled,
+  tsl_activation_profit_pct: String(s.tsl_activation_profit_pct),
+  tsl_callback_pct: String(s.tsl_callback_pct),
+  tp2_enabled: s.tp2_enabled,
+  tp1_exit_percent: String(s.tp1_exit_percent),
+  max_position_notional_usdt: s.max_position_notional_usdt == null ? "" : String(s.max_position_notional_usdt),
+  max_margin_usage_usdt: s.max_margin_usage_usdt == null ? "" : String(s.max_margin_usage_usdt),
+});
+
+function validateDraft(d: Draft): { ok: boolean; patch?: Record<string, unknown>; error?: string } {
+  const num = (v: string) => (v.trim() === "" ? NaN : Number(v));
+  const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
+
+  const bp = num(d.account_balance_percent);
+  const lev = num(d.leverage);
+  const mult = num(d.position_size_multiplier);
+  const sl = num(d.sl_pct);
+  const tslAct = num(d.tsl_activation_profit_pct);
+  const tslCb = num(d.tsl_callback_pct);
+  const tp1 = num(d.tp1_exit_percent);
+  const maxNot = numOrNull(d.max_position_notional_usdt);
+  const maxMar = numOrNull(d.max_margin_usage_usdt);
+
+  if (!(bp >= 0 && bp <= 100)) return { ok: false, error: "Bal % must be 0–100" };
+  if (!(lev >= 1 && lev <= 100)) return { ok: false, error: "Leverage must be 1–100" };
+  if (!(mult > 0)) return { ok: false, error: "Multiplier must be > 0" };
+  if (!(sl > 0)) return { ok: false, error: "SL % must be > 0" };
+  if (!(tslAct >= 0)) return { ok: false, error: "TSL activation must be ≥ 0" };
+  if (!(tslCb > 0)) return { ok: false, error: "TSL callback must be > 0" };
+  if (!(tp1 >= 1 && tp1 <= 100)) return { ok: false, error: "TP1 % must be 1–100" };
+  if (maxNot != null && !(maxNot >= 0)) return { ok: false, error: "Max notional must be ≥ 0" };
+  if (maxMar != null && !(maxMar >= 0)) return { ok: false, error: "Max margin must be ≥ 0" };
+
+  return {
+    ok: true,
+    patch: {
+      enabled: d.enabled,
+      preferred_transport: d.preferred_transport,
+      account_balance_percent: bp,
+      leverage: lev,
+      position_size_multiplier: mult,
+      margin_mode: d.margin_mode,
+      sl_pct: sl,
+      tsl_enabled: d.tsl_enabled,
+      tsl_activation_profit_pct: tslAct,
+      tsl_callback_pct: tslCb,
+      tp2_enabled: d.tp2_enabled,
+      tp1_exit_percent: tp1,
+      max_position_notional_usdt: maxNot,
+      max_margin_usage_usdt: maxMar,
+    },
+  };
+}
+
+function SymbolRowView({
+  s, editing, busy, onEdit, onCancel, onModeChange, onSave,
+}: {
+  s: SymbolRow;
+  editing: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onModeChange: (v: ModeOverride) => void;
+  onSave: (patch: Record<string, unknown>) => void;
+}) {
+  const [draft, setDraft] = useState<Draft>(() => toDraft(s));
+  const isLive = s.execution_mode_override === "live";
+
+  // Reset draft when entering edit mode for a fresh row.
+  if (editing && draft && (draft as Draft & { __id?: string }).__id !== s.id) {
+    // re-init when switching rows (defensive)
+  }
+
+  const handleEdit = () => {
+    setDraft(toDraft(s));
+    onEdit();
+  };
+
+  const handleSave = () => {
+    const v = validateDraft(draft);
+    if (!v.ok) {
+      alert(v.error);
+      return;
+    }
+    onSave(v.patch!);
+  };
+
+  if (!editing) {
+    return (
+      <tr className={isLive ? "bg-danger/10" : ""}>
+        <td className="py-2 font-medium">{s.symbol}</td>
+        <td>{s.enabled ? "✓" : "—"}</td>
+        <td>
+          <select
+            value={s.execution_mode_override ?? "inherit_global"}
+            disabled={busy}
+            onChange={(e) => onModeChange(e.target.value as ModeOverride)}
+            className={`rounded border bg-background px-1.5 py-0.5 text-xs ${
+              isLive ? "border-danger text-danger font-bold" : "border-border"
+            }`}
+          >
+            <option value="inherit_global">inherit</option>
+            <option value="paper">paper</option>
+            <option value="testnet">testnet</option>
+            <option value="live">live</option>
+          </select>
+          {s.execution_mode_override
+            ? <span className="ml-1"><ModeChip mode={s.execution_mode_override as "paper" | "testnet" | "live"} /></span>
+            : null}
+        </td>
+        <td className="text-xs">{s.preferred_transport}</td>
+        <td>{s.account_balance_percent}</td>
+        <td>{s.leverage}x</td>
+        <td>{s.position_size_multiplier}</td>
+        <td className="text-xs">{s.margin_mode}</td>
+        <td>{s.sl_pct}</td>
+        <td className="text-xs">
+          {s.tsl_enabled ? `${s.tsl_activation_profit_pct} / ${s.tsl_callback_pct}` : "off"}
+        </td>
+        <td>{s.tp2_enabled ? "✓" : "—"}</td>
+        <td>{s.tp1_exit_percent}</td>
+        <td className={s.max_position_notional_usdt == null ? "text-muted-foreground" : ""}>
+          {s.max_position_notional_usdt == null ? "—" : `${s.max_position_notional_usdt} USDT`}
+        </td>
+        <td className={s.max_margin_usage_usdt == null ? "text-muted-foreground" : ""}>
+          {s.max_margin_usage_usdt == null ? "—" : `${s.max_margin_usage_usdt} USDT`}
+        </td>
+        <td>
+          <button
+            onClick={handleEdit}
+            className="rounded border border-border bg-background px-2 py-0.5 text-xs hover:bg-muted"
+          >
+            Edit
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  // Editing row
+  const inputCls = "w-16 rounded border border-border bg-background px-1 py-0.5 text-xs";
+  const selectCls = "rounded border border-border bg-background px-1 py-0.5 text-xs";
+
+  return (
+    <tr className="bg-muted/30">
+      <td className="py-2 font-medium">{s.symbol}</td>
+      <td>
+        <input
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+        />
+      </td>
+      <td>
+        <select
+          value={s.execution_mode_override ?? "inherit_global"}
+          disabled={busy}
+          onChange={(e) => onModeChange(e.target.value as ModeOverride)}
+          className={`${selectCls} ${isLive ? "border-danger text-danger font-bold" : ""}`}
+        >
+          <option value="inherit_global">inherit</option>
+          <option value="paper">paper</option>
+          <option value="testnet">testnet</option>
+          <option value="live">live</option>
+        </select>
+      </td>
+      <td>
+        <select
+          value={draft.preferred_transport}
+          onChange={(e) => setDraft({ ...draft, preferred_transport: e.target.value })}
+          className={selectCls}
+        >
+          <option value="webhook">webhook</option>
+          <option value="email">email</option>
+        </select>
+      </td>
+      <td>
+        <input
+          type="number" step="0.1" className={inputCls}
+          value={draft.account_balance_percent}
+          onChange={(e) => setDraft({ ...draft, account_balance_percent: e.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          type="number" step="1" className={inputCls}
+          value={draft.leverage}
+          onChange={(e) => setDraft({ ...draft, leverage: e.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          type="number" step="0.1" className={inputCls}
+          value={draft.position_size_multiplier}
+          onChange={(e) => setDraft({ ...draft, position_size_multiplier: e.target.value })}
+        />
+      </td>
+      <td>
+        <select
+          value={draft.margin_mode}
+          onChange={(e) => setDraft({ ...draft, margin_mode: e.target.value })}
+          className={selectCls}
+        >
+          <option value="isolated">isolated</option>
+          <option value="cross">cross</option>
+        </select>
+      </td>
+      <td>
+        <input
+          type="number" step="0.1" className={inputCls}
+          value={draft.sl_pct}
+          onChange={(e) => setDraft({ ...draft, sl_pct: e.target.value })}
+        />
+      </td>
+      <td>
+        <div className="flex items-center gap-1">
+          <input
+            type="checkbox"
+            checked={draft.tsl_enabled}
+            onChange={(e) => setDraft({ ...draft, tsl_enabled: e.target.checked })}
+          />
+          <input
+            type="number" step="0.1" className="w-12 rounded border border-border bg-background px-1 py-0.5 text-xs"
+            value={draft.tsl_activation_profit_pct}
+            disabled={!draft.tsl_enabled}
+            onChange={(e) => setDraft({ ...draft, tsl_activation_profit_pct: e.target.value })}
+          />
+          <span className="text-xs">/</span>
+          <input
+            type="number" step="0.1" className="w-12 rounded border border-border bg-background px-1 py-0.5 text-xs"
+            value={draft.tsl_callback_pct}
+            disabled={!draft.tsl_enabled}
+            onChange={(e) => setDraft({ ...draft, tsl_callback_pct: e.target.value })}
+          />
+        </div>
+      </td>
+      <td>
+        <input
+          type="checkbox"
+          checked={draft.tp2_enabled}
+          onChange={(e) => setDraft({ ...draft, tp2_enabled: e.target.checked })}
+        />
+      </td>
+      <td>
+        <input
+          type="number" step="1" className={inputCls}
+          value={draft.tp1_exit_percent}
+          onChange={(e) => setDraft({ ...draft, tp1_exit_percent: e.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          type="number" step="1" className="w-20 rounded border border-border bg-background px-1 py-0.5 text-xs"
+          placeholder="—"
+          value={draft.max_position_notional_usdt}
+          onChange={(e) => setDraft({ ...draft, max_position_notional_usdt: e.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          type="number" step="1" className="w-20 rounded border border-border bg-background px-1 py-0.5 text-xs"
+          placeholder="—"
+          value={draft.max_margin_usage_usdt}
+          onChange={(e) => setDraft({ ...draft, max_margin_usage_usdt: e.target.value })}
+        />
+      </td>
+      <td>
+        <div className="flex gap-1">
+          <button
+            onClick={handleSave}
+            disabled={busy}
+            className="rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            Save
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded border border-border bg-background px-2 py-0.5 text-xs hover:bg-muted"
+          >
+            Cancel
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
