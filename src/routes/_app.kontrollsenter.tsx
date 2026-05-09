@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { useMemo, useState } from "react";
 
-export const Route = createFileRoute("/_app/performance")({
+export const Route = createFileRoute("/_app/kontrollsenter")({
   component: PerformancePage,
 });
 
@@ -36,7 +36,7 @@ function PerformancePage() {
   return (
     <>
       <PageHeader
-        title="Performance"
+        title="Kontrollsenter"
         description="Helsemålinger fra TradingView, regelbasert sizing og per-coin overstyringer."
       />
       <div className="mb-4 flex gap-2">
@@ -73,15 +73,22 @@ function SymbolsTab() {
         .from("health_snapshots")
         .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at")
         .order("created_at", { ascending: false })
-        .limit(1000);
-      const seen = new Set<string>();
-      const latest: Snap[] = [];
+        .limit(2000);
+      // Collapse to one row per ticker.
+      // Preferred: latest HEALTH_ALL snapshot (heartbeat = authoritative current state).
+      // Fallback: latest snapshot of any strategy when no HEALTH_ALL exists.
+      const allBySymbol = new Map<string, Snap[]>();
       for (const r of (data ?? []) as Snap[]) {
-        const k = `${r.symbol}|${r.strategy}|${r.tag ?? ""}`;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        latest.push(r);
+        const arr = allBySymbol.get(r.symbol) ?? [];
+        arr.push(r);
+        allBySymbol.set(r.symbol, arr);
       }
+      const latest: Snap[] = [];
+      for (const [, arr] of allBySymbol) {
+        const heartbeat = arr.find((r) => r.strategy === "HEALTH_ALL");
+        latest.push(heartbeat ?? arr[0]);
+      }
+      latest.sort((a, b) => a.symbol.localeCompare(b.symbol));
       return latest;
     },
   });
@@ -112,6 +119,7 @@ function SymbolsTab() {
   });
 
   const [editing, setEditing] = useState<Snap | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     if (!snaps || !symbols) return [];
@@ -139,55 +147,64 @@ function SymbolsTab() {
           <thead className="text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="py-2">Symbol</th>
-              <th>Strategy / tag</th>
+              <th>Kilde</th>
               <th className="text-right">Winrate</th>
               <th className="text-right">PF</th>
               <th className="text-right">Net profit</th>
               <th className="text-right">% equity</th>
               <th className="text-right">Lev</th>
               <th>Status</th>
-              <th>Kilde</th>
               <th>Sist</th>
               <th></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {rows.map((r) => (
-              <tr key={`${r.snap.symbol}|${r.snap.strategy}|${r.snap.tag}`}>
-                <td className="py-2 font-medium">{r.snap.symbol}</td>
-                <td className="text-xs text-muted-foreground">
-                  {r.snap.strategy}{r.snap.tag ? ` / ${r.snap.tag}` : ""}
-                </td>
-                <td className="text-right">{fmtNum(r.snap.winrate, 1)}{r.snap.winrate != null ? "%" : ""}</td>
-                <td className="text-right">{fmtNum(r.snap.profit_factor, 2)}</td>
-                <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
-                  {fmtNum(r.snap.net_profit, 2)}
-                </td>
-                <td className="text-right">{fmtNum(r.eval.balance_pct, 1)}</td>
-                <td className="text-right">{fmtNum(r.eval.leverage, 0)}x</td>
-                <td>
-                  {r.eval.blocked ? (
-                    <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">BLOCKED</span>
-                  ) : r.snap == null ? (
-                    <span className="rounded bg-yellow-500/20 px-2 py-0.5 text-xs text-yellow-600">no data</span>
-                  ) : (
-                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-600">trades</span>
-                  )}
-                </td>
-                <td className="text-xs text-muted-foreground">{r.eval.source}</td>
-                <td className="text-xs text-muted-foreground">
-                  {r.snap.bar_time ? new Date(r.snap.bar_time).toLocaleString() : "—"}
-                </td>
-                <td className="text-right">
-                  <button
-                    className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/40"
-                    onClick={() => setEditing(r.snap)}
-                  >
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const noSymbol = !r.sym;
+              const sourceLabel = r.snap.strategy === "HEALTH_ALL" ? "heartbeat" : `via ${r.snap.strategy}`;
+              return (
+                <tr key={r.snap.symbol}>
+                  <td className="py-2 font-medium">{r.snap.symbol}</td>
+                  <td className="text-xs text-muted-foreground">{sourceLabel}</td>
+                  <td className="text-right">{fmtNum(r.snap.winrate, 1)}{r.snap.winrate != null ? "%" : ""}</td>
+                  <td className="text-right">{fmtNum(r.snap.profit_factor, 2)}</td>
+                  <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
+                    {fmtNum(r.snap.net_profit, 2)}
+                  </td>
+                  <td className="text-right">{noSymbol ? "—" : fmtNum(r.eval.balance_pct, 1)}</td>
+                  <td className="text-right">{noSymbol ? "—" : `${fmtNum(r.eval.leverage, 0)}x`}</td>
+                  <td>
+                    {noSymbol ? (
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">unregistered</span>
+                    ) : r.eval.blocked ? (
+                      <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">BLOCKED</span>
+                    ) : (
+                      <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-600">trades</span>
+                    )}
+                  </td>
+                  <td className="text-xs text-muted-foreground">
+                    {r.snap.bar_time ? new Date(r.snap.bar_time).toLocaleString() : "—"}
+                  </td>
+                  <td className="text-right">
+                    {noSymbol ? (
+                      <button
+                        className="rounded border border-primary px-2 py-1 text-xs text-primary hover:bg-primary/10"
+                        onClick={() => setAdding(r.snap.symbol)}
+                      >
+                        + Add symbol
+                      </button>
+                    ) : (
+                      <button
+                        className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/40"
+                        onClick={() => setEditing(r.snap)}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -201,6 +218,7 @@ function SymbolsTab() {
           onClose={() => setEditing(null)}
         />
       )}
+      {adding && <AddSymbolModal symbol={adding} onClose={() => setAdding(null)} />}
     </Card>
   );
 }
@@ -585,4 +603,98 @@ function RuleEditor({ rule, nextPriority, onClose }: any) {
   function updateCond(i: number, patch: Partial<{ metric: string; op: string; value: string }>) {
     setConds(conds.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   }
+}
+
+// --------------------------------------------------------------------------
+// Add symbol modal — registers a new symbols-row with safe defaults
+// --------------------------------------------------------------------------
+
+function AddSymbolModal({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    account_balance_percent: "5",
+    leverage: "10",
+    position_size_multiplier: "1.0",
+    sl_pct: "1.5",
+    tsl_enabled: true,
+    tsl_activation_profit_pct: "1.0",
+    tsl_callback_pct: "0.5",
+    max_position_notional_usdt: "",
+    max_margin_usage_usdt: "",
+  });
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const num = (v: string) => (v === "" || v == null ? null : Number(v));
+      const payload: any = {
+        symbol,
+        enabled: true,
+        category: "linear",
+        preferred_transport: "webhook",
+        margin_mode: "isolated",
+        account_balance_percent: Number(form.account_balance_percent),
+        leverage: Number(form.leverage),
+        position_size_multiplier: Number(form.position_size_multiplier),
+        sl_pct: Number(form.sl_pct),
+        tsl_enabled: form.tsl_enabled,
+        tsl_activation_profit_pct: Number(form.tsl_activation_profit_pct),
+        tsl_callback_pct: Number(form.tsl_callback_pct),
+        max_position_notional_usdt: num(form.max_position_notional_usdt),
+        max_margin_usage_usdt: num(form.max_margin_usage_usdt),
+      };
+      const { error } = await supabase.from("symbols").insert(payload);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["symbols-perf"] });
+      qc.invalidateQueries({ queryKey: ["symbols"] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/70 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-lg border border-border bg-card p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4">
+          <div className="text-sm text-muted-foreground">Registrer for handel</div>
+          <h2 className="text-lg font-semibold">{symbol}</h2>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Symbolet aktiveres umiddelbart. Standardverdier brukes med mindre du justerer dem.
+          </div>
+        </div>
+
+        <div className="space-y-3 text-sm">
+          <Field label="Account balance %" value={form.account_balance_percent} onChange={(v: string) => setForm({ ...form, account_balance_percent: v })} placeholder="5" />
+          <Field label="Leverage" value={form.leverage} onChange={(v: string) => setForm({ ...form, leverage: v })} placeholder="10" />
+          <Field label="Position size multiplier" value={form.position_size_multiplier} onChange={(v: string) => setForm({ ...form, position_size_multiplier: v })} placeholder="1.0" />
+          <Field label="Stop loss %" value={form.sl_pct} onChange={(v: string) => setForm({ ...form, sl_pct: v })} placeholder="1.5" />
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.tsl_enabled} onChange={(e) => setForm({ ...form, tsl_enabled: e.target.checked })} />
+            Trailing stop loss aktivert
+          </label>
+          <Field label="TSL activation profit %" value={form.tsl_activation_profit_pct} onChange={(v: string) => setForm({ ...form, tsl_activation_profit_pct: v })} placeholder="1.0" />
+          <Field label="TSL callback %" value={form.tsl_callback_pct} onChange={(v: string) => setForm({ ...form, tsl_callback_pct: v })} placeholder="0.5" />
+          <Field label="Max notional USDT (cap)" value={form.max_position_notional_usdt} onChange={(v: string) => setForm({ ...form, max_position_notional_usdt: v })} placeholder="(ingen cap)" />
+          <Field label="Max margin USDT (cap)" value={form.max_margin_usage_usdt} onChange={(v: string) => setForm({ ...form, max_margin_usage_usdt: v })} placeholder="(ingen cap)" />
+        </div>
+
+        {save.isError && (
+          <div className="mt-3 rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {(save.error as Error).message}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button className="rounded border border-border px-3 py-1.5 text-sm" onClick={onClose}>Avbryt</button>
+          <button
+            className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+          >
+            {save.isPending ? "Registrerer…" : "Registrer symbol"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

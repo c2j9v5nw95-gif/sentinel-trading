@@ -18,8 +18,8 @@ import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
 import { Route as AppSignalsRouteImport } from './routes/_app.signals'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppPositionsRouteImport } from './routes/_app.positions'
-import { Route as AppPerformanceRouteImport } from './routes/_app.performance'
 import { Route as AppOverviewRouteImport } from './routes/_app.overview'
+import { Route as AppKontrollsenterRouteImport } from './routes/_app.kontrollsenter'
 import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
@@ -68,14 +68,14 @@ const AppPositionsRoute = AppPositionsRouteImport.update({
   path: '/positions',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPerformanceRoute = AppPerformanceRouteImport.update({
-  id: '/performance',
-  path: '/performance',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppOverviewRoute = AppOverviewRouteImport.update({
   id: '/overview',
   path: '/overview',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppKontrollsenterRoute = AppKontrollsenterRouteImport.update({
+  id: '/kontrollsenter',
+  path: '/kontrollsenter',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInvariantsRoute = AppInvariantsRouteImport.update({
@@ -100,8 +100,8 @@ export interface FileRoutesByFullPath {
   '/alerts': typeof AppAlertsRoute
   '/audit': typeof AppAuditRoute
   '/invariants': typeof AppInvariantsRoute
+  '/kontrollsenter': typeof AppKontrollsenterRoute
   '/overview': typeof AppOverviewRoute
-  '/performance': typeof AppPerformanceRoute
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
@@ -115,8 +115,8 @@ export interface FileRoutesByTo {
   '/alerts': typeof AppAlertsRoute
   '/audit': typeof AppAuditRoute
   '/invariants': typeof AppInvariantsRoute
+  '/kontrollsenter': typeof AppKontrollsenterRoute
   '/overview': typeof AppOverviewRoute
-  '/performance': typeof AppPerformanceRoute
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
@@ -132,8 +132,8 @@ export interface FileRoutesById {
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/audit': typeof AppAuditRoute
   '/_app/invariants': typeof AppInvariantsRoute
+  '/_app/kontrollsenter': typeof AppKontrollsenterRoute
   '/_app/overview': typeof AppOverviewRoute
-  '/_app/performance': typeof AppPerformanceRoute
   '/_app/positions': typeof AppPositionsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/signals': typeof AppSignalsRoute
@@ -149,8 +149,8 @@ export interface FileRouteTypes {
     | '/alerts'
     | '/audit'
     | '/invariants'
+    | '/kontrollsenter'
     | '/overview'
-    | '/performance'
     | '/positions'
     | '/settings'
     | '/signals'
@@ -164,8 +164,8 @@ export interface FileRouteTypes {
     | '/alerts'
     | '/audit'
     | '/invariants'
+    | '/kontrollsenter'
     | '/overview'
-    | '/performance'
     | '/positions'
     | '/settings'
     | '/signals'
@@ -180,8 +180,8 @@ export interface FileRouteTypes {
     | '/_app/alerts'
     | '/_app/audit'
     | '/_app/invariants'
+    | '/_app/kontrollsenter'
     | '/_app/overview'
-    | '/_app/performance'
     | '/_app/positions'
     | '/_app/settings'
     | '/_app/signals'
@@ -261,18 +261,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPositionsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/performance': {
-      id: '/_app/performance'
-      path: '/performance'
-      fullPath: '/performance'
-      preLoaderRoute: typeof AppPerformanceRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/overview': {
       id: '/_app/overview'
       path: '/overview'
       fullPath: '/overview'
       preLoaderRoute: typeof AppOverviewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/kontrollsenter': {
+      id: '/_app/kontrollsenter'
+      path: '/kontrollsenter'
+      fullPath: '/kontrollsenter'
+      preLoaderRoute: typeof AppKontrollsenterRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/invariants': {
@@ -303,8 +303,8 @@ interface AppRouteChildren {
   AppAlertsRoute: typeof AppAlertsRoute
   AppAuditRoute: typeof AppAuditRoute
   AppInvariantsRoute: typeof AppInvariantsRoute
+  AppKontrollsenterRoute: typeof AppKontrollsenterRoute
   AppOverviewRoute: typeof AppOverviewRoute
-  AppPerformanceRoute: typeof AppPerformanceRoute
   AppPositionsRoute: typeof AppPositionsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSignalsRoute: typeof AppSignalsRoute
@@ -317,8 +317,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppAlertsRoute: AppAlertsRoute,
   AppAuditRoute: AppAuditRoute,
   AppInvariantsRoute: AppInvariantsRoute,
+  AppKontrollsenterRoute: AppKontrollsenterRoute,
   AppOverviewRoute: AppOverviewRoute,
-  AppPerformanceRoute: AppPerformanceRoute,
   AppPositionsRoute: AppPositionsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSignalsRoute: AppSignalsRoute,
