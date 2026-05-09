@@ -35,6 +35,17 @@ export interface AlertPayload {
   reason?: string | null;
   dashboard_url?: string | null;
   extra?: Record<string, unknown>;
+  // Rich entry/exit fields (optional)
+  entry_price?: number | null;
+  exit_price?: number | null;
+  pnl_pct?: number | null;
+  hold_seconds?: number | null;
+  sl_price?: number | null;
+  sl_pct?: number | null;
+  tsl_enabled?: boolean | null;
+  tsl_activation_pct?: number | null;
+  tsl_callback_pct?: number | null;
+  confirmed_by_venue?: boolean | null;
   // Override message body completely (skips formatting)
   raw_text?: string;
   // Bypass dedupe (for tests)
