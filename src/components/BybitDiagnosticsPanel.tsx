@@ -180,9 +180,12 @@ export function BybitDiagnosticsPanel() {
             </div>
 
             {view.error && (
-              <div className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs">
+              <div className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs space-y-1">
                 <div className="font-mono text-danger">{view.error.code}</div>
                 <div className="text-muted-foreground">{view.error.message}</div>
+                {view.error.code?.startsWith("bybit_transport_") && (
+                  <TransportBlockExplainer detail={(view.error as { detail?: TransportDiagnostics }).detail} />
+                )}
               </div>
             )}
 
