@@ -18,6 +18,7 @@ import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
 import { fetchInstrumentRules, fetchLastPrice } from "./bybit-public.ts";
 import { resolveSizing } from "./sizing-resolver.ts";
+import { BybitError } from "./bybit-rest.ts";
 
 export interface ExecOutcome {
   ok: boolean;
@@ -238,10 +239,17 @@ export async function executeEntry(
     });
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
+    const bybit = e instanceof BybitError
+      ? { ret_code: e.retCode, ret_msg: e.retMsg, http_status: e.httpStatus, endpoint: e.endpoint, body: e.body }
+      : null;
     await sb.from("positions").update({
       qty_open: 0, closed_at: new Date().toISOString(), protection_state: "closed",
     }).eq("id", posRow.id);
     await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink });
+    await sb.from("error_log").insert({
+      source: "executor", message: "entry_submit_failed",
+      context: { signal_id: signal.id, symbol: signal.symbol, mode, error: msg, bybit },
+    });
     trail.add("entry_submit_failed", "fail", msg);
     return { ok: false, reason: `order_submit_failed:${msg.slice(0, 160)}`, position_id: posRow.id };
   }
