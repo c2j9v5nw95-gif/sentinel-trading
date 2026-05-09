@@ -60,6 +60,21 @@ function SymbolsPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingLive, setPendingLive] = useState<null | { id: string; symbol: string }>(null);
+  const [adding, setAdding] = useState(false);
+
+  const addSymbol = useMutation({
+    mutationFn: async (args: { symbol: string; category: string; enabled: boolean }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await supabase.from("symbols").insert({
+        symbol: args.symbol,
+        category: args.category,
+        enabled: args.enabled,
+        execution_mode_override: null,
+      } as any);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["symbols"] }),
+  });
 
   const updateSymbol = useMutation({
     mutationFn: async (args: { id: string; patch: Record<string, unknown> }) => {
