@@ -16,6 +16,7 @@ import { computeEntrySizing, validateSymbolSizing } from "./sizing.ts";
 import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
 import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
+import { fetchLastPrice } from "./bybit-public.ts";
 
 export interface ExecOutcome {
   ok: boolean;
@@ -81,15 +82,24 @@ export async function executeEntry(
   }
 
   const wallet = await client.getWalletBalance();
-  // Mark price: paper_market_prices for paper, signal payload otherwise.
-  // For testnet/live the executor relies on the TradingView payload price; the
-  // venue is the source of truth for fills (avgFillPrice replaces this).
+  // Mark price resolution priority:
+  //   1. paper_market_prices (paper mode only)
+  //   2. signal payload price/close (TradingView {{close}})
+  //   3. Bybit public ticker fallback (lastPrice)
   const { data: priceRow } = mode === "paper"
     ? await sb.from("paper_market_prices").select("price,received_at").eq("symbol", signal.symbol).maybeSingle()
     : { data: null as { price: number; received_at: string } | null };
   const payloadPrice = Number(signal.payload?.price ?? signal.payload?.close ?? NaN);
-  const markPrice = priceRow ? Number(priceRow.price)
+  let markPrice = priceRow ? Number(priceRow.price)
     : (Number.isFinite(payloadPrice) && payloadPrice > 0 ? payloadPrice : NaN);
+
+  if (!Number.isFinite(markPrice) || markPrice <= 0) {
+    const fallback = await fetchLastPrice(signal.symbol);
+    if (fallback != null) {
+      markPrice = fallback;
+      trail.add("entry_price_fallback", "info", "bybit_public_ticker", { price: fallback });
+    }
+  }
 
   if (!Number.isFinite(markPrice) || markPrice <= 0) {
     trail.add("entry_price_unavailable", "fail", "no_mark_price");
@@ -299,7 +309,14 @@ export async function executeExit(
   const { data: priceRow } = mode === "paper"
     ? await sb.from("paper_market_prices").select("price").eq("symbol", signal.symbol).maybeSingle()
     : { data: null as { price: number } | null };
-  const refPrice = priceRow ? Number(priceRow.price) : (posRow.last_seen_price ?? posRow.entry_price);
+  const payloadExitPrice = Number(signal.payload?.price ?? signal.payload?.close ?? NaN);
+  let refPrice: number | null | undefined = priceRow ? Number(priceRow.price)
+    : (Number.isFinite(payloadExitPrice) && payloadExitPrice > 0
+        ? payloadExitPrice
+        : (posRow.last_seen_price ?? posRow.entry_price));
+  if (refPrice == null || !(Number(refPrice) > 0)) {
+    refPrice = await fetchLastPrice(signal.symbol);
+  }
 
   const fill = await client.submitOrder({
     symbol: signal.symbol, side: submitSide, qty, reduceOnly: true,
