@@ -197,6 +197,102 @@ export function BridgeStatusPanel() {
         )}
       </div>
 
+      {/* Bridge mode toggle (operator feature flag + kill-switch) */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Bridge mode for live execution</h3>
+            <p className="text-xs text-muted-foreground">
+              When enabled, every signed live Bybit call routes through the bridge VPS
+              (<code>BridgeBybitRest</code>). When disabled, live execution falls back to direct calls
+              from the edge runtime (requires Bybit-whitelisted egress IP).
+            </p>
+          </div>
+          <BridgeFlagBadge enabled={settings?.use_execution_bridge !== false} healthy={healthOk} />
+        </div>
+
+        {settings ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+              <Stat
+                label="Current mode"
+                value={settings.use_execution_bridge !== false ? "Bridge" : "Direct"}
+                tone={settings.use_execution_bridge !== false ? "ok" : "danger"}
+              />
+              <Stat
+                label="Bridge healthy"
+                value={healthOk ? "Yes" : "No"}
+                tone={healthOk ? "ok" : "danger"}
+              />
+              <Stat
+                label="Smoke test"
+                value={lastSmoke?.ok ? "Pass" : lastSmoke ? "Fail" : "—"}
+                tone={lastSmoke?.ok ? "ok" : lastSmoke ? "danger" : undefined}
+              />
+            </div>
+
+            {settings.use_execution_bridge !== false ? (
+              <div className="space-y-2 rounded border border-border bg-background/40 p-2">
+                <div className="text-[11px] text-muted-foreground">
+                  Type <code className="font-mono">{FLIP_CONFIRM_PHRASE_OFF}</code> to disable bridge mode
+                  (live calls will go direct, which will fail unless this region's egress IP is whitelisted on Bybit).
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={flipPhrase}
+                    onChange={(e) => setFlipPhrase(e.target.value)}
+                    placeholder={FLIP_CONFIRM_PHRASE_OFF}
+                    className="flex-1 rounded border border-border bg-background px-2 py-1 font-mono text-xs"
+                  />
+                  <button
+                    onClick={() => flipBridge.mutate(false)}
+                    disabled={flipPhrase !== FLIP_CONFIRM_PHRASE_OFF || flipBridge.isPending}
+                    className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-danger hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {flipBridge.isPending ? "Disabling…" : "Disable bridge"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 rounded border border-border bg-background/40 p-2">
+                <div className="text-[11px] text-muted-foreground">
+                  Type <code className="font-mono">{FLIP_CONFIRM_PHRASE_ON}</code> to route live order-flow
+                  through the bridge. Requires a green health check {!healthOk && <span className="text-danger">(currently failing)</span>}.
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={flipPhrase}
+                    onChange={(e) => setFlipPhrase(e.target.value)}
+                    placeholder={FLIP_CONFIRM_PHRASE_ON}
+                    className="flex-1 rounded border border-border bg-background px-2 py-1 font-mono text-xs"
+                  />
+                  <button
+                    onClick={() => flipBridge.mutate(true)}
+                    disabled={flipPhrase !== FLIP_CONFIRM_PHRASE_ON || flipBridge.isPending || !healthOk}
+                    title={!healthOk ? "Run a successful health check first" : ""}
+                    className="rounded border border-success/40 bg-success/10 px-2 py-1 text-xs text-success hover:bg-success/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {flipBridge.isPending ? "Enabling…" : "Enable bridge"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {flipBridge.error && (
+              <p className="text-xs text-danger">Update failed: {(flipBridge.error as Error).message}</p>
+            )}
+            {settings.live_enabled && (
+              <p className="text-[11px] text-muted-foreground">
+                Live execution is currently <span className="font-semibold text-foreground">ON</span> — the
+                next signal will use <span className="font-semibold text-foreground">{settings.use_execution_bridge !== false ? "bridge" : "direct"}</span> path.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Loading settings…</p>
+        )}
+      </div>
+
       {/* Smoke test box */}
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="mb-3 flex items-center justify-between">
