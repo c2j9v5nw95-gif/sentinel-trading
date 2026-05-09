@@ -51,6 +51,7 @@ export type Database = {
           testnet_enabled: boolean
           testnet_validated_at: string | null
           updated_at: string
+          use_execution_bridge: boolean
           webhook_secret_hint: string | null
           webhook_secret_rotated_at: string | null
           webhook_secret_version: number
@@ -91,6 +92,7 @@ export type Database = {
           testnet_enabled?: boolean
           testnet_validated_at?: string | null
           updated_at?: string
+          use_execution_bridge?: boolean
           webhook_secret_hint?: string | null
           webhook_secret_rotated_at?: string | null
           webhook_secret_version?: number
@@ -131,6 +133,7 @@ export type Database = {
           testnet_enabled?: boolean
           testnet_validated_at?: string | null
           updated_at?: string
+          use_execution_bridge?: boolean
           webhook_secret_hint?: string | null
           webhook_secret_rotated_at?: string | null
           webhook_secret_version?: number
@@ -167,6 +170,48 @@ export type Database = {
           id?: string
           ip?: string | null
           target?: string | null
+        }
+        Relationships: []
+      }
+      bridge_health_checks: {
+        Row: {
+          bridge_version: string | null
+          bybit_reachable: boolean | null
+          checked_at: string
+          error: string | null
+          http_status: number | null
+          id: string
+          latency_ms: number | null
+          ok: boolean
+          public_ip: string | null
+          raw: Json | null
+          region: string | null
+        }
+        Insert: {
+          bridge_version?: string | null
+          bybit_reachable?: boolean | null
+          checked_at?: string
+          error?: string | null
+          http_status?: number | null
+          id?: string
+          latency_ms?: number | null
+          ok: boolean
+          public_ip?: string | null
+          raw?: Json | null
+          region?: string | null
+        }
+        Update: {
+          bridge_version?: string | null
+          bybit_reachable?: boolean | null
+          checked_at?: string
+          error?: string | null
+          http_status?: number | null
+          id?: string
+          latency_ms?: number | null
+          ok?: boolean
+          public_ip?: string | null
+          raw?: Json | null
+          region?: string | null
         }
         Relationships: []
       }
