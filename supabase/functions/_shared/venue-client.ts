@@ -10,29 +10,51 @@ import type {
 } from "./bybit-client.ts";
 import type { ExecutionMode } from "./execution-mode.ts";
 import { BybitRest, BybitError, type BybitTrace } from "./bybit-rest.ts";
+import { BridgeBybitRest, bridgeConfigured } from "./bridge-rest.ts";
 import { buildPositionListRequest, buildOrderCreateRequest } from "./bybit-requests.ts";
 
 interface SymbolMeta { category: "linear"; }
 
+/** Common subset of BybitRest / BridgeBybitRest used by VenueBybitClient. */
+type RestLike = {
+  setSignalContext(id: string | null): void;
+  request<T = unknown>(opts: import("./bybit-rest.ts").BybitRequestOpts): Promise<import("./bybit-rest.ts").BybitResponse<T>>;
+};
+
 export class VenueBybitClient implements BybitClient {
   readonly mode: ExecutionMode;
-  private rest: BybitRest;
+  /** True when live calls are routed through the private execution bridge VPS. */
+  readonly viaBridge: boolean;
+  private rest: RestLike;
 
   constructor(
     private sb: SupabaseClient,
     opts: { mode: Extract<ExecutionMode, "testnet" | "live">; baseUrl: string; apiKey: string; apiSecret: string },
   ) {
     this.mode = opts.mode;
-    if (!opts.apiKey || !opts.apiSecret) {
-      throw new Error(`BYBIT_${opts.mode.toUpperCase()}_API_KEY / BYBIT_${opts.mode.toUpperCase()}_API_SECRET not configured`);
+    // Bridge is only used for live mode. Testnet keeps direct path so we can
+    // continue to compare/diff request shapes during the cutover.
+    this.viaBridge = opts.mode === "live" && bridgeConfigured();
+
+    if (this.viaBridge) {
+      this.rest = new BridgeBybitRest({
+        bridgeUrl: Deno.env.get("EXECUTION_BRIDGE_URL")!,
+        bridgeSecret: Deno.env.get("EXECUTION_BRIDGE_SECRET")!,
+        label: `${opts.mode}-executor-bridge`,
+        traceWriter: (trace) => this.persistTrace(trace),
+      });
+    } else {
+      if (!opts.apiKey || !opts.apiSecret) {
+        throw new Error(`BYBIT_${opts.mode.toUpperCase()}_API_KEY / BYBIT_${opts.mode.toUpperCase()}_API_SECRET not configured`);
+      }
+      this.rest = new BybitRest({
+        apiKey: opts.apiKey,
+        apiSecret: opts.apiSecret,
+        baseUrl: opts.baseUrl,
+        label: `${opts.mode}-executor`,
+        traceWriter: (trace) => this.persistTrace(trace),
+      });
     }
-    this.rest = new BybitRest({
-      apiKey: opts.apiKey,
-      apiSecret: opts.apiSecret,
-      baseUrl: opts.baseUrl,
-      label: `${opts.mode}-executor`,
-      traceWriter: (trace) => this.persistTrace(trace),
-    });
   }
 
   /** Tag every subsequent call with this signal id so traces can be diff'd. */
