@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.op-bridge-health]
 verify_jwt = false
+
+[functions.analytics-snapshot-balances]
+verify_jwt = false
