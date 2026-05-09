@@ -1,55 +1,46 @@
-## Bridge smoke test — wallet-balance via VPS
+## Rotårsak
 
-### Mål
-Verifiser end-to-end at en signert Bybit-call gjennom bridge-VPS fungerer, og vis HTTP-status + latency-målinger i en tydelig statusboks i Settings → Bridge Status.
+Alle `ENTER-LONG`-signaler de siste timene (PENGUUSDT, LABUSDT) blir avvist med `exec_rejected:no_mark_price`. Mønsteret i DB er entydig:
 
-### Hva som mangler i dag
-`op-live-wallet` og `op-test-bybit-connection` bruker `BybitRest` **direkte** fra Supabase Edge (CloudFront-egress) — ikke via bridge. Det finnes ingen endepunkt som beviser at bridge-ruten faktisk leverer en signert Bybit-respons.
+- `payload.price = null` og `payload.close = null` på alle feilende signaler → TradingView-alertene sender ikke pris i bodyen.
+- Executor faller derfor tilbake til `fetchLastPrice()` i `supabase/functions/_shared/bybit-public.ts`, som gjør et direkte `fetch("https://api.bybit.com/v5/market/tickers...")` fra Supabase edge runtime (eu-central-1).
+- **Det er nøyaktig samme Bybit WAF-blokkering vi bygde bridgen for å løse** — bare for offentlige endepunkter denne gangen. Kallet returnerer enten 403 eller timeout, fallback gir `null`, og executor stopper på `entry_price_unavailable: no_mark_price` før noen ordre forsøkes.
 
-### Endringer
+PIEVERSEUSDT-raden i skjermbildet er vår egen dry-run (`kill_switch:entries_paused`) og er forventet — ikke en bug.
 
-**1. Ny edge-funksjon: `op-bridge-smoke`**
-- JWT + operator-rolle.
-- Bruker `BridgeBybitRest` (samme `bridge-rest.ts` som executor vil bruke).
-- Kaller `GET /v5/account/wallet-balance?accountType=UNIFIED` (faller tilbake til `CONTRACT`).
-- Måler:
-  - Total round-trip ms (Supabase → bridge → Bybit → bridge → Supabase)
-  - Bridge-rapportert Bybit-latency (fra `trace.duration_ms`)
-  - HTTP-status fra bridge og fra Bybit
-  - `cf_ray`, `bapi_request_id`, `public_ip`-bekreftelse
-- Skriver en rad til `bridge_health_checks` (eller en ny `bridge_smoke_tests`-tabell hvis vi vil holde dem adskilt — anbefalt: ny tabell for å unngå støy i health-grafen).
-- Returnerer `{ ok, total_ms, bybit_ms, http_status, ret_code, ret_msg, public_ip, account_summary: { total_equity, available, coins_count }, trace }`.
+`EXIT-LONG`-avvisningene (`risk:no_open_position`) er en konsekvens: ingen entry har gått igjennom, så det finnes ingen posisjon å lukke når exit-alerten kommer. Fikser vi mark-price, forsvinner også den.
 
-**2. Ny tabell: `bridge_smoke_tests`** (migrasjon)
-Kolonner: `id`, `checked_at`, `ok`, `total_ms`, `bybit_ms`, `http_status`, `ret_code`, `ret_msg`, `public_ip`, `account_equity`, `account_available`, `error`, `raw jsonb`. RLS: kun operator kan lese/skrive (via service_role i edge).
+## Plan
 
-**3. UI: utvid `BridgeStatusPanel`**
-Legg til en ny seksjon **"Smoke test (wallet-balance)"** under den eksisterende health-boksen:
-- Knapp: **"Run smoke test"** (disabled hvis siste health-check er failed).
-- Resultatboks med samme stil som health-statene:
-  - Status (Pass/Fail) — grønn/rød chip
-  - Total latency (ms)
-  - Bybit latency (ms) — fra bridge-trace
-  - HTTP-status
-  - Bybit retCode + retMsg
-  - Konto-equity (USDT)
-  - Public IP-bekreftelse (skal matche `46.225.180.1`)
-- Hvis fail: vis full feilmelding + `body_snippet` i en "Details"-seksjon.
-- Liten historikk-stripe (siste 10 smoke tests).
+### 1. Hovedfiks: rut offentlig markedsdata via bridge (server-side)
+Legg en lettvekts public-data-klient inn i `bridge-rest.ts` (eller eksisterende `BridgeBybitRest`) som proxer:
+- `GET /v5/market/tickers?category=linear&symbol=...`
+- `GET /v5/market/instruments-info?category=linear&symbol=...`
 
-### Sikkerhet / invariants
-- Read-only call — ingen ordreplassering.
-- Fortsatt bak operator-rolle.
-- Bruker eksisterende `EXECUTION_BRIDGE_URL` + `EXECUTION_BRIDGE_SECRET` (allerede satt).
-- Idempotency ikke nødvendig (GET).
+Bridgen trenger ikke signere disse — den videresender bare GET-en fra sin egen IP (`46.225.180.1`), som Bybit ikke blokkerer. Endre `fetchLastPrice` og `fetchInstrumentRules` i `bybit-public.ts` til å gå via bridge når `app_settings.use_execution_bridge = true` og falle tilbake til direkte kall ellers (for paper/lokal utvikling). Logg `entry_price_source: bridge_public_ticker` i decision-trail.
 
-### Acceptance
-- Klikk "Run smoke test" på `/settings` → grønn boks med:
-  - `ok: true`, `http_status: 200`, `ret_code: 0`
-  - `public_ip: 46.225.180.1`
-  - `total_ms` ~250–600, `bybit_ms` ~150–300
-  - Konto-equity-tall vises
-- Rad lagret i `bridge_smoke_tests` og synlig i historikk-stripen.
+### 2. Belt-and-suspenders: bruk pris fra TradingView når den finnes
+Dokumenter (i `BridgeStatusPanel` eller eget hint i Signals-siden) at TradingView-alert message bør inkludere `price={{close}}` slik at executor slipper å spørre Bybit i det hele tatt. Dette er allerede støttet av parser — vi mangler bare avsender-konfigurasjon.
 
-### Etter dette
-Med både health (200) og smoke test (Bybit retCode 0) grønne kan vi trygt aktivere bridge-mode for live execution.
+### 3. Forbedret feillogging
+I dag taper `fetchLastPrice` HTTP-status og responskropp stille (`return null` på alle catch-grener). Legg inn én `error_log`-rad ved feil med `{symbol, http_status, error_kind, body_snippet}` slik at vi ikke trenger å gjette neste gang.
+
+### 4. Verifisering
+- Deploy bridge endring + edge-funksjoner.
+- Send på nytt en LABUSDT ENTER-LONG (live, real ordre — krever bekreftelse) **eller** trigg én manuell `process-signal` på et eksisterende `no_mark_price`-signal etter å ha gjenåpnet det via `replay_signal()`. Forventet trail: `entry_price_fallback: bridge_public_ticker (price=…)` → `entry_sizing_ok` → `bridge_order_submit` → enten `filled` eller en _ordre-_relatert feil (ikke pris-relatert).
+
+### Tekniske detaljer
+**Filer som endres:**
+- `supabase/functions/_shared/bridge-rest.ts` — ny `getPublicTicker(symbol)` / `getInstrumentRules(symbol)` som proxer GET via bridge.
+- `supabase/functions/_shared/bybit-public.ts` — bytt rå `fetch` mot bridge-klient bak en `useBridge`-flag, behold direkte kall som fallback. Legg inn `error_log`-rad ved feil.
+- `supabase/functions/_shared/executor.ts` — send `useBridge` videre til `fetchLastPrice` / `fetchInstrumentRules` (samme flag som allerede plumbes inn til `BridgeBybitRest`).
+- Bridge-VPS (utenfor dette prosjektet): trenger en publisert `GET /public/v5/market/...`-rute som videresender forespørselen uten signering. **Avhengighet** — denne må verifiseres / legges til på VPS-siden før edge-koden virker.
+
+**Database/migrasjoner:** ingen.
+**Hemmeligheter:** ingen nye.
+**Risiko:** lav — bare lese-trafikk gjennom bridge, ingen ordreflyt endres.
+
+## Avhengigheter / spørsmål til deg
+
+1. Har bridge-VPS-en allerede en passthrough-rute for `/v5/market/*`, eller må vi legge den til? (Avgjør om vi kan lande fiksen helt i Lovable, eller om VPS må oppdateres parallelt.)
+2. Vil du at jeg skal **fikse koden nå (uten ekte ordre-test)** og la neste live-alert fra TradingView være verifisering, eller vil du at jeg etterpå sender en manuell ENTER-LONG på et live-symbol for å bekrefte hele bridge-løypa?
