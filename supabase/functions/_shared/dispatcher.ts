@@ -20,7 +20,7 @@ import { evaluateRisk, recordDecision } from "./risk-engine.ts";
 import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
-import { LIVE_GATE_WORKER_VERSION, liveExecutionGate } from "./live-client.ts";
+import { LIVE_GATE_WORKER_VERSION, liveExecutionGate, resolveUseExecutionBridge } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
 import { BybitTransportError } from "./bybit-rest.ts";
