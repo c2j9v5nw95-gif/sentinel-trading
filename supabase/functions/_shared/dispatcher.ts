@@ -20,6 +20,7 @@ import { evaluateRisk, recordDecision } from "./risk-engine.ts";
 import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
+import { liveExecutionGate } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
 import { notify } from "./telegram.ts";
