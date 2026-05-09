@@ -463,6 +463,8 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Stash per-endpoint trace summaries so the UI can diff against executor traces.
+  (checks._meta!.detail as Record<string, unknown>).traces = traceByEndpoint;
   const persisted = await persist(sb, u.user.id, mode, ok, checks, permissions, accountType, lastResponse, topError);
 
   return json({
