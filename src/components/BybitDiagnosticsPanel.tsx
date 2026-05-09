@@ -5,10 +5,21 @@ import { Card } from "@/components/PageHeader";
 
 type Mode = "testnet" | "live";
 
+interface TransportDiagnostics {
+  base_url?: string;
+  endpoint?: string;
+  http_status?: number;
+  content_type?: string;
+  cf_ray?: string;
+  server?: string;
+  request_id?: string;
+  body_snippet?: string;
+}
+
 interface CheckResult {
   ok: boolean;
   detail?: unknown;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; detail?: TransportDiagnostics };
   ms?: number;
 }
 
@@ -36,6 +47,7 @@ const CHECK_LABELS: Record<string, string> = {
   instrument_info: "Symbol instrument info",
   leverage_limits: "Leverage limits",
   permissions: "API key permissions",
+  order_endpoint_reachability: "Order endpoint reachable (executor path)",
   safe_order_test: "Safe order test (place + cancel)",
 };
 
@@ -168,9 +180,12 @@ export function BybitDiagnosticsPanel() {
             </div>
 
             {view.error && (
-              <div className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs">
+              <div className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs space-y-1">
                 <div className="font-mono text-danger">{view.error.code}</div>
                 <div className="text-muted-foreground">{view.error.message}</div>
+                {view.error.code?.startsWith("bybit_transport_") && (
+                  <TransportBlockExplainer detail={(view.error as { detail?: TransportDiagnostics }).detail} />
+                )}
               </div>
             )}
 
@@ -223,6 +238,7 @@ export function BybitDiagnosticsPanel() {
 
 function CheckRow({ k, v }: { k: string; v: CheckResult }) {
   const label = CHECK_LABELS[k] ?? k;
+  const isTransport = v.error?.code?.startsWith("bybit_transport_");
   return (
     <div className={`flex items-start gap-2 rounded border px-2 py-1 ${
       v.ok ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
@@ -236,7 +252,40 @@ function CheckRow({ k, v }: { k: string; v: CheckResult }) {
             <span className="text-muted-foreground"> — {v.error.message}</span>
           </div>
         )}
+        {isTransport && v.error?.detail && (
+          <TransportBlockExplainer detail={v.error.detail} />
+        )}
       </div>
+    </div>
+  );
+}
+
+function TransportBlockExplainer({ detail }: { detail?: TransportDiagnostics }) {
+  if (!detail) return null;
+  return (
+    <div className="mt-2 rounded border border-danger/30 bg-background/60 p-2 text-[11px] space-y-1">
+      <p className="text-muted-foreground">
+        <strong className="text-danger">Cloudflare/WAF blocked the request before it reached Bybit.</strong>
+        {" "}This is <em>not</em> an API-key issue. Likely cause: the Lovable Cloud egress IP or region is on Bybit/Cloudflare's blocklist, or a WAF rule was triggered.
+      </p>
+      <p className="text-muted-foreground">
+        Workaround: set <code>BYBIT_API_BASE_URL</code> to <code>https://api.bytick.com</code> (Bybit's official mirror) or route through a proxy. Then re-run this check.
+      </p>
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 font-mono">
+        {detail.base_url && (<><dt className="text-muted-foreground">base_url</dt><dd className="break-all">{detail.base_url}</dd></>)}
+        {detail.endpoint && (<><dt className="text-muted-foreground">endpoint</dt><dd className="break-all">{detail.endpoint}</dd></>)}
+        {detail.http_status != null && (<><dt className="text-muted-foreground">status</dt><dd>{detail.http_status}</dd></>)}
+        {detail.cf_ray && (<><dt className="text-muted-foreground">cf-ray</dt><dd className="break-all">{detail.cf_ray}</dd></>)}
+        {detail.server && (<><dt className="text-muted-foreground">server</dt><dd>{detail.server}</dd></>)}
+        {detail.content_type && (<><dt className="text-muted-foreground">content-type</dt><dd>{detail.content_type}</dd></>)}
+        {detail.request_id && (<><dt className="text-muted-foreground">request_id</dt><dd className="break-all">{detail.request_id}</dd></>)}
+      </dl>
+      {detail.body_snippet && (
+        <details>
+          <summary className="cursor-pointer text-muted-foreground">Body snippet</summary>
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/50 p-1">{detail.body_snippet}</pre>
+        </details>
+      )}
     </div>
   );
 }

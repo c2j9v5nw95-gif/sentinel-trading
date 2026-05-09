@@ -18,7 +18,7 @@ import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
 import { fetchInstrumentRules, fetchLastPrice } from "./bybit-public.ts";
 import { resolveSizing } from "./sizing-resolver.ts";
-import { BybitError } from "./bybit-rest.ts";
+import { BybitError, BybitTransportError } from "./bybit-rest.ts";
 
 export interface ExecOutcome {
   ok: boolean;
@@ -238,13 +238,27 @@ export async function executeEntry(
       orderType: "Market", price: markPrice, purpose: "entry",
     });
   } catch (e) {
+    // Roll back the orphan local position before re-raising / returning.
+    await sb.from("positions").update({
+      qty_open: 0, closed_at: new Date().toISOString(), protection_state: "closed",
+    }).eq("id", posRow.id);
+
+    // Transport block (Cloudflare/WAF/non-JSON) — re-throw so the dispatcher's
+    // centralized handler emits the structured decision_reason + Telegram alert.
+    if (e instanceof BybitTransportError) {
+      await logEvent(sb, posRow.id, "entry_submit_blocked", {
+        kind: e.kind, diagnostics: e.diagnostics, orderLink,
+      });
+      trail.add("entry_submit_blocked", "fail",
+        `bybit_transport_${e.kind}:${e.diagnostics.endpoint}`,
+        { http_status: e.diagnostics.http_status, cf_ray: e.diagnostics.cf_ray });
+      throw e;
+    }
+
     const msg = (e as Error).message ?? String(e);
     const bybit = e instanceof BybitError
       ? { ret_code: e.retCode, ret_msg: e.retMsg, http_status: e.httpStatus, endpoint: e.endpoint, body: e.body }
       : null;
-    await sb.from("positions").update({
-      qty_open: 0, closed_at: new Date().toISOString(), protection_state: "closed",
-    }).eq("id", posRow.id);
     await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink });
     await sb.from("error_log").insert({
       source: "executor", message: "entry_submit_failed",

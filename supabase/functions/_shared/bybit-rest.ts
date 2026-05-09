@@ -48,6 +48,30 @@ export class BybitError extends Error {
   }
 }
 
+export interface BybitTransportDiagnostics {
+  base_url: string;
+  endpoint: string;
+  http_status: number;
+  content_type?: string;
+  cf_ray?: string;
+  server?: string;
+  request_id?: string;
+  body_snippet?: string;
+}
+
+/**
+ * Transport-level failure (Cloudflare/WAF block, non-JSON body, network).
+ * Distinct from BybitError (which is API-level with a retCode). Never retried.
+ */
+export class BybitTransportError extends Error {
+  constructor(
+    public kind: "forbidden" | "bad_json" | "network",
+    public diagnostics: BybitTransportDiagnostics,
+  ) {
+    super(`bybit_transport_${kind}:${diagnostics.http_status}:${diagnostics.endpoint}`);
+  }
+}
+
 function jitter(ms: number) { return ms + Math.floor(Math.random() * (ms / 2)); }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -133,11 +157,21 @@ export class BybitRest {
         try {
           json = JSON.parse(text) as BybitResponse<T>;
         } catch {
-          const server = res.headers.get("server") ?? undefined;
-          const cfRay = res.headers.get("cf-ray") ?? undefined;
-          throw new BybitError(`bad_json:${res.status}`, -1,
-            text.slice(0, 200), res.status, opts.endpoint,
-            { body: text.slice(0, 500), headers: { server, cf_ray: cfRay } });
+          const diagnostics: BybitTransportDiagnostics = {
+            base_url: this.creds.baseUrl,
+            endpoint: opts.endpoint,
+            http_status: res.status,
+            content_type: res.headers.get("content-type") ?? undefined,
+            cf_ray: res.headers.get("cf-ray") ?? undefined,
+            server: res.headers.get("server") ?? undefined,
+            request_id: res.headers.get("x-bapi-request-id")
+              ?? res.headers.get("x-request-id") ?? undefined,
+            body_snippet: text.slice(0, 500),
+          };
+          // 403 with non-JSON body == upstream WAF/edge block, not Bybit itself.
+          const kind: "forbidden" | "bad_json" =
+            res.status === 403 ? "forbidden" : "bad_json";
+          throw new BybitTransportError(kind, diagnostics);
         }
 
         if (json.retCode === 0) return json;
@@ -153,6 +187,8 @@ export class BybitRest {
         );
       } catch (e) {
         lastError = e as Error;
+        // Transport errors (Cloudflare/WAF block, non-JSON) are never retried.
+        if (e instanceof BybitTransportError) throw e;
         if (e instanceof BybitError) {
           const retryable = isRetryableHttpStatus(e.httpStatus) || RETRYABLE_RET_CODES.has(e.retCode);
           if (retryable && attempt < MAX_ATTEMPTS) {

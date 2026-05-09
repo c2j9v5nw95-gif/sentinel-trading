@@ -96,7 +96,16 @@ function SignalsPage() {
                 {selected.decision_reason && (
                   <div>
                     <div className="text-xs uppercase text-muted-foreground mb-1">Decision</div>
-                    <div className="font-mono text-xs">{selected.decision_reason}</div>
+                    <div className="font-mono text-xs break-all">{selected.decision_reason}</div>
+                    {selected.decision_reason.startsWith("bybit_transport_") && (
+                      <div className="mt-2 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-muted-foreground">
+                        <strong className="text-destructive">Cloudflare/WAF/egress block.</strong>{" "}
+                        The request was rejected by an upstream edge before reaching Bybit. This is not an API-key issue.
+                        Open <span className="font-mono">Settings → Bybit diagnostics</span> and run the live check —
+                        the <em>order endpoint reachability</em> row shows the cf-ray, server and body snippet you can forward to Bybit support.
+                        Workaround: set the <code>BYBIT_API_BASE_URL</code> secret to <code>https://api.bytick.com</code>.
+                      </div>
+                    )}
                   </div>
                 )}
                 <div>

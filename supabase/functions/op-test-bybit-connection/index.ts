@@ -17,7 +17,8 @@
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { BybitRest, BybitError } from "../_shared/bybit-rest.ts";
+import { BybitRest, BybitError, BybitTransportError } from "../_shared/bybit-rest.ts";
+import { liveBaseUrl } from "../_shared/live-client.ts";
 import { notify } from "../_shared/telegram.ts";
 
 const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
@@ -25,7 +26,7 @@ const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
 interface CheckResult {
   ok: boolean;
   detail?: unknown;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; detail?: unknown };
   ms?: number;
 }
 
@@ -42,11 +43,24 @@ function credsFor(mode: Mode) {
   return {
     apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
     apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
-    baseUrl: "https://api.bybit.com",
+    baseUrl: liveBaseUrl(),
   };
 }
 
-function explainBybitError(e: unknown): { code: string; message: string } {
+interface ExplainedError { code: string; message: string; detail?: unknown; }
+
+function explainBybitError(e: unknown): ExplainedError {
+  if (e instanceof BybitTransportError) {
+    const d = e.diagnostics;
+    const hint = e.kind === "forbidden"
+      ? "HTTP 403 with non-JSON body — Cloudflare/WAF/egress IP/region block BEFORE Bybit. Not an API-key issue. Try BYBIT_API_BASE_URL=https://api.bytick.com or use a proxy."
+      : "Non-JSON response from Bybit — likely upstream block. See body_snippet.";
+    return {
+      code: `bybit_transport_${e.kind}`,
+      message: `${e.kind.toUpperCase()} on ${d.endpoint} (HTTP ${d.http_status}) — ${hint}`,
+      detail: d,
+    };
+  }
   if (e instanceof BybitError) {
     const hint =
       e.retCode === 10003 || e.retCode === 10004 || e.retCode === 10005
@@ -272,6 +286,33 @@ Deno.serve(async (req) => {
         },
       };
       if (missing.length > 0) topError ??= checks.permissions.error!;
+    }
+  }
+
+  // 9) order endpoint reachability — hits the EXACT same POST /v5/order/create
+  // path the executor uses with deliberately-invalid qty=0. Lets us prove
+  // whether Cloudflare/WAF lets us through, separately from API logic.
+  if (checks.api_auth.ok) {
+    const t = await timed(() => rest.request({
+      endpoint: "/v5/order/create", method: "POST",
+      body: {
+        category: "linear", symbol, side: "Buy", orderType: "Market",
+        qty: "0", reduceOnly: false,
+        orderLinkId: `REACH-${Date.now().toString(36)}`,
+        timeInForce: "IOC",
+      },
+    }));
+    if (t.err) {
+      const err = explainBybitError(t.err);
+      // A bybit_<retCode> response (any retCode) means we REACHED the endpoint
+      // — which is what we want to verify. Only transport errors fail this.
+      const reached = err.code.startsWith("bybit_") && !err.code.startsWith("bybit_transport_");
+      checks.order_endpoint_reachability = reached
+        ? { ok: true, detail: { reached_endpoint: true, base_url: creds.baseUrl, endpoint: "/v5/order/create", note: err.message }, ms: t.ms }
+        : { ok: false, error: err, ms: t.ms };
+      if (!reached) topError ??= err;
+    } else {
+      checks.order_endpoint_reachability = { ok: true, detail: { reached_endpoint: true, base_url: creds.baseUrl }, ms: t.ms };
     }
   }
 
