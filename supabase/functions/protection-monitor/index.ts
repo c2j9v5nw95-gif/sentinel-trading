@@ -203,7 +203,7 @@ Deno.serve(async (req) => {
 
   const { data: positions, error } = await sb.from("positions").select(
     "id,symbol,side,execution_mode,qty_open,entry_price,sl_price,tsl_active," +
-    "tsl_activated_at,tsl_high_water_price,tsl_trigger_price,protection_state",
+    "tsl_activated_at,tsl_high_water_price,tsl_trigger_price,protection_state,opened_at,leverage",
   ).is("closed_at", null);
   if (error) {
     return new Response(JSON.stringify({ ok: false, error: error.message }),
