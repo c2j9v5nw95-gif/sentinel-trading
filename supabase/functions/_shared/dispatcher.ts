@@ -23,6 +23,8 @@ import { resolveExecutionMode } from "./execution-mode.ts";
 import { liveExecutionGate } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
+import { BybitTransportError } from "./bybit-rest.ts";
+import { notify } from "./telegram.ts";
 
 const MAX_ENTRY_SIGNAL_AGE_MS = 30_000;
 
