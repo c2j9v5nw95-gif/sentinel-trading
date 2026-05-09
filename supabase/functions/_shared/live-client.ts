@@ -142,7 +142,8 @@ export async function findPassingAlternateDiagnostic(
   baseUrl: string,
   input: GateLookupInput = {},
 ): Promise<{ match: DiagnosticMatch | null; rejections: DiagnosticRejection[]; rows_seen: number; query: Record<string, unknown> }> {
-  const since = new Date(Date.now() - ALTERNATE_DIAGNOSTIC_FRESHNESS_MS).toISOString();
+  const freshnessMs = alternateDiagnosticFreshnessMs();
+  const since = new Date(Date.now() - freshnessMs).toISOString();
   const expectedBase = normalizeBaseUrl(baseUrl)!;
   const query = {
     table: "bybit_diagnostics",
@@ -153,6 +154,7 @@ export async function findPassingAlternateDiagnostic(
     limit: 25,
     expected_base_url: expectedBase,
     expected_symbol: input.symbol ?? null,
+    freshness_ms: freshnessMs,
     worker_version: LIVE_GATE_WORKER_VERSION,
   };
   const { data: rows } = await sb.from("bybit_diagnostics")
@@ -174,8 +176,8 @@ export async function findPassingAlternateDiagnostic(
       base_url: recorded.base_url,
       symbol: recorded.symbol,
     };
-    if (age_ms > ALTERNATE_DIAGNOSTIC_FRESHNESS_MS) {
-      const rej = { ...rejectionBase, reason: `stale:${Math.round(age_ms / 60000)}m>${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m` };
+    if (age_ms > freshnessMs) {
+      const rej = { ...rejectionBase, reason: `stale:${Math.round(age_ms / 60000)}m>${Math.round(freshnessMs / 60000)}m` };
       rejections.push(rej);
       console.log(JSON.stringify({ evt: "live_gate_diagnostic_rejected", ...query, ...rej, signal_id: input.signalId ?? null }));
       continue;
