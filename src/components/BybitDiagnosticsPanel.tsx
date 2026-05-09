@@ -116,8 +116,8 @@ export function BybitDiagnosticsPanel() {
 
   // Find latest passing live diagnostic whose recorded base_url matches the
   // currently-active base URL — this is exactly what the live execution gate
-  // checks. If present and within 60m, live execution is unblocked.
-  const FRESHNESS_MS = 60 * 60 * 1000;
+  // checks. If present and within 24h, live execution is unblocked.
+  const FRESHNESS_MS = 24 * 60 * 60 * 1000;
   const validatingRecord = mode === "live" && activeBaseUrl
     ? (history ?? []).find((h) => {
         if (!h.ok) return false;
@@ -241,13 +241,13 @@ export function BybitDiagnosticsPanel() {
                   <p className="mt-1 text-success">
                     ✓ Active base URL validated for live execution
                     <span className="ml-1 text-muted-foreground">
-                      (record {String(validatingRecord.id).slice(0, 8)} · passed {Math.round(validatedAgeMs / 60000)}m ago · valid for 60m)
+                      (record {String(validatingRecord.id).slice(0, 8)} · passed {Math.round(validatedAgeMs / 60000)}m ago · valid for 24h)
                     </span>
                   </p>
                 )}
                 {mode === "live" && isAlternateBase && !validatingRecord && (
                   <p className="mt-1 text-danger">
-                    ✗ No passing diagnostic for this base URL within the last 60m — live execution will be rejected with{" "}
+                    ✗ No passing diagnostic for this base URL within the last 24h — live execution will be rejected with{" "}
                     <code>live_gate:alternate_base_requires_passing_diagnostic</code>.
                   </p>
                 )}
