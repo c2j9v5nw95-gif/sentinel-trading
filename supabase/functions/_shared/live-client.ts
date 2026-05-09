@@ -14,7 +14,7 @@ export const DEFAULT_LIVE_BASE = "https://api.bybit.com";
  * live execution against an ALTERNATE base URL (e.g. api.bytick.com).
  * The default endpoint never requires this gate.
  */
-const ALTERNATE_DIAGNOSTIC_FRESHNESS_MS = 60 * 60 * 1000; // 1h
+const DEFAULT_ALTERNATE_DIAGNOSTIC_FRESHNESS_MS = 24 * 60 * 60 * 1000;
 export const LIVE_GATE_WORKER_VERSION = "live-gate-debug-2026-05-09-v1";
 
 interface GateLookupInput {
@@ -81,6 +81,12 @@ function diagnosticBaseAndSymbol(checks: unknown): { base_url: string | null; sy
   };
 }
 
+function alternateDiagnosticFreshnessMs(): number {
+  const minutes = Number(Deno.env.get("BYBIT_DIAGNOSTIC_FRESHNESS_MINUTES") ?? "");
+  if (Number.isFinite(minutes) && minutes > 0) return minutes * 60 * 1000;
+  return DEFAULT_ALTERNATE_DIAGNOSTIC_FRESHNESS_MS;
+}
+
 export class LiveBybitClient extends VenueBybitClient {
   constructor(sb: SupabaseClient) {
     super(sb, {
@@ -123,7 +129,7 @@ export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInp
   if (base.is_alternate) {
     const lookup = await findPassingAlternateDiagnostic(sb, base.url, input);
     if (!lookup.match) {
-      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, symbol=${input.symbol ?? "any"}, within ${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m; looked_at=${lookup.rows_seen}; latest_rejection=${lookup.rejections[0]?.reason ?? "none"}; latest_passed_at=${lookup.rejections[0]?.passed_at ?? "none"}; latest_age_min=${lookup.rejections[0] ? Math.round(lookup.rejections[0].age_ms / 60000) : "n/a"})`;
+      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, symbol=${input.symbol ?? "any"}, within ${Math.round(alternateDiagnosticFreshnessMs() / 60000)}m; looked_at=${lookup.rows_seen}; latest_rejection=${lookup.rejections[0]?.reason ?? "none"}; latest_passed_at=${lookup.rejections[0]?.passed_at ?? "none"}; latest_age_min=${lookup.rejections[0] ? Math.round(lookup.rejections[0].age_ms / 60000) : "n/a"})`;
     }
   }
 
