@@ -6,13 +6,18 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { VenueBybitClient } from "./venue-client.ts";
 
-const LIVE_BASE = "https://api.bybit.com";
+const DEFAULT_LIVE_BASE = "https://api.bybit.com";
+
+/** Resolved at call time so a secret rotation takes effect without redeploy. */
+export function liveBaseUrl(): string {
+  return Deno.env.get("BYBIT_API_BASE_URL")?.trim() || DEFAULT_LIVE_BASE;
+}
 
 export class LiveBybitClient extends VenueBybitClient {
   constructor(sb: SupabaseClient) {
     super(sb, {
       mode: "live",
-      baseUrl: LIVE_BASE,
+      baseUrl: liveBaseUrl(),
       apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
       apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
     });
