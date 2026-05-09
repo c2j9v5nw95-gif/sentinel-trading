@@ -157,7 +157,10 @@ Deno.serve(async (req) => {
     checks.live_gate = { ok: true, detail: { note: "read-only checks allowed regardless of live_enabled" } };
   }
 
-  const rest = new BybitRest({ ...creds, recvWindowMs: 5000 });
+  const rest = new BybitRest({
+    apiKey: creds.apiKey, apiSecret: creds.apiSecret, baseUrl: creds.baseUrl,
+    recvWindowMs: 5000, label: `diag-${mode}`,
+  });
 
   // 1) API auth + 2) account info  (signed call: /v5/account/info)
   {
