@@ -1,0 +1,17 @@
+{
+  "name": "lovable-bybit-execution-bridge",
+  "version": "1.0.0",
+  "description": "Private signed-passthrough bridge between Lovable/Supabase edge runtime and Bybit V5 REST. Runs on a fixed-IP VPS that is whitelisted in the Bybit API key — eliminates edge-runtime egress 403s.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "lru-cache": "^11.0.0",
+    "undici": "^7.0.0"
+  }
+}
