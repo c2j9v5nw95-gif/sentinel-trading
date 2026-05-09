@@ -142,7 +142,7 @@ export async function findPassingAlternateDiagnostic(
     table: "bybit_diagnostics",
     mode: "live",
     ok: true,
-    created_at_gte: since,
+    freshness_cutoff: since,
     order: "created_at desc",
     limit: 25,
     expected_base_url: expectedBase,
@@ -153,7 +153,6 @@ export async function findPassingAlternateDiagnostic(
     .select("id,ok,checks,created_at")
     .eq("mode", "live")
     .eq("ok", true)
-    .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(25);
   const rejections: DiagnosticRejection[] = [];
@@ -169,6 +168,12 @@ export async function findPassingAlternateDiagnostic(
       base_url: recorded.base_url,
       symbol: recorded.symbol,
     };
+    if (age_ms > ALTERNATE_DIAGNOSTIC_FRESHNESS_MS) {
+      const rej = { ...rejectionBase, reason: `stale:${Math.round(age_ms / 60000)}m>${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m` };
+      rejections.push(rej);
+      console.log(JSON.stringify({ evt: "live_gate_diagnostic_rejected", ...query, ...rej, signal_id: input.signalId ?? null }));
+      continue;
+    }
     if (recorded.base_url !== expectedBase) {
       const rej = { ...rejectionBase, reason: `base_url_mismatch:${recorded.base_url ?? "missing"}` };
       rejections.push(rej);
