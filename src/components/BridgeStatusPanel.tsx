@@ -383,3 +383,13 @@ function Stat({ label, value, tone, mono }: { label: string; value: string; tone
     </div>
   );
 }
+
+function BridgeFlagBadge({ enabled, healthy }: { enabled: boolean; healthy: boolean }) {
+  if (enabled && healthy) {
+    return <span className="rounded bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">BRIDGE · ARMED</span>;
+  }
+  if (enabled && !healthy) {
+    return <span className="rounded bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">BRIDGE · UNHEALTHY</span>;
+  }
+  return <span className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-danger">DIRECT · BRIDGE OFF</span>;
+}
