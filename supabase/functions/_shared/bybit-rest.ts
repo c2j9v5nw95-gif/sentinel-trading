@@ -33,6 +33,8 @@ export interface BybitCreds {
   apiSecret: string;
   baseUrl: string;          // https://api-testnet.bybit.com or https://api.bybit.com
   recvWindowMs?: number;    // default 5000
+  /** Tag identifying which caller built this client — "diag" | "live-executor" | "testnet-executor". */
+  label?: string;
 }
 
 export class BybitError extends Error {
