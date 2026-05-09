@@ -20,6 +20,7 @@ import { evaluateRisk, recordDecision } from "./risk-engine.ts";
 import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
+import { liveExecutionGate } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
 import { notify } from "./telegram.ts";
@@ -170,6 +171,31 @@ export async function dispatchSignal(
     // Pass — accepted. Run execution under symbol lock.
     const resolved = await resolveExecutionMode(sb, signal.symbol);
     trail.add("mode_resolved", "info", resolved.source, { mode: resolved.mode });
+
+    // Live execution gate — must pass before instantiating LiveBybitClient.
+    let liveGatePassed = false;
+    if (resolved.mode === "live") {
+      const gateReason = await liveExecutionGate(sb);
+      if (gateReason) {
+        trail.add("live_gate_blocked", "fail", gateReason);
+        await flushTrail(sb, signal.id, trail);
+        await recordDecision(sb, signal.id, {
+          outcome: "block", gate: "risk", reason: `live_gate:${gateReason}`, metrics: {},
+        });
+        await sb.from("signals").update({
+          status: "rejected", processed_at: new Date().toISOString(),
+          decision_reason: `live_gate:${gateReason}`,
+        }).eq("id", signal.id);
+        await sb.from("audit_log").insert({
+          action: "signal_dispatched", target: signal.id,
+          after: { gate: "live_gate", outcome: "block", reason: gateReason },
+        });
+        return { signalId: signal.id, status: "rejected", reason: gateReason, gate: "live_gate" };
+      }
+      trail.add("live_gate_passed", "pass");
+      liveGatePassed = true;
+    }
+
     trail.add("accepted", "info");
 
     const lockKind = exitMode ? "exit" : "entry";
@@ -177,8 +203,8 @@ export async function dispatchSignal(
       { signalId: signal.id, allowPreempt: exitMode },
       async () => {
         return exitMode
-          ? await executeExit(sb, signal, resolved.mode, trail)
-          : await executeEntry(sb, signal, resolved.mode, trail);
+          ? await executeExit(sb, signal, resolved.mode, trail, { liveGatePassed })
+          : await executeEntry(sb, signal, resolved.mode, trail, { liveGatePassed });
       });
 
     if (!locked.ok && locked.reason === "symbol_busy") {

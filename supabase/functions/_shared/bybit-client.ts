@@ -69,12 +69,16 @@ export interface BybitClient {
 // mainnet execution blocked by default while remaining schema/API-ready.
 import { LiveBybitClient, liveExecutionGate } from "./live-client.ts";
 
-export function getClient(mode: ExecutionMode, sb: SupabaseClient): BybitClient {
+export function getClient(
+  mode: ExecutionMode,
+  sb: SupabaseClient,
+  opts?: { liveGatePassed?: boolean },
+): BybitClient {
   if (mode === "paper")   return new PaperBybitClient(sb);
   if (mode === "testnet") return new TestnetBybitClient(sb);
-  // mode === "live" — construction is gated. Throw a sync error here; callers
-  // should pre-check via liveExecutionGate() and resolveExecutionMode() to
-  // avoid ever requesting 'live' before all conditions are met.
+  if (mode === "live" && opts?.liveGatePassed) return new LiveBybitClient(sb);
+  // mode === "live" without a passed gate. Callers must pre-check via
+  // liveExecutionGate() and forward { liveGatePassed: true } to opt in.
   throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
 }
 
