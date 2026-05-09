@@ -293,9 +293,54 @@ export async function dispatchSignal(
       gate: "execution",
     };
   } catch (e) {
-    const msg = (e as Error).message ?? String(e);
     const stack = (e as Error).stack ?? null;
 
+    // Transport-level failures (Cloudflare/WAF block, non-JSON body) get
+    // a structured decision_reason + Telegram critical alert + diagnostics
+    // so operators can see exactly why and where the request was blocked.
+    if (e instanceof BybitTransportError) {
+      const d = e.diagnostics;
+      const reason = `bybit_transport_${e.kind}:${d.endpoint}`;
+      const ctx = {
+        signal_id: signal.id, symbol: signal.symbol, action: signal.action,
+        kind: e.kind, diagnostics: d, fail_fast: true,
+      };
+      await sb.from("error_log").insert({
+        source: "dispatcher.bybit_transport", message: e.message, stack, context: ctx,
+      });
+      await sb.from("system_alerts").insert({
+        severity: "critical", category: "bybit_transport_block",
+        message: `Bybit ${e.kind.toUpperCase()} on ${d.endpoint} (HTTP ${d.http_status})`,
+        context: ctx,
+      });
+      notify({
+        severity: "critical", category: "bybit_diagnostic_failure",
+        execution_mode: "live", symbol: signal.symbol ?? null,
+        reason: `bybit_transport_${e.kind}: HTTP ${d.http_status} on ${d.endpoint}`,
+        extra: {
+          base_url: d.base_url,
+          cf_ray: d.cf_ray, server: d.server,
+          content_type: d.content_type, request_id: d.request_id,
+          body_snippet: d.body_snippet,
+          hint: e.kind === "forbidden"
+            ? "Cloudflare/WAF/egress IP block — NOT an API-key issue. Try BYBIT_API_BASE_URL=https://api.bytick.com or use a proxy."
+            : "Non-JSON response from Bybit endpoint. See body_snippet.",
+        },
+      });
+      trail.add("bybit_transport_error", "fail", reason, ctx as Record<string, unknown>);
+      await flushTrail(sb, signal.id, trail);
+      await sb.from("signals").update({
+        status: "error", processed_at: new Date().toISOString(),
+        decision_reason: reason, error_stack: stack,
+      }).eq("id", signal.id);
+      await sb.from("audit_log").insert({
+        action: "signal_execution_error", target: signal.id,
+        after: { error: reason, kind: e.kind, diagnostics: d, fail_fast: true },
+      });
+      return { signalId: signal.id, status: "error", reason, gate: "execution" };
+    }
+
+    const msg = (e as Error).message ?? String(e);
     await sb.from("error_log").insert({
       source: "dispatcher", message: msg, stack,
       context: { signal_id: signal.id, retry_count: signal.retry_count ?? 0, fail_fast: true },
