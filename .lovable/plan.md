@@ -1,64 +1,60 @@
-## Problem
+## Mål
 
-PENGUUSDT ENTER-LONG signaler kommer som `QUEUED`, men feiler i dispatcher med:
+Få LABUSDT-signalene gjennom risk-gaten og handlet på Bybit, og ha en tydelig prosess for å legge til nye tickere etter hvert som du aktiverer flere strategier i TradingView.
+
+## Hvorfor signalene blir avvist nå
+
+Signalsporet for LABUSDT viser:
 
 ```
-exec_error: live_execution_disabled: complete liveExecutionGate before requesting mode='live'
+parser_pass → normalized_symbol (LABUSDT.P → LABUSDT) → dedupe_pass
+→ kill_switch pass → strategy_code pass
+→ symbol FAIL: not_configured  →  rejected
 ```
 
-…og blir requeued helt til de dør. EXIT-LONG blir deretter avvist med `risk:no_open_position` fordi entry aldri ble utført.
+Risk-engine slår opp `symbols.symbol = 'LABUSDT'` og finner ingen rad. Kun PENGUUSDT ligger i tabellen i dag. Dette er en bevisst sikkerhetsmekanisme: ukjente symboler får aldri lov til å sende ordre. Løsningen er å registrere LABUSDT (og andre tickere du vil handle) eksplisitt med egne innstillinger.
 
-### Rotårsak
+## Plan
 
-`supabase/functions/_shared/bybit-client.ts → getClient()` kaster ALLTID når `mode === 'live'`:
+### 1. Legg LABUSDT inn i symbols-tabellen
 
-```ts
-throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
-```
+Opprett en rad med samme grunnoppsett som PENGUUSDT så den nye tickeren oppfører seg likt fra første signal:
 
-Men ingen i kodebasen kaller faktisk `liveExecutionGate()` før de ber om live-klient. Resultat: live-execution er hardkodet av, selv om:
-- `app_settings.live_enabled = true`
-- `symbols.execution_mode_override = 'live'` for PENGUUSDT
-- `emergency_stop = false`, `live_risk_halted = false`, ingen kritiske invariant-brudd
+- `symbol` = `LABUSDT`, `category` = `linear`, `enabled` = true
+- `preferred_transport` = `webhook`
+- `execution_mode_override` = `live`
+- `account_balance_percent` = 5, `leverage` = 10, `margin_mode` = `isolated`
+- `sl_pct` = 5
+- `tsl_enabled` = true, `tsl_activation_profit_pct` = 1.0, `tsl_callback_pct` = 0.5
+- `tp1_exit_percent` = 100, `tp2_enabled` = false
 
-`LiveBybitClient` finnes og er klar, men blir aldri instansiert.
+Disse verdiene kan justeres per symbol senere fra Symbols-siden — du har allerede UI for det.
 
-## Løsning
+### 2. Verifisere ende-til-ende
 
-Aktivér live-pathen ved å la dispatcher kjøre gaten, og la factory instansiere `LiveBybitClient` når gaten har passert.
+- Ny ENTER-SHORT på LABUSDT.P fra TradingView → dispatcher kjører:
+  `symbol pass → unprotected_pause → concurrency → live_gate_passed → executeEntry`
+- Ordre sendes til Bybit (`/v5/order/create`, Market IOC), SL armes (`/v5/position/trading-stop`).
+- TSL armes av `protection-monitor` når urealisert profit ≥ 1 %.
+- EXIT-signaler (XS1/XS2/XS3/XS5) kobles til åpen LABUSDT-short via `position_check`.
 
-### 1. `supabase/functions/_shared/bybit-client.ts`
-Legg til en eksplisitt opt-in i factory:
+Sjekkes ved å replay'e en av de eksisterende rejected LABUSDT-signalene fra Signals-siden, eller ved å vente på neste live alert.
 
-```ts
-export function getClient(
-  mode: ExecutionMode,
-  sb: SupabaseClient,
-  opts?: { liveGatePassed?: boolean },
-): BybitClient {
-  if (mode === "paper")   return new PaperBybitClient(sb);
-  if (mode === "testnet") return new TestnetBybitClient(sb);
-  if (mode === "live" && opts?.liveGatePassed) return new LiveBybitClient(sb);
-  throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
-}
-```
+### 3. Rutine for nye tickere
 
-### 2. `supabase/functions/_shared/dispatcher.ts`
-Etter `resolveExecutionMode(...)`, kall `liveExecutionGate(sb)` når `mode === 'live'`:
+Ettersom du sa du vil ha mange symboler aktive samtidig:
 
-- Hvis gaten returnerer en reason (f.eks. `live_api_keys_missing`, `emergency_stop_active`): sett signal `status='rejected'`, `decision_reason = 'live_gate:<reason>'`, logg i `risk_decisions` + `audit_log`, ingen retry. Trail-event `live_gate_blocked`.
-- Hvis gaten returnerer `null`: trail `live_gate_passed`, send `liveGatePassed: true` ned til `executeEntry` / `executeExit`.
+- For hvert nytt symbol du aktiverer i TradingView, opprett en rad i Symbols-siden FØR første alert sendes. Dette er det eneste manuelle steget.
+- Standardverdiene i `symbols`-tabellen (5 % balanse, x10 leverage, 1.5 % SL, TSL aktivering 1 %, callback 0.5 %) er fornuftige defaults; juster per symbol ved behov.
+- TradingView-ticker-suffiks `.P` normaliseres allerede (`LABUSDT.P → LABUSDT`), så alerten trenger ingen endring så lenge du har aktivert symbolet i basisform i tabellen.
+- Strategy-tag (`STRAT2` osv.) påvirker ikke registreringen; samme symbol-rad brukes på tvers av strategier. Per-strategi-overstyringer (size, leverage) ligger i `symbol_strategy_overrides` om du trenger finjustering.
 
-### 3. `supabase/functions/_shared/executor.ts`
-- Utvid signaturen til `executeEntry` og `executeExit` med `opts?: { liveGatePassed?: boolean }`.
-- Send `opts` videre til `getClient(mode, sb, opts)` på linje 55 og 290.
+### Hvorfor jeg ikke foreslår auto-registrering
 
-### 4. Verifisering
-- Sjekk at `BYBIT_LIVE_API_KEY` og `BYBIT_LIVE_API_SECRET` faktisk er satt som secrets (ellers vil gaten returnere `live_api_keys_missing` og signaler vil bli avvist med klar grunn istedenfor å henge i kø).
-- Re-injiser en test-signal eller vent på neste TradingView-alert; PENGUUSDT ENTER-LONG bør nå gå til `processed` med `decision_reason='executed:live'`, og påfølgende EXIT-LONG vil finne en åpen posisjon å lukke.
+Et alternativ ville vært å autoopprette nye symboler første gang en alert kommer inn. Det fraråder jeg for live-handel: en feiltastet ticker fra TradingView ville da blitt akseptert med default leverage og balansebruk og kunne sende en uønsket ordre. Den nåværende "explicit allowlist"-tilnærmingen er en viktig sikkerhetslinje.
 
-## Hva endringen IKKE gjør
+## Tekniske detaljer
 
-- Ingen endringer i risk engine, sizing eller TSL/SL-logikk.
-- Paper/testnet-paths uendret.
-- Sikkerhetsgaten beholdes — vi bare KALLER den nå.
+- Endring: én INSERT i `public.symbols` for `LABUSDT` (dette er en data-endring, ikke skjema). Ingen kodeendring nødvendig — risk-engine, dispatcher, executor og protection-monitor leser allerede `symbols` per ticker.
+- Ingen edge-funksjoner trenger å redeployes.
+- De fire eksisterende rejected LABUSDT-signalene forblir rejected (det er korrekt revisjonshistorikk). Du kan replay'e dem fra Signals-siden hvis du faktisk vil at de skal handles nå — vær obs på at ENTER-SHORT etterfulgt av EXIT-SHORT fra 4–7 minutter siden trolig ikke gir mening på dagens marked.
