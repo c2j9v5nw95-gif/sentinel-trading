@@ -14,7 +14,30 @@ export const DEFAULT_LIVE_BASE = "https://api.bybit.com";
  * live execution against an ALTERNATE base URL (e.g. api.bytick.com).
  * The default endpoint never requires this gate.
  */
-const ALTERNATE_DIAGNOSTIC_FRESHNESS_MS = 60 * 60 * 1000; // 1h
+const DEFAULT_ALTERNATE_DIAGNOSTIC_FRESHNESS_MS = 24 * 60 * 60 * 1000;
+export const LIVE_GATE_WORKER_VERSION = "live-gate-debug-2026-05-09-v1";
+
+interface GateLookupInput {
+  symbol?: string | null;
+  signalId?: string | null;
+}
+
+interface DiagnosticMatch {
+  id: string;
+  created_at: string;
+  age_ms: number;
+  base_url: string;
+  symbol: string | null;
+}
+
+interface DiagnosticRejection {
+  diagnostic_id: string;
+  passed_at: string;
+  age_ms: number;
+  base_url: string | null;
+  symbol: string | null;
+  reason: string;
+}
 
 export interface LiveBaseInfo {
   url: string;
@@ -43,6 +66,27 @@ export function liveBaseUrl(): string {
   return liveBaseUrlInfo().url;
 }
 
+function normalizeBaseUrl(url?: string | null): string | null {
+  if (!url) return null;
+  return url.trim().replace(/\/+$/, "");
+}
+
+function diagnosticBaseAndSymbol(checks: unknown): { base_url: string | null; symbol: string | null } {
+  const c = checks as Record<string, any> | null;
+  const meta = c?._meta;
+  const bySymbol = c?.read_positions_by_symbol;
+  return {
+    base_url: normalizeBaseUrl(meta?.detail?.base_url ?? meta?.base_url ?? null),
+    symbol: meta?.detail?.symbol ?? bySymbol?.detail?.query?.symbol ?? null,
+  };
+}
+
+function alternateDiagnosticFreshnessMs(): number {
+  const minutes = Number(Deno.env.get("BYBIT_DIAGNOSTIC_FRESHNESS_MINUTES") ?? "");
+  if (Number.isFinite(minutes) && minutes > 0) return minutes * 60 * 1000;
+  return DEFAULT_ALTERNATE_DIAGNOSTIC_FRESHNESS_MS;
+}
+
 export class LiveBybitClient extends VenueBybitClient {
   constructor(sb: SupabaseClient) {
     super(sb, {
@@ -58,7 +102,7 @@ export class LiveBybitClient extends VenueBybitClient {
  * Hard gating run before constructing LiveBybitClient.
  * Returns null if execution may proceed; otherwise an error message.
  */
-export async function liveExecutionGate(sb: SupabaseClient): Promise<string | null> {
+export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInput = {}): Promise<string | null> {
   const { data: s } = await sb.from("app_settings")
     .select("live_enabled,emergency_stop,live_risk_halted")
     .maybeSingle();
@@ -83,9 +127,9 @@ export async function liveExecutionGate(sb: SupabaseClient): Promise<string | nu
   // CURRENT base URL before allowing live execution.
   const base = liveBaseUrlInfo();
   if (base.is_alternate) {
-    const match = await findPassingAlternateDiagnostic(sb, base.url);
-    if (!match) {
-      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, within ${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m)`;
+    const lookup = await findPassingAlternateDiagnostic(sb, base.url, input);
+    if (!lookup.match) {
+      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, symbol=${input.symbol ?? "any"}, within ${Math.round(alternateDiagnosticFreshnessMs() / 60000)}m; looked_at=${lookup.rows_seen}; latest_rejection=${lookup.rejections[0]?.reason ?? "none"}; latest_passed_at=${lookup.rejections[0]?.passed_at ?? "none"}; latest_age_min=${lookup.rejections[0] ? Math.round(lookup.rejections[0].age_ms / 60000) : "n/a"})`;
     }
   }
 
@@ -96,30 +140,75 @@ export async function liveExecutionGate(sb: SupabaseClient): Promise<string | nu
 export async function findPassingAlternateDiagnostic(
   sb: SupabaseClient,
   baseUrl: string,
-): Promise<{ id: string; created_at: string; age_ms: number; base_url: string } | null> {
-  const since = new Date(Date.now() - ALTERNATE_DIAGNOSTIC_FRESHNESS_MS).toISOString();
+  input: GateLookupInput = {},
+): Promise<{ match: DiagnosticMatch | null; rejections: DiagnosticRejection[]; rows_seen: number; query: Record<string, unknown> }> {
+  const freshnessMs = alternateDiagnosticFreshnessMs();
+  const since = new Date(Date.now() - freshnessMs).toISOString();
+  const expectedBase = normalizeBaseUrl(baseUrl)!;
+  const query = {
+    table: "bybit_diagnostics",
+    mode: "live",
+    ok: true,
+    freshness_cutoff: since,
+    order: "created_at desc",
+    limit: 25,
+    expected_base_url: expectedBase,
+    expected_symbol: input.symbol ?? null,
+    freshness_ms: freshnessMs,
+    worker_version: LIVE_GATE_WORKER_VERSION,
+  };
   const { data: rows } = await sb.from("bybit_diagnostics")
     .select("id,ok,checks,created_at")
     .eq("mode", "live")
     .eq("ok", true)
-    .gte("created_at", since)
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(25);
+  const rejections: DiagnosticRejection[] = [];
+  console.log(JSON.stringify({ evt: "live_gate_lookup_start", ...query, rows_seen: rows?.length ?? 0, signal_id: input.signalId ?? null }));
   for (const r of rows ?? []) {
-    const meta = (r.checks as Record<string, unknown> | null)?._meta as
-      { detail?: { base_url?: string }; base_url?: string } | undefined;
-    // Support both shapes: _meta.detail.base_url (current writer) and
-    // legacy _meta.base_url (older rows).
-    const recordedBase = meta?.detail?.base_url ?? meta?.base_url;
-    if (recordedBase === baseUrl) {
-      const created = new Date(r.created_at as string).getTime();
-      return {
-        id: r.id as string,
-        created_at: r.created_at as string,
-        age_ms: Date.now() - created,
-        base_url: recordedBase,
-      };
+    const created = new Date(r.created_at as string).getTime();
+    const age_ms = Date.now() - created;
+    const recorded = diagnosticBaseAndSymbol(r.checks);
+    const rejectionBase = {
+      diagnostic_id: r.id as string,
+      passed_at: r.created_at as string,
+      age_ms,
+      base_url: recorded.base_url,
+      symbol: recorded.symbol,
+    };
+    if (age_ms > freshnessMs) {
+      const rej = { ...rejectionBase, reason: `stale:${Math.round(age_ms / 60000)}m>${Math.round(freshnessMs / 60000)}m` };
+      rejections.push(rej);
+      console.log(JSON.stringify({ evt: "live_gate_diagnostic_rejected", ...query, ...rej, signal_id: input.signalId ?? null }));
+      continue;
     }
+    if (recorded.base_url !== expectedBase) {
+      const rej = { ...rejectionBase, reason: `base_url_mismatch:${recorded.base_url ?? "missing"}` };
+      rejections.push(rej);
+      console.log(JSON.stringify({ evt: "live_gate_diagnostic_rejected", ...query, ...rej, signal_id: input.signalId ?? null }));
+      continue;
+    }
+    const match = {
+      id: r.id as string,
+      created_at: r.created_at as string,
+      age_ms,
+      base_url: recorded.base_url,
+      symbol: recorded.symbol,
+    };
+    console.log(JSON.stringify({
+      evt: "live_gate_diagnostic_selected",
+      worker_version: LIVE_GATE_WORKER_VERSION,
+      diagnostic_id: match.id,
+      passed_at: match.created_at,
+      age_ms: match.age_ms,
+      base_url: match.base_url,
+      symbol: match.symbol,
+      mode: "live",
+      executor_lookup_query: query,
+      signal_id: input.signalId ?? null,
+    }));
+    return { match, rejections, rows_seen: rows?.length ?? 0, query };
   }
-  return null;
+  console.log(JSON.stringify({ evt: "live_gate_lookup_no_match", ...query, rejections, signal_id: input.signalId ?? null }));
+  return { match: null, rejections, rows_seen: rows?.length ?? 0, query };
 }

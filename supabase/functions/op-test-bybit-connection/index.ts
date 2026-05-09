@@ -131,6 +131,7 @@ Deno.serve(async (req) => {
       is_alternate: creds.is_alternate,
       base_source: creds.base_source,
       default_base: DEFAULT_LIVE_BASE,
+      symbol,
     },
   } as CheckResult;
   let permissions: unknown = null;
@@ -447,10 +448,10 @@ Deno.serve(async (req) => {
     });
   }
 
-  await persist(sb, u.user.id, mode, ok, checks, permissions, accountType, lastResponse, topError);
+  const persisted = await persist(sb, u.user.id, mode, ok, checks, permissions, accountType, lastResponse, topError);
 
   return json({
-    ok, mode, symbol, checks, permissions, account_type: accountType,
+    ok, mode, symbol, diagnostic_id: persisted.id, persisted_at: persisted.created_at, checks, permissions, account_type: accountType,
     base_url: creds.baseUrl,
     is_alternate_base: creds.is_alternate,
     base_source: creds.base_source,
@@ -470,11 +471,28 @@ async function persist(
   lastResponse: unknown,
   err: { code: string; message: string } | null,
 ) {
-  await sb.from("bybit_diagnostics").insert({
+  const { data, error } = await sb.from("bybit_diagnostics").insert({
     mode, ok, checks, permissions, account_type: accountType,
     last_response: lastResponse, error_code: err?.code ?? null,
     error_message: err?.message ?? null, ran_by: userId,
-  });
+  }).select("id,created_at,mode,ok,checks").single();
+  if (error) throw new Error(`diagnostic_persist_failed:${error.message}`);
+  const { data: committed, error: readBackError } = await sb.from("bybit_diagnostics")
+    .select("id,created_at,mode,ok,checks")
+    .eq("id", data.id)
+    .single();
+  if (readBackError || !committed) throw new Error(`diagnostic_commit_verify_failed:${readBackError?.message ?? "missing_row"}`);
+  const meta = ((committed.checks as Record<string, any> | null)?._meta?.detail) ?? {};
+  console.log(JSON.stringify({
+    evt: "bybit_diagnostic_persisted_committed",
+    diagnostic_id: committed.id,
+    passed_at: committed.created_at,
+    mode: committed.mode,
+    ok: committed.ok,
+    base_url: meta.base_url ?? null,
+    symbol: meta.symbol ?? null,
+  }));
+  return { id: committed.id as string, created_at: committed.created_at as string };
 }
 
 function json(body: unknown, status = 200) {

@@ -29,6 +29,14 @@ type Signal = {
   error_stack: string | null;
 };
 
+type DiagnosticRow = {
+  id: string;
+  mode: string;
+  ok: boolean;
+  created_at: string;
+  checks: Record<string, unknown> | null;
+};
+
 function SignalsPage() {
   const qc = useQueryClient();
   const replay = useServerFn(replaySignal);
@@ -48,6 +56,22 @@ function SignalsPage() {
   const dead = (all.data ?? []).filter((s) => s.status === "dead_letter");
   const live = (all.data ?? []).filter((s) => s.status !== "dead_letter");
 
+  const diagnostics = useQuery({
+    queryKey: ["bybit_diagnostics", "live", "gate_debug"],
+    queryFn: async () => {
+      const { data } = await supabase.from("bybit_diagnostics")
+        .select("id,mode,ok,created_at,checks")
+        .eq("mode", "live")
+        .eq("ok", true)
+        .order("created_at", { ascending: false })
+        .limit(25);
+      return (data ?? []) as DiagnosticRow[];
+    },
+    refetchInterval: 5_000,
+  });
+
+  const latestGateBlock = live.find((s) => s.decision_reason?.startsWith("live_gate:alternate_base_requires_passing_diagnostic")) ?? null;
+
   const replayMut = useMutation({
     mutationFn: (args: { signalId: string; bypassDedupe: boolean }) =>
       replay({ data: args }),
@@ -57,6 +81,8 @@ function SignalsPage() {
   return (
     <>
       <PageHeader title="Signals" description="Normalized + deduped signal stream with full decision trail." />
+
+      <LiveGateDebugPanel diagnostics={diagnostics.data ?? []} latestGateBlock={latestGateBlock} />
 
       {dead.length > 0 && (
         <Card title={`Dead-letter queue (${dead.length})`}>
@@ -154,6 +180,58 @@ function SignalsPage() {
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+function LiveGateDebugPanel({ diagnostics, latestGateBlock }: { diagnostics: DiagnosticRow[]; latestGateBlock: Signal | null }) {
+  const FRESHNESS_MS = 24 * 60 * 60 * 1000;
+  const parsedBlockedBase = latestGateBlock?.decision_reason?.match(/alternate_base_requires_passing_diagnostic:([^\s]+)/)?.[1] ?? null;
+  const latestPassing = diagnostics[0] ?? null;
+  const latestChecks = latestPassing?.checks as Record<string, any> | null;
+  const meta = latestChecks?._meta?.detail ?? latestChecks?._meta ?? null;
+  const activeBase = parsedBlockedBase ?? meta?.base_url ?? "unknown";
+  const symbol = latestGateBlock?.symbol ?? meta?.symbol ?? latestChecks?.read_positions_by_symbol?.detail?.query?.symbol ?? "any";
+  const matched = diagnostics.find((d) => {
+    const checks = d.checks as Record<string, any> | null;
+    const dMeta = checks?._meta?.detail ?? checks?._meta ?? null;
+    const age = Date.now() - new Date(d.created_at).getTime();
+    return dMeta?.base_url === activeBase && age <= FRESHNESS_MS;
+  }) ?? null;
+  const ageMs = matched ? Date.now() - new Date(matched.created_at).getTime() : null;
+  const whyBlocked = latestGateBlock?.decision_reason ?? (matched ? "gate_has_recent_matching_diagnostic" : "no_recent_matching_diagnostic_visible_to_ui");
+
+  return (
+    <Card title="Temporary live gate debug">
+      <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <DebugItem label="Active base_url" value={activeBase} />
+        <DebugItem label="Lookup mode" value="live" />
+        <DebugItem label="Lookup symbol" value={symbol ?? "any"} />
+        <DebugItem label="Gate decision" value={matched ? "matching diagnostic visible" : "blocked / no match"} tone={matched ? "ok" : "bad"} />
+        <DebugItem label="Latest passing diagnostic" value={latestPassing ? latestPassing.id : "none"} />
+        <DebugItem label="Selected diagnostic" value={matched ? matched.id : "none"} tone={matched ? "ok" : "bad"} />
+        <DebugItem label="Passed at" value={matched ? new Date(matched.created_at).toLocaleString() : "—"} />
+        <DebugItem label="Age" value={ageMs == null ? "—" : `${Math.round(ageMs / 60000)}m`} />
+      </div>
+      <div className="mt-2 rounded-md border border-border bg-muted/30 p-2 text-xs">
+        <div className="mb-1 text-muted-foreground">Executor lookup query</div>
+        <code className="break-all">
+          bybit_diagnostics where mode=live and ok=true order by created_at desc limit 25; expected base_url={activeBase}; freshness=24h
+        </code>
+      </div>
+      <div className="mt-2 rounded-md border border-border bg-muted/30 p-2 text-xs">
+        <div className="mb-1 text-muted-foreground">Why gate blocked / current decision input</div>
+        <code className="break-all">{whyBlocked}</code>
+      </div>
+    </Card>
+  );
+}
+
+function DebugItem({ label, value, tone }: { label: string; value: string; tone?: "ok" | "bad" }) {
+  return (
+    <div className="rounded-md border border-border bg-background p-2">
+      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className={"mt-1 break-all font-mono " + (tone === "ok" ? "text-success" : tone === "bad" ? "text-destructive" : "")}>{value}</div>
+    </div>
   );
 }
 

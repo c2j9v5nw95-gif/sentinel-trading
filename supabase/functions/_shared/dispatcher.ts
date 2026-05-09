@@ -20,7 +20,7 @@ import { evaluateRisk, recordDecision } from "./risk-engine.ts";
 import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
-import { liveExecutionGate } from "./live-client.ts";
+import { LIVE_GATE_WORKER_VERSION, liveExecutionGate } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
 import { BybitTransportError } from "./bybit-rest.ts";
@@ -212,7 +212,15 @@ export async function dispatchSignal(
     // Live execution gate — must pass before instantiating LiveBybitClient.
     let liveGatePassed = false;
     if (resolved.mode === "live") {
-      const gateReason = await liveExecutionGate(sb);
+      console.log(JSON.stringify({
+        evt: "executor_live_gate_start",
+        worker_version: LIVE_GATE_WORKER_VERSION,
+        signal_id: signal.id,
+        symbol: signal.symbol,
+        mode: resolved.mode,
+        action,
+      }));
+      const gateReason = await liveExecutionGate(sb, { symbol: signal.symbol, signalId: signal.id });
       if (gateReason) {
         trail.add("live_gate_blocked", "fail", gateReason);
         await flushTrail(sb, signal.id, trail);
@@ -245,7 +253,7 @@ export async function dispatchSignal(
       });
 
     if (!locked.ok && locked.reason === "symbol_busy") {
-      trail.add("lock_busy", "fail", "symbol_in_use", locked.details as Record<string, unknown>);
+      trail.add("lock_busy", "fail", "symbol_in_use", locked.details as unknown as Record<string, unknown>);
       await flushTrail(sb, signal.id, trail);
       await sb.from("signals").update({
         status: "error",

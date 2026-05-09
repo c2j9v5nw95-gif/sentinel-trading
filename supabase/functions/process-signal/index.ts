@@ -4,6 +4,7 @@
 //   POST {}             → cron mode: claim & dispatch up to BATCH queued signals
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { dispatchSignal } from "../_shared/dispatcher.ts";
+import { LIVE_GATE_WORKER_VERSION } from "../_shared/live-client.ts";
 
 const BATCH = 25;
 
@@ -16,8 +17,9 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* empty body ok */ }
 
   if (body?.signal_id) {
+    console.log(JSON.stringify({ evt: "process_signal_worker_version", worker_version: LIVE_GATE_WORKER_VERSION, signal_id: String(body.signal_id) }));
     const result = await dispatchSignal(sb, String(body.signal_id));
-    return new Response(JSON.stringify({ ok: true, result }), {
+    return new Response(JSON.stringify({ ok: true, worker_version: LIVE_GATE_WORKER_VERSION, result }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -35,7 +37,7 @@ Deno.serve(async (req) => {
     results.push(await dispatchSignal(sb, row.id));
   }
 
-  return new Response(JSON.stringify({ ok: true, processed: results.length, results }), {
+  return new Response(JSON.stringify({ ok: true, worker_version: LIVE_GATE_WORKER_VERSION, processed: results.length, results }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });
