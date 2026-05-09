@@ -309,7 +309,14 @@ export async function executeExit(
   const { data: priceRow } = mode === "paper"
     ? await sb.from("paper_market_prices").select("price").eq("symbol", signal.symbol).maybeSingle()
     : { data: null as { price: number } | null };
-  const refPrice = priceRow ? Number(priceRow.price) : (posRow.last_seen_price ?? posRow.entry_price);
+  const payloadExitPrice = Number(signal.payload?.price ?? signal.payload?.close ?? NaN);
+  let refPrice: number | null | undefined = priceRow ? Number(priceRow.price)
+    : (Number.isFinite(payloadExitPrice) && payloadExitPrice > 0
+        ? payloadExitPrice
+        : (posRow.last_seen_price ?? posRow.entry_price));
+  if (refPrice == null || !(Number(refPrice) > 0)) {
+    refPrice = await fetchLastPrice(signal.symbol);
+  }
 
   const fill = await client.submitOrder({
     symbol: signal.symbol, side: submitSide, qty, reduceOnly: true,
