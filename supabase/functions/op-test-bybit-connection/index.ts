@@ -43,7 +43,7 @@ function credsFor(mode: Mode) {
   return {
     apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
     apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
-    baseUrl: "https://api.bybit.com",
+    baseUrl: liveBaseUrl(),
   };
 }
 
