@@ -31,6 +31,10 @@ interface DiagnosticResponse {
   permissions?: unknown;
   account_type?: string | null;
   last_response?: unknown;
+  base_url?: string;
+  is_alternate_base?: boolean;
+  base_source?: "env" | "default";
+  default_base?: string;
   error?: { code: string; message: string } | null;
 }
 
