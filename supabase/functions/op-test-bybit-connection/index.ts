@@ -222,7 +222,28 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 5) open orders — /v5/order/realtime
+  // 4b) MIRROR-OF-EXECUTOR: /v5/position/list?category=linear&symbol=<symbol>
+  // The executor reads positions per-symbol (not per settleCoin). If WAF/edge
+  // blocks the per-symbol query but allows the settleCoin query, ONLY this
+  // check will fail — that diff pinpoints the executor 403.
+  if (checks.api_auth.ok) {
+    const t = await timed(() => rest.request({
+      endpoint: "/v5/position/list", method: "GET",
+      query: { category: "linear", symbol },
+    }));
+    if (t.err) {
+      const err = explainBybitError(t.err);
+      checks.read_positions_by_symbol = { ok: false, error: err, ms: t.ms };
+      topError ??= err;
+    } else {
+      const list = (t.result as any).result?.list ?? [];
+      checks.read_positions_by_symbol = {
+        ok: true,
+        detail: { count: list.length, query: { category: "linear", symbol }, mirrors: "executor.getPosition" },
+        ms: t.ms,
+      };
+    }
+  }
   if (checks.api_auth.ok) {
     const t = await timed(() => rest.request({
       endpoint: "/v5/order/realtime", method: "GET",
