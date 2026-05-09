@@ -41,6 +41,7 @@ interface DiagnosticResponse {
 const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
 
 const CHECK_LABELS: Record<string, string> = {
+  _meta: "Active endpoint",
   credentials_present: "API keys present",
   live_gate: "Live mode allowed",
   api_auth: "API authentication",
