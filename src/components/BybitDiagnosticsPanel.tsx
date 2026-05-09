@@ -114,6 +114,24 @@ export function BybitDiagnosticsPanel() {
   const isAlternateBase = view?.is_alternate_base ?? metaDetail?.is_alternate ?? false;
   const defaultBase = view?.default_base ?? metaDetail?.default_base ?? "https://api.bybit.com";
 
+  // Find latest passing live diagnostic whose recorded base_url matches the
+  // currently-active base URL — this is exactly what the live execution gate
+  // checks. If present and within 60m, live execution is unblocked.
+  const FRESHNESS_MS = 60 * 60 * 1000;
+  const validatingRecord = mode === "live" && activeBaseUrl
+    ? (history ?? []).find((h) => {
+        if (!h.ok) return false;
+        const ageMs = Date.now() - new Date(h.created_at as string).getTime();
+        if (ageMs > FRESHNESS_MS) return false;
+        const meta = (h.checks as Record<string, { detail?: { base_url?: string }; base_url?: string }> | null)?._meta;
+        const recorded = meta?.detail?.base_url ?? meta?.base_url;
+        return recorded === activeBaseUrl;
+      })
+    : null;
+  const validatedAgeMs = validatingRecord
+    ? Date.now() - new Date(validatingRecord.created_at as string).getTime()
+    : null;
+
   const safeOrderReady = !safeOrder || confirmPhrase === SAFE_ORDER_PHRASE;
 
   return (
