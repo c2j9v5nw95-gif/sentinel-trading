@@ -36,7 +36,7 @@ function PerformancePage() {
   return (
     <>
       <PageHeader
-        title="Performance"
+        title="Kontrollsenter"
         description="Helsemålinger fra TradingView, regelbasert sizing og per-coin overstyringer."
       />
       <div className="mb-4 flex gap-2">
