@@ -27,6 +27,8 @@ interface PositionRow {
   tsl_active: boolean; tsl_activated_at: string | null;
   tsl_high_water_price: number | null; tsl_trigger_price: number | null;
   protection_state: string;
+  opened_at: string | null;
+  leverage: number | null;
 }
 
 function linkId(p: string) { return `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`; }
