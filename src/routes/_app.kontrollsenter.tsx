@@ -604,3 +604,97 @@ function RuleEditor({ rule, nextPriority, onClose }: any) {
     setConds(conds.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   }
 }
+
+// --------------------------------------------------------------------------
+// Add symbol modal — registers a new symbols-row with safe defaults
+// --------------------------------------------------------------------------
+
+function AddSymbolModal({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    account_balance_percent: "5",
+    leverage: "10",
+    position_size_multiplier: "1.0",
+    sl_pct: "1.5",
+    tsl_enabled: true,
+    tsl_activation_profit_pct: "1.0",
+    tsl_callback_pct: "0.5",
+    max_position_notional_usdt: "",
+    max_margin_usage_usdt: "",
+  });
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const num = (v: string) => (v === "" || v == null ? null : Number(v));
+      const payload: any = {
+        symbol,
+        enabled: true,
+        category: "linear",
+        preferred_transport: "webhook",
+        margin_mode: "isolated",
+        account_balance_percent: Number(form.account_balance_percent),
+        leverage: Number(form.leverage),
+        position_size_multiplier: Number(form.position_size_multiplier),
+        sl_pct: Number(form.sl_pct),
+        tsl_enabled: form.tsl_enabled,
+        tsl_activation_profit_pct: Number(form.tsl_activation_profit_pct),
+        tsl_callback_pct: Number(form.tsl_callback_pct),
+        max_position_notional_usdt: num(form.max_position_notional_usdt),
+        max_margin_usage_usdt: num(form.max_margin_usage_usdt),
+      };
+      const { error } = await supabase.from("symbols").insert(payload);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["symbols-perf"] });
+      qc.invalidateQueries({ queryKey: ["symbols"] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/70 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-lg border border-border bg-card p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4">
+          <div className="text-sm text-muted-foreground">Registrer for handel</div>
+          <h2 className="text-lg font-semibold">{symbol}</h2>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Symbolet aktiveres umiddelbart. Standardverdier brukes med mindre du justerer dem.
+          </div>
+        </div>
+
+        <div className="space-y-3 text-sm">
+          <Field label="Account balance %" value={form.account_balance_percent} onChange={(v: string) => setForm({ ...form, account_balance_percent: v })} placeholder="5" />
+          <Field label="Leverage" value={form.leverage} onChange={(v: string) => setForm({ ...form, leverage: v })} placeholder="10" />
+          <Field label="Position size multiplier" value={form.position_size_multiplier} onChange={(v: string) => setForm({ ...form, position_size_multiplier: v })} placeholder="1.0" />
+          <Field label="Stop loss %" value={form.sl_pct} onChange={(v: string) => setForm({ ...form, sl_pct: v })} placeholder="1.5" />
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.tsl_enabled} onChange={(e) => setForm({ ...form, tsl_enabled: e.target.checked })} />
+            Trailing stop loss aktivert
+          </label>
+          <Field label="TSL activation profit %" value={form.tsl_activation_profit_pct} onChange={(v: string) => setForm({ ...form, tsl_activation_profit_pct: v })} placeholder="1.0" />
+          <Field label="TSL callback %" value={form.tsl_callback_pct} onChange={(v: string) => setForm({ ...form, tsl_callback_pct: v })} placeholder="0.5" />
+          <Field label="Max notional USDT (cap)" value={form.max_position_notional_usdt} onChange={(v: string) => setForm({ ...form, max_position_notional_usdt: v })} placeholder="(ingen cap)" />
+          <Field label="Max margin USDT (cap)" value={form.max_margin_usage_usdt} onChange={(v: string) => setForm({ ...form, max_margin_usage_usdt: v })} placeholder="(ingen cap)" />
+        </div>
+
+        {save.isError && (
+          <div className="mt-3 rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {(save.error as Error).message}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button className="rounded border border-border px-3 py-1.5 text-sm" onClick={onClose}>Avbryt</button>
+          <button
+            className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+          >
+            {save.isPending ? "Registrerer…" : "Registrer symbol"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
