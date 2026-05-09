@@ -375,6 +375,26 @@ export async function executeEntry(
     }
   }
 
+  // Confirmed entry notification — now that SL is on the venue.
+  if (mode === "live" || mode === "testnet") {
+    notify({
+      severity: mode === "live" ? "warning" : "info",
+      category: "live_entry",
+      execution_mode: mode, symbol: signal.symbol, side,
+      leverage: Number(breakdown.effectiveLeverage),
+      qty: fill.filledQty,
+      entry_price: fillPrice,
+      exposure: fill.filledQty * fillPrice,
+      reason: signal.entry_reason ?? signal.strategy_code ?? "entry",
+      sl_price: slPrice,
+      sl_pct: Number(sym.sl_pct ?? 1.5),
+      tsl_enabled: !!sym.tsl_enabled,
+      tsl_activation_pct: sym.tsl_enabled ? Number(sym.tsl_activation_profit_pct ?? 1.0) : null,
+      tsl_callback_pct: sym.tsl_enabled ? Number(sym.tsl_callback_pct ?? 0.5) : null,
+      confirmed_by_venue: true,
+    });
+  }
+
   return {
     ok: true, position_id: posRow.id, order_id: fill.bybitOrderId,
     filled_qty: fill.filledQty, fill_price: fillPrice, protection_state: "sl_only",
