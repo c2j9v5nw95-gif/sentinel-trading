@@ -9,8 +9,8 @@
 //                                -> accepted | rejected
 //
 // Errors:
-//   - increment retry_count, requeue if < MAX_RETRIES
-//   - else mark dead_letter, persist error_stack, system_alerts critical row
+//   - trade execution fails fast; stale entries must not sit queued and execute late
+//   - unexpected failures are marked error with full trail + error_log context
 //
 // Trail is appended at every step and flushed before return (always).
 
@@ -23,15 +23,30 @@ import { resolveExecutionMode } from "./execution-mode.ts";
 import { liveExecutionGate } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
-import { notify } from "./telegram.ts";
 
-const MAX_RETRIES = 2;
+const MAX_ENTRY_SIGNAL_AGE_MS = 30_000;
 
 export interface DispatchResult {
   signalId: string;
   status: "processed" | "accepted" | "rejected" | "skipped" | "error" | "dead_letter" | "requeued";
   reason?: string;
   gate?: string;
+}
+
+function signalAgeMs(signal: any): number {
+  const ts = Date.parse(signal.received_at ?? signal.created_at ?? "");
+  return Number.isFinite(ts) ? Date.now() - ts : 0;
+}
+
+function isExecutorError(reason?: string): boolean {
+  return !!reason && (
+    reason === "client_init_failed" ||
+    reason.startsWith("order_submit_failed:") ||
+    reason.startsWith("entry_fill_failed:") ||
+    reason.startsWith("exit_fill_failed:") ||
+    reason === "sl_unconfirmed_auto_closed" ||
+    reason === "drift_no_local_row"
+  );
 }
 
 async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
@@ -103,6 +118,25 @@ export async function dispatchSignal(
     const action = signal.action as SignalAction | null;
     const mapping = resolveStrategyCode(signal.strategy_code);
     const strategyCodeKnown = !!mapping && action !== null && action !== "HEALTH";
+
+    if (action && isEntry(action)) {
+      const ageMs = signalAgeMs(signal);
+      if (ageMs > MAX_ENTRY_SIGNAL_AGE_MS) {
+        const reason = `entry_stale:${Math.round(ageMs / 1000)}s`;
+        trail.add("entry_stale", "fail", reason, { age_ms: ageMs, max_age_ms: MAX_ENTRY_SIGNAL_AGE_MS });
+        await flushTrail(sb, signal.id, trail);
+        await sb.from("signals").update({
+          status: "error",
+          processed_at: new Date().toISOString(),
+          decision_reason: reason,
+        }).eq("id", signal.id);
+        await sb.from("error_log").insert({
+          source: "dispatcher", message: "entry_stale_no_retry",
+          context: { signal_id: signal.id, symbol: signal.symbol, action, age_ms: ageMs },
+        });
+        return { signalId: signal.id, status: "error", reason, gate: "execution" };
+      }
+    }
 
     if (!signal.symbol || !action || action === "HEALTH") {
       const reason = !signal.symbol ? "missing_symbol" : "missing_action";
@@ -212,22 +246,23 @@ export async function dispatchSignal(
       trail.add("lock_busy", "fail", "symbol_in_use", locked.details as Record<string, unknown>);
       await flushTrail(sb, signal.id, trail);
       await sb.from("signals").update({
-        status: "queued", retry_count: (signal.retry_count ?? 0) + 1,
-        decision_reason: "symbol_busy_retry",
+        status: "error",
+        processed_at: new Date().toISOString(),
+        decision_reason: "symbol_busy_no_retry",
       }).eq("id", signal.id);
-      return { signalId: signal.id, status: "requeued", reason: "symbol_busy" };
+      return { signalId: signal.id, status: "error", reason: "symbol_busy", gate: "execution" };
     }
     if (!locked.ok) throw new Error(`exec_error:${locked.details}`);
 
     const exec = locked.value;
-    const initFailed = exec.reason === "client_init_failed";
-    const finalStatus = exec.ok ? "processed" : initFailed ? "error" : "rejected";
+    const executorError = isExecutorError(exec.reason);
+    const finalStatus = exec.ok ? "processed" : executorError ? "error" : "rejected";
     trail.add(exec.ok ? "executed" : "exec_failed",
       exec.ok ? "pass" : "fail", exec.reason,
       { position_id: exec.position_id, fill_price: exec.fill_price, qty: exec.filled_qty });
-    if (initFailed) {
+    if (executorError) {
       await sb.from("error_log").insert({
-        source: "executor", message: "client_init_failed",
+        source: "executor", message: exec.reason ?? "executor_error",
         context: { signal_id: signal.id, symbol: signal.symbol, mode: resolved.mode, action },
       });
     }
@@ -236,8 +271,8 @@ export async function dispatchSignal(
       status: finalStatus, processed_at: new Date().toISOString(),
       decision_reason: exec.ok
         ? `executed:${resolved.mode}`
-        : initFailed
-          ? "client_init_failed"
+        : executorError
+          ? (exec.reason ?? "executor_error")
         : `exec_rejected:${exec.reason ?? "unknown"}`,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
@@ -258,47 +293,24 @@ export async function dispatchSignal(
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     const stack = (e as Error).stack ?? null;
-    const nextRetry = (signal.retry_count ?? 0) + 1;
 
     await sb.from("error_log").insert({
       source: "dispatcher", message: msg, stack,
-      context: { signal_id: signal.id, retry_count: nextRetry },
+      context: { signal_id: signal.id, retry_count: signal.retry_count ?? 0, fail_fast: true },
     });
 
-    if (nextRetry < MAX_RETRIES) {
-      trail.add("error_retry", "info", msg, { retry_count: nextRetry });
-      await flushTrail(sb, signal.id, trail);
-      await sb.from("signals").update({
-        status: "queued",
-        retry_count: nextRetry,
-      }).eq("id", signal.id);
-      return { signalId: signal.id, status: "requeued", reason: msg };
-    }
-
-    trail.add("dead_letter", "fail", msg, { retry_count: nextRetry });
+    trail.add("execution_error", "fail", msg, { retry_count: signal.retry_count ?? 0, fail_fast: true });
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
-      status: "dead_letter",
-      retry_count: nextRetry,
+      status: "error",
       processed_at: new Date().toISOString(),
-      decision_reason: `dead_letter:${msg.slice(0, 200)}`,
+      decision_reason: `execution_error:${msg.slice(0, 200)}`,
       error_stack: stack,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
-      action: "signal_dead_letter", target: signal.id,
-      after: { error: msg, retry_count: nextRetry },
+      action: "signal_execution_error", target: signal.id,
+      after: { error: msg, retry_count: signal.retry_count ?? 0, fail_fast: true },
     });
-    await sb.from("system_alerts").insert({
-      severity: "critical", category: "dead_letter",
-      message: `Signal moved to dead-letter: ${msg.slice(0, 160)}`,
-      context: { signal_id: signal.id },
-    });
-    notify({
-      severity: "critical", category: "dead_letter",
-      symbol: signal.symbol ?? null,
-      reason: msg.slice(0, 200),
-      extra: { signal_id: signal.id },
-    });
-    return { signalId: signal.id, status: "dead_letter", reason: msg };
+    return { signalId: signal.id, status: "error", reason: msg, gate: "execution" };
   }
 }

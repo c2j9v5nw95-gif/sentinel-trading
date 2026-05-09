@@ -5,7 +5,7 @@
 // Headers: X-BAPI-API-KEY, X-BAPI-TIMESTAMP, X-BAPI-RECV-WINDOW, X-BAPI-SIGN.
 //
 // Features:
-//   - retries on 5xx + ret_code 10002 (timestamp), 10006/10018 (rate-limit), 10016
+//   - one fast retry only for explicit transient errors
 //   - exponential backoff + jitter, capped attempts
 //   - idempotency through the caller-supplied orderLinkId for order endpoints
 //   - throws BybitError with parsed retCode/retMsg
@@ -51,8 +51,12 @@ export class BybitError extends Error {
 function jitter(ms: number) { return ms + Math.floor(Math.random() * (ms / 2)); }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const MAX_ATTEMPTS = 4;
+const MAX_ATTEMPTS = 2;
 const RETRYABLE_RET_CODES = new Set([10002, 10006, 10016, 10018, 10000, 130150]);
+
+function isRetryableHttpStatus(status: number): boolean {
+  return status === 429 || status === 418 || status >= 500;
+}
 
 export interface BybitRequestOpts {
   endpoint: string;            // /v5/order/create
@@ -116,10 +120,11 @@ export class BybitRest {
           body: isPost ? bodyStr : undefined,
         });
 
-        // Rate-limit: respect Retry-After
-        if (res.status === 429) {
+        // Fast transient retry only. Never keep a trade signal alive for long.
+        if (isRetryableHttpStatus(res.status) && attempt < MAX_ATTEMPTS) {
           const retryAfter = Number(res.headers.get("Retry-After") ?? "1");
-          await sleep(jitter(Math.min(retryAfter * 1000, 8000)));
+          const delayMs = res.status === 429 ? Math.min(retryAfter * 250, 750) : 250 * attempt;
+          await sleep(jitter(delayMs));
           continue;
         }
 
@@ -128,7 +133,11 @@ export class BybitRest {
         try {
           json = JSON.parse(text) as BybitResponse<T>;
         } catch {
-          throw new BybitError(`bad_json:${res.status}`, -1, text.slice(0, 200), res.status, opts.endpoint);
+          const server = res.headers.get("server") ?? undefined;
+          const cfRay = res.headers.get("cf-ray") ?? undefined;
+          throw new BybitError(`bad_json:${res.status}`, -1,
+            text.slice(0, 200), res.status, opts.endpoint,
+            { body: text.slice(0, 500), headers: { server, cf_ray: cfRay } });
         }
 
         if (json.retCode === 0) return json;
@@ -145,7 +154,12 @@ export class BybitRest {
       } catch (e) {
         lastError = e as Error;
         if (e instanceof BybitError) {
-          if (attempt >= MAX_ATTEMPTS) throw e;
+          const retryable = isRetryableHttpStatus(e.httpStatus) || RETRYABLE_RET_CODES.has(e.retCode);
+          if (retryable && attempt < MAX_ATTEMPTS) {
+            await sleep(jitter(250 * attempt));
+            continue;
+          }
+          throw e;
         } else if (attempt < MAX_ATTEMPTS) {
           await sleep(jitter(300 * attempt));
           continue;
