@@ -9,8 +9,8 @@
 //                                -> accepted | rejected
 //
 // Errors:
-//   - increment retry_count, requeue if < MAX_RETRIES
-//   - else mark dead_letter, persist error_stack, system_alerts critical row
+//   - trade execution fails fast; stale entries must not sit queued and execute late
+//   - unexpected failures are marked error with full trail + error_log context
 //
 // Trail is appended at every step and flushed before return (always).
 
@@ -25,13 +25,18 @@ import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
 import { notify } from "./telegram.ts";
 
-const MAX_RETRIES = 2;
+const MAX_ENTRY_SIGNAL_AGE_MS = 30_000;
 
 export interface DispatchResult {
   signalId: string;
   status: "processed" | "accepted" | "rejected" | "skipped" | "error" | "dead_letter" | "requeued";
   reason?: string;
   gate?: string;
+}
+
+function signalAgeMs(signal: any): number {
+  const ts = Date.parse(signal.received_at ?? signal.created_at ?? "");
+  return Number.isFinite(ts) ? Date.now() - ts : 0;
 }
 
 async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
@@ -103,6 +108,25 @@ export async function dispatchSignal(
     const action = signal.action as SignalAction | null;
     const mapping = resolveStrategyCode(signal.strategy_code);
     const strategyCodeKnown = !!mapping && action !== null && action !== "HEALTH";
+
+    if (action && isEntry(action)) {
+      const ageMs = signalAgeMs(signal);
+      if (ageMs > MAX_ENTRY_SIGNAL_AGE_MS) {
+        const reason = `entry_stale:${Math.round(ageMs / 1000)}s`;
+        trail.add("entry_stale", "fail", reason, { age_ms: ageMs, max_age_ms: MAX_ENTRY_SIGNAL_AGE_MS });
+        await flushTrail(sb, signal.id, trail);
+        await sb.from("signals").update({
+          status: "error",
+          processed_at: new Date().toISOString(),
+          decision_reason: reason,
+        }).eq("id", signal.id);
+        await sb.from("error_log").insert({
+          source: "dispatcher", message: "entry_stale_no_retry",
+          context: { signal_id: signal.id, symbol: signal.symbol, action, age_ms: ageMs },
+        });
+        return { signalId: signal.id, status: "error", reason, gate: "execution" };
+      }
+    }
 
     if (!signal.symbol || !action || action === "HEALTH") {
       const reason = !signal.symbol ? "missing_symbol" : "missing_action";
