@@ -6,18 +6,48 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { VenueBybitClient } from "./venue-client.ts";
 
-const DEFAULT_LIVE_BASE = "https://api.bybit.com";
+/** Official Bybit mainnet endpoint. Always the safe default. */
+export const DEFAULT_LIVE_BASE = "https://api.bybit.com";
+
+/**
+ * How long a passing diagnostic is considered "fresh enough" to authorize
+ * live execution against an ALTERNATE base URL (e.g. api.bytick.com).
+ * The default endpoint never requires this gate.
+ */
+const ALTERNATE_DIAGNOSTIC_FRESHNESS_MS = 60 * 60 * 1000; // 1h
+
+export interface LiveBaseInfo {
+  url: string;
+  is_alternate: boolean;
+  is_default: boolean;
+  source: "env" | "default";
+}
 
 /** Resolved at call time so a secret rotation takes effect without redeploy. */
+export function liveBaseUrlInfo(): LiveBaseInfo {
+  const raw = Deno.env.get("BYBIT_API_BASE_URL")?.trim();
+  if (!raw) {
+    return { url: DEFAULT_LIVE_BASE, is_alternate: false, is_default: true, source: "default" };
+  }
+  const normalized = raw.replace(/\/+$/, "");
+  return {
+    url: normalized,
+    is_alternate: normalized !== DEFAULT_LIVE_BASE,
+    is_default: normalized === DEFAULT_LIVE_BASE,
+    source: "env",
+  };
+}
+
+/** Back-compat string-only accessor. */
 export function liveBaseUrl(): string {
-  return Deno.env.get("BYBIT_API_BASE_URL")?.trim() || DEFAULT_LIVE_BASE;
+  return liveBaseUrlInfo().url;
 }
 
 export class LiveBybitClient extends VenueBybitClient {
   constructor(sb: SupabaseClient) {
     super(sb, {
       mode: "live",
-      baseUrl: liveBaseUrl(),
+      baseUrl: liveBaseUrlInfo().url,
       apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
       apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
     });
@@ -47,5 +77,29 @@ export async function liveExecutionGate(sb: SupabaseClient): Promise<string | nu
   if (!Deno.env.get("BYBIT_LIVE_API_KEY") || !Deno.env.get("BYBIT_LIVE_API_SECRET")) {
     return "live_api_keys_missing";
   }
+
+  // Alternate-endpoint guard: if operator has overridden BYBIT_API_BASE_URL away
+  // from the official mainnet, require a recent passing diagnostic against the
+  // CURRENT base URL before allowing live execution.
+  const base = liveBaseUrlInfo();
+  if (base.is_alternate) {
+    const since = new Date(Date.now() - ALTERNATE_DIAGNOSTIC_FRESHNESS_MS).toISOString();
+    const { data: rows } = await sb.from("bybit_diagnostics")
+      .select("ok,checks,created_at")
+      .eq("mode", "live")
+      .eq("ok", true)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const matched = (rows ?? []).find((r) => {
+      const meta = (r.checks as Record<string, unknown> | null)?._meta as
+        { base_url?: string } | undefined;
+      return meta?.base_url === base.url;
+    });
+    if (!matched) {
+      return `alternate_base_requires_passing_diagnostic:${base.url}`;
+    }
+  }
+
   return null;
 }

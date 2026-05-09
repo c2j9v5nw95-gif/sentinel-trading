@@ -18,7 +18,7 @@
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { BybitRest, BybitError, BybitTransportError } from "../_shared/bybit-rest.ts";
-import { liveBaseUrl } from "../_shared/live-client.ts";
+import { liveBaseUrlInfo, DEFAULT_LIVE_BASE } from "../_shared/live-client.ts";
 import { notify } from "../_shared/telegram.ts";
 
 const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
@@ -38,12 +38,17 @@ function credsFor(mode: Mode) {
       apiKey: Deno.env.get("BYBIT_TESTNET_API_KEY") ?? "",
       apiSecret: Deno.env.get("BYBIT_TESTNET_API_SECRET") ?? "",
       baseUrl: "https://api-testnet.bybit.com",
+      is_alternate: false,
+      base_source: "default" as const,
     };
   }
+  const info = liveBaseUrlInfo();
   return {
     apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
     apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
-    baseUrl: liveBaseUrl(),
+    baseUrl: info.url,
+    is_alternate: info.is_alternate,
+    base_source: info.source,
   };
 }
 
@@ -117,6 +122,17 @@ Deno.serve(async (req) => {
 
   const creds = credsFor(mode);
   const checks: Record<string, CheckResult> = {};
+  // Stash base URL info into checks._meta so the dispatcher's live gate can
+  // verify a passing diagnostic was run against the CURRENT active base URL.
+  checks._meta = {
+    ok: true,
+    detail: {
+      base_url: creds.baseUrl,
+      is_alternate: creds.is_alternate,
+      base_source: creds.base_source,
+      default_base: DEFAULT_LIVE_BASE,
+    },
+  } as CheckResult;
   let permissions: unknown = null;
   let accountType: string | null = null;
   let lastResponse: unknown = null;
@@ -411,6 +427,10 @@ Deno.serve(async (req) => {
 
   return json({
     ok, mode, symbol, checks, permissions, account_type: accountType,
+    base_url: creds.baseUrl,
+    is_alternate_base: creds.is_alternate,
+    base_source: creds.base_source,
+    default_base: DEFAULT_LIVE_BASE,
     last_response: lastResponse, error: topError,
   });
 });
