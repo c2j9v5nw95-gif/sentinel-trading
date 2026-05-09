@@ -15,6 +15,29 @@ export const DEFAULT_LIVE_BASE = "https://api.bybit.com";
  * The default endpoint never requires this gate.
  */
 const ALTERNATE_DIAGNOSTIC_FRESHNESS_MS = 60 * 60 * 1000; // 1h
+export const LIVE_GATE_WORKER_VERSION = "live-gate-debug-2026-05-09-v1";
+
+interface GateLookupInput {
+  symbol?: string | null;
+  signalId?: string | null;
+}
+
+interface DiagnosticMatch {
+  id: string;
+  created_at: string;
+  age_ms: number;
+  base_url: string;
+  symbol: string | null;
+}
+
+interface DiagnosticRejection {
+  diagnostic_id: string;
+  passed_at: string;
+  age_ms: number;
+  base_url: string | null;
+  symbol: string | null;
+  reason: string;
+}
 
 export interface LiveBaseInfo {
   url: string;
@@ -43,6 +66,21 @@ export function liveBaseUrl(): string {
   return liveBaseUrlInfo().url;
 }
 
+function normalizeBaseUrl(url?: string | null): string | null {
+  if (!url) return null;
+  return url.trim().replace(/\/+$/, "");
+}
+
+function diagnosticBaseAndSymbol(checks: unknown): { base_url: string | null; symbol: string | null } {
+  const c = checks as Record<string, any> | null;
+  const meta = c?._meta;
+  const bySymbol = c?.read_positions_by_symbol;
+  return {
+    base_url: normalizeBaseUrl(meta?.detail?.base_url ?? meta?.base_url ?? null),
+    symbol: meta?.detail?.symbol ?? bySymbol?.detail?.query?.symbol ?? null,
+  };
+}
+
 export class LiveBybitClient extends VenueBybitClient {
   constructor(sb: SupabaseClient) {
     super(sb, {
@@ -58,7 +96,7 @@ export class LiveBybitClient extends VenueBybitClient {
  * Hard gating run before constructing LiveBybitClient.
  * Returns null if execution may proceed; otherwise an error message.
  */
-export async function liveExecutionGate(sb: SupabaseClient): Promise<string | null> {
+export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInput = {}): Promise<string | null> {
   const { data: s } = await sb.from("app_settings")
     .select("live_enabled,emergency_stop,live_risk_halted")
     .maybeSingle();
@@ -83,9 +121,9 @@ export async function liveExecutionGate(sb: SupabaseClient): Promise<string | nu
   // CURRENT base URL before allowing live execution.
   const base = liveBaseUrlInfo();
   if (base.is_alternate) {
-    const match = await findPassingAlternateDiagnostic(sb, base.url);
-    if (!match) {
-      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, within ${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m)`;
+    const lookup = await findPassingAlternateDiagnostic(sb, base.url, input);
+    if (!lookup.match) {
+      return `alternate_base_requires_passing_diagnostic:${base.url} (need: mode=live, ok=true, base_url=${base.url}, symbol=${input.symbol ?? "any"}, within ${Math.round(ALTERNATE_DIAGNOSTIC_FRESHNESS_MS / 60000)}m; looked_at=${lookup.rows_seen}; latest_rejection=${lookup.rejections[0]?.reason ?? "none"}; latest_passed_at=${lookup.rejections[0]?.passed_at ?? "none"}; latest_age_min=${lookup.rejections[0] ? Math.round(lookup.rejections[0].age_ms / 60000) : "n/a"})`;
     }
   }
 
