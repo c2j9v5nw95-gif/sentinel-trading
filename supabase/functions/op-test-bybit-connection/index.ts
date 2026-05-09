@@ -26,7 +26,7 @@ const SAFE_ORDER_PHRASE = "RUN SAFE ORDER TEST";
 interface CheckResult {
   ok: boolean;
   detail?: unknown;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; detail?: unknown };
   ms?: number;
 }
 
