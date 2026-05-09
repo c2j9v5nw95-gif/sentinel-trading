@@ -253,7 +253,7 @@ export async function dispatchSignal(
       });
 
     if (!locked.ok && locked.reason === "symbol_busy") {
-      trail.add("lock_busy", "fail", "symbol_in_use", locked.details as Record<string, unknown>);
+      trail.add("lock_busy", "fail", "symbol_in_use", locked.details as unknown as Record<string, unknown>);
       await flushTrail(sb, signal.id, trail);
       await sb.from("signals").update({
         status: "error",
