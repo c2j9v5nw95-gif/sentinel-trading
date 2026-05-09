@@ -69,6 +69,10 @@ function initializeClient(
   logExecutorHeartbeat("executor_loaded", signal, mode);
   try {
     const client = getClient(mode, sb, opts);
+    // Tag every Bybit call with this signal id so traces can be diff'd later.
+    if (typeof (client as { setSignalContext?: (id: string) => void }).setSignalContext === "function") {
+      (client as { setSignalContext: (id: string) => void }).setSignalContext(signal.id);
+    }
     trail.add("client_initialized", "pass", undefined, { mode });
     logExecutorHeartbeat("client_initialized", signal, mode);
     return { ok: true, client };
