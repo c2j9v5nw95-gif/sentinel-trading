@@ -157,11 +157,21 @@ export class BybitRest {
         try {
           json = JSON.parse(text) as BybitResponse<T>;
         } catch {
-          const server = res.headers.get("server") ?? undefined;
-          const cfRay = res.headers.get("cf-ray") ?? undefined;
-          throw new BybitError(`bad_json:${res.status}`, -1,
-            text.slice(0, 200), res.status, opts.endpoint,
-            { body: text.slice(0, 500), headers: { server, cf_ray: cfRay } });
+          const diagnostics: BybitTransportDiagnostics = {
+            base_url: this.creds.baseUrl,
+            endpoint: opts.endpoint,
+            http_status: res.status,
+            content_type: res.headers.get("content-type") ?? undefined,
+            cf_ray: res.headers.get("cf-ray") ?? undefined,
+            server: res.headers.get("server") ?? undefined,
+            request_id: res.headers.get("x-bapi-request-id")
+              ?? res.headers.get("x-request-id") ?? undefined,
+            body_snippet: text.slice(0, 500),
+          };
+          // 403 with non-JSON body == upstream WAF/edge block, not Bybit itself.
+          const kind: "forbidden" | "bad_json" =
+            res.status === 403 ? "forbidden" : "bad_json";
+          throw new BybitTransportError(kind, diagnostics);
         }
 
         if (json.retCode === 0) return json;
