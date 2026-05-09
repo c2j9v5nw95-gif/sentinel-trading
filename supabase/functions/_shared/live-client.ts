@@ -106,7 +106,7 @@ export class LiveBybitClient extends VenueBybitClient {
  */
 export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInput = {}): Promise<string | null> {
   const { data: s } = await sb.from("app_settings")
-    .select("live_enabled,emergency_stop,live_risk_halted")
+    .select("live_enabled,emergency_stop,live_risk_halted,use_execution_bridge")
     .maybeSingle();
   if (!s) return "settings_missing";
   if (!s.live_enabled) return "live_disabled_globally";
