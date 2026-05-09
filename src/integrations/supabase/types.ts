@@ -215,6 +215,54 @@ export type Database = {
         }
         Relationships: []
       }
+      bridge_smoke_tests: {
+        Row: {
+          account_available: number | null
+          account_equity: number | null
+          bybit_ms: number | null
+          checked_at: string
+          error: string | null
+          http_status: number | null
+          id: string
+          ok: boolean
+          public_ip: string | null
+          raw: Json | null
+          ret_code: number | null
+          ret_msg: string | null
+          total_ms: number | null
+        }
+        Insert: {
+          account_available?: number | null
+          account_equity?: number | null
+          bybit_ms?: number | null
+          checked_at?: string
+          error?: string | null
+          http_status?: number | null
+          id?: string
+          ok: boolean
+          public_ip?: string | null
+          raw?: Json | null
+          ret_code?: number | null
+          ret_msg?: string | null
+          total_ms?: number | null
+        }
+        Update: {
+          account_available?: number | null
+          account_equity?: number | null
+          bybit_ms?: number | null
+          checked_at?: string
+          error?: string | null
+          http_status?: number | null
+          id?: string
+          ok?: boolean
+          public_ip?: string | null
+          raw?: Json | null
+          ret_code?: number | null
+          ret_msg?: string | null
+          total_ms?: number | null
+        }
+        Relationships: []
+      }
       bybit_diagnostics: {
         Row: {
           account_type: string | null
