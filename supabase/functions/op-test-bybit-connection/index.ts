@@ -227,12 +227,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 4) open positions — /v5/position/list
+  // 4) open positions — /v5/position/list (settleCoin sweep)
   if (checks.api_auth.ok) {
-    const t = await timed(() => rest.request({
-      endpoint: "/v5/position/list", method: "GET",
-      query: { category: "linear", settleCoin: "USDT" },
-    }));
+    const t = await timed(() => rest.request(
+      buildPositionListRequest({ category: "linear", settleCoin: "USDT" }),
+    ));
     if (t.err) {
       const err = explainBybitError(t.err);
       checks.read_positions = { ok: false, error: err, ms: t.ms };
@@ -244,15 +243,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 4b) MIRROR-OF-EXECUTOR: /v5/position/list?category=linear&symbol=<symbol>
-  // The executor reads positions per-symbol (not per settleCoin). If WAF/edge
-  // blocks the per-symbol query but allows the settleCoin query, ONLY this
-  // check will fail — that diff pinpoints the executor 403.
+  // 4b) MIRROR-OF-EXECUTOR — uses the SAME builder the executor uses.
   if (checks.api_auth.ok) {
-    const t = await timed(() => rest.request({
-      endpoint: "/v5/position/list", method: "GET",
-      query: { category: "linear", symbol },
-    }));
+    const t = await timed(() => rest.request(
+      buildPositionListRequest({ category: "linear", symbol }),
+    ));
     if (t.err) {
       const err = explainBybitError(t.err);
       checks.read_positions_by_symbol = { ok: false, error: err, ms: t.ms };
