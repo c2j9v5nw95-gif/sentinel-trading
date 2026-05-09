@@ -184,7 +184,7 @@ function SignalsPage() {
 }
 
 function LiveGateDebugPanel({ diagnostics, latestGateBlock }: { diagnostics: DiagnosticRow[]; latestGateBlock: Signal | null }) {
-  const FRESHNESS_MS = 60 * 60 * 1000;
+  const FRESHNESS_MS = 24 * 60 * 60 * 1000;
   const parsedBlockedBase = latestGateBlock?.decision_reason?.match(/alternate_base_requires_passing_diagnostic:([^\s]+)/)?.[1] ?? null;
   const latestPassing = diagnostics[0] ?? null;
   const latestChecks = latestPassing?.checks as Record<string, any> | null;
@@ -215,7 +215,7 @@ function LiveGateDebugPanel({ diagnostics, latestGateBlock }: { diagnostics: Dia
       <div className="mt-2 rounded-md border border-border bg-muted/30 p-2 text-xs">
         <div className="mb-1 text-muted-foreground">Executor lookup query</div>
         <code className="break-all">
-          bybit_diagnostics where mode=live and ok=true order by created_at desc limit 25; expected base_url={activeBase}; freshness=60m
+          bybit_diagnostics where mode=live and ok=true order by created_at desc limit 25; expected base_url={activeBase}; freshness=24h
         </code>
       </div>
       <div className="mt-2 rounded-md border border-border bg-muted/30 p-2 text-xs">
