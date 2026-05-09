@@ -82,15 +82,24 @@ export async function executeEntry(
   }
 
   const wallet = await client.getWalletBalance();
-  // Mark price: paper_market_prices for paper, signal payload otherwise.
-  // For testnet/live the executor relies on the TradingView payload price; the
-  // venue is the source of truth for fills (avgFillPrice replaces this).
+  // Mark price resolution priority:
+  //   1. paper_market_prices (paper mode only)
+  //   2. signal payload price/close (TradingView {{close}})
+  //   3. Bybit public ticker fallback (lastPrice)
   const { data: priceRow } = mode === "paper"
     ? await sb.from("paper_market_prices").select("price,received_at").eq("symbol", signal.symbol).maybeSingle()
     : { data: null as { price: number; received_at: string } | null };
   const payloadPrice = Number(signal.payload?.price ?? signal.payload?.close ?? NaN);
-  const markPrice = priceRow ? Number(priceRow.price)
+  let markPrice = priceRow ? Number(priceRow.price)
     : (Number.isFinite(payloadPrice) && payloadPrice > 0 ? payloadPrice : NaN);
+
+  if (!Number.isFinite(markPrice) || markPrice <= 0) {
+    const fallback = await fetchLastPrice(signal.symbol);
+    if (fallback != null) {
+      markPrice = fallback;
+      trail.add("entry_price_fallback", "info", "bybit_public_ticker", { price: fallback });
+    }
+  }
 
   if (!Number.isFinite(markPrice) || markPrice <= 0) {
     trail.add("entry_price_unavailable", "fail", "no_mark_price");
