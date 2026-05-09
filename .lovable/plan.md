@@ -1,234 +1,56 @@
+## Goal
 
-# Symbol-Level Execution Locking — Design
+Let TradingView authenticate against `ingest-webhook` using a `?token=...` query parameter, so you don't have to edit `secret=` into every Pine Script alert string. Payload-secret auth keeps working as a fallback.
 
-A single coordination primitive that every Phase 3 execution path (entry, exit, replay, reconcile, protection re-arm) must acquire before touching Bybit or position rows for a given symbol. Built as a Postgres-backed `execution_locks` table with TTL + heartbeat, atomically managed by SECURITY DEFINER functions. Visible in the dashboard and crash-safe by design.
+## Auth flow (new)
 
----
+In `supabase/functions/ingest-webhook/index.ts`, before parsing the body:
 
-## 1. Why a Table (not raw advisory locks)
+1. Read `token` from `new URL(req.url).searchParams`.
+2. Read `secret=` from the body via existing `extractSecret(bodyText)`.
+3. `authOk = expected && (token === expected || providedSecret === expected)`.
+4. Priority is informational only (both are accepted). Logged as `auth_method: "url_token" | "payload_secret" | "none"` in the `raw_alerts` insert + abuse-burst context, so you can see in the activity feed which path was used.
+5. All existing behavior preserved: malformed/bad_secret logging, 5-in-10-min Telegram burst alert, dedupe, signal insert, async dispatch.
 
-Postgres advisory locks (`pg_try_advisory_xact_lock`) are atomic and cheap, but:
-- They die with the connection — invisible to the dashboard.
-- They can't carry metadata (owner, job kind, acquired-at, heartbeat).
-- They can't be "broken" by an operator.
-- They don't survive across the supabase-js connection pool well.
+Constant-time compare (avoid timing leaks): wrap the equality check in a small helper that compares byte-by-byte over the full length.
 
-So the canonical lock is the **`execution_locks` table** with TTL + heartbeat. We still keep one advisory lock **inside the SQL acquisition function** to serialize the test-and-set, eliminating the small race window between SELECT and INSERT.
+## UI changes — `src/components/WebhookSettingsCard.tsx`
 
----
+Replace the single "Webhook URL" row with three rows, each with a copy button:
 
-## 2. Schema (planned)
+- **TradingView URL (recommended)** — `${SUPABASE_URL}/functions/v1/ingest-webhook?token=<SECRET>`. This is the one to paste into TradingView's webhook field.
+- **Webhook URL (no token)** — `${SUPABASE_URL}/functions/v1/ingest-webhook`. For payload-secret mode or manual testing.
+- **Webhook URL with token** — same as recommended; shown separately so it's obvious that token is just a query param on the base URL.
 
-### 2.1 New enums
-- `lock_kind` ∈ (`entry`, `exit`, `replay`, `reconcile`, `protect`, `manual`).
+Token rendering rules:
+- If the operator has just rotated and the plaintext secret is in memory (one-time reveal), inject it into the recommended URL.
+- Otherwise show `?token=••••<hint>` (last 4 chars from `app_settings.webhook_secret_hint`) and a "Rotate to reveal" hint. We never persist plaintext, so this matches existing rotate-once behavior.
 
-### 2.2 `execution_locks` table
-| column            | type                    | notes |
-|-------------------|-------------------------|-------|
-| `symbol`          | text PRIMARY KEY        | one row per locked symbol |
-| `kind`            | `lock_kind` NOT NULL    | what the holder is doing |
-| `owner_id`        | text NOT NULL           | worker/process id (uuid v4 generated per worker boot) |
-| `job_id`          | uuid NULL               | references `execution_jobs.id` when applicable |
-| `signal_id`       | uuid NULL               | references `signals.id` when applicable |
-| `acquired_at`     | timestamptz NOT NULL    | first-grab time |
-| `heartbeat_at`    | timestamptz NOT NULL    | last refresh |
-| `ttl_seconds`     | integer NOT NULL        | per-kind default (see §4) |
-| `expires_at`      | timestamptz GENERATED   | `heartbeat_at + ttl_seconds * interval '1 second'` |
-| `metadata`        | jsonb                   | anything useful (action, attempt, etc.) |
+Update the Pine Script template snippets:
+- Keep the existing `secret=...;type=trade;...` template under a "Payload-secret mode (legacy)" subheading.
+- Add a new primary "URL-token mode (recommended)" template that omits `secret=`:
+  - `type=trade;action=ENTER-LONG;ticker={{ticker}};strategy=EL1;tag=STRAT2`
+  - `type=stats;action=HEALTH;ticker={{ticker}};strategy=HEALTH_ALL;trigger=HEARTBEAT;...`
+- Short note: "Paste the recommended URL above into TradingView → Notification → Webhook URL. No `secret=` needed in the alert body."
 
-Indexes: `(expires_at)` for stale sweeps; primary key gives O(1) lookup.
+Activity feed: add a small `auth_method` badge (`url_token` / `payload_secret`) next to `auth_status` so you can confirm at a glance which path TradingView is using.
 
-RLS: `operator` SELECT only. All writes via `SECURITY DEFINER` SQL functions (service-role).
+## Schema
 
-### 2.3 `execution_lock_events` (audit trail)
-Append-only log of acquire/release/steal/expire events for the dashboard and audit. Columns: `id, symbol, kind, owner_id, event` (`acquired|released|heartbeat|stolen|expired|preempted`), `previous_kind`, `previous_owner_id`, `note`, `created_at`.
+No migration needed. `raw_alerts.headers` is already `jsonb`; `auth_method` will live inside an existing context field, or we add a small column `auth_method text` if you want it indexable.
 
----
+Recommended: add `auth_method text` to `raw_alerts` so the activity feed can render it cleanly without parsing JSON. Migration:
+- `alter table public.raw_alerts add column auth_method text;`
+- No RLS changes (operator-only read policy already covers it).
 
-## 3. Lock Acquisition — SQL functions
+## Files touched
 
-All atomic. All `SECURITY DEFINER`, `search_path=public`, executable only by service role (REVOKE from `public` and `authenticated`).
+- `supabase/functions/ingest-webhook/index.ts` — add URL-token check, log `auth_method`.
+- `src/components/WebhookSettingsCard.tsx` — three-URL display + new template, auth_method badge.
+- `supabase/migrations/<new>.sql` — add `raw_alerts.auth_method` column.
 
-### 3.1 `acquire_execution_lock(_symbol text, _kind lock_kind, _owner_id text, _job_id uuid, _signal_id uuid, _ttl_seconds int, _allow_preempt boolean) returns jsonb`
+## Out of scope
 
-Pseudocode:
-
-```text
-PERFORM pg_advisory_xact_lock(hashtext('exec_lock:' || _symbol));  -- serialize T&S
-
-SELECT * INTO existing FROM execution_locks WHERE symbol = _symbol;
-
-IF existing IS NULL OR existing.expires_at <= now() THEN
-  -- free or stale: take it
-  INSERT ... ON CONFLICT (symbol) DO UPDATE SET ...;
-  log('acquired' or 'stolen');
-  RETURN { granted:true, took_over:existing IS NOT NULL };
-END IF;
-
--- held and fresh
-IF existing.owner_id = _owner_id AND existing.kind = _kind THEN
-  -- reentrant for same owner+kind: refresh heartbeat
-  UPDATE execution_locks SET heartbeat_at = now() WHERE symbol = _symbol;
-  log('heartbeat');
-  RETURN { granted:true, reentrant:true };
-END IF;
-
--- preemption rules (see §5)
-IF _allow_preempt AND can_preempt(existing.kind, _kind) THEN
-  UPDATE ... SET kind=_kind, owner_id=_owner_id, ...;
-  log('preempted');
-  RETURN { granted:true, preempted:true, previous_kind:existing.kind };
-END IF;
-
-RETURN { granted:false, holder:existing.owner_id, holder_kind:existing.kind,
-         expires_at:existing.expires_at };
-```
-
-The advisory lock is transactional (`xact`), so it auto-releases on commit/rollback — a worker crash mid-function never leaves it stuck.
-
-### 3.2 `release_execution_lock(_symbol text, _owner_id text) returns boolean`
-Releases only if the caller still owns the row. Logs `released`. Returns `true`/`false`.
-
-### 3.3 `heartbeat_execution_lock(_symbol text, _owner_id text) returns boolean`
-Updates `heartbeat_at = now()` only if owner matches and lock not expired. Returns `false` if the lock was lost (caller MUST abort).
-
-### 3.4 `expire_stale_locks() returns int`
-Sweeper — deletes rows where `expires_at <= now()` and logs `expired`. Run by cron every 30s.
-
-### 3.5 Read-only `current_execution_locks()` view
-For the dashboard. Joins lock rows with derived `age_seconds`, `seconds_until_expiry`, `is_stale` (expired but not yet swept), and (where available) signal/job summary.
-
----
-
-## 4. TTLs by Kind
-
-| kind        | default TTL | heartbeat cadence | rationale |
-|-------------|-------------|-------------------|-----------|
-| `entry`     | 30s         | 5s                | one Bybit market round-trip + sizing |
-| `exit`      | 30s         | 5s                | same |
-| `replay`    | 30s         | 5s                | runs through dispatcher + executor |
-| `reconcile` | 60s         | 10s               | may pull positions/orders/executions |
-| `protect`   | 20s         | 5s                | trading-stop call only |
-| `manual`    | 300s        | n/a               | operator-held via UI; no auto-heartbeat |
-
-A worker that is healthy refreshes its heartbeat well before TTL. If it crashes, the row goes stale within at most one TTL window and any other worker may grab it.
-
----
-
-## 5. Preemption Rules — Exit > Entry
-
-Encoded in `can_preempt(current, requested)`:
-
-| current → / requested ↓ | entry | exit | replay | reconcile | protect | manual |
-|-------------------------|:-----:|:----:|:------:|:---------:|:-------:|:------:|
-| **entry**               | no    | YES  | no     | no        | no      | YES    |
-| **exit**                | no    | no   | no     | no        | no      | YES    |
-| **replay**              | no    | YES  | no     | no        | no      | YES    |
-| **reconcile**           | no    | YES  | no     | no        | no      | YES    |
-| **protect**             | no    | YES  | no     | no        | no      | YES    |
-
-- **Exits always preempt entries/replays/reconciles/protects.** They first signal the holder via a `lock_preempted` flag (the holder's next heartbeat returns `false`, the holder must roll back its in-flight work cleanly). Then the exit takes the lock.
-- **Manual** (operator from dashboard) preempts anything — last-resort kill switch for stuck symbols.
-- All other combinations wait or fail-fast (caller decides via `_allow_preempt=false`).
-
-A holder whose heartbeat returns `false` MUST:
-1. Abort any pre-Bybit-call work in-flight.
-2. NOT roll back already-submitted Bybit orders (those become reconciler's problem — Bybit truth wins).
-3. Mark its `execution_jobs` row `failed_preempted` with `next_run_at = now()+5s` so it retries cleanly after the higher-priority job finishes.
-
----
-
-## 6. Reconciliation vs Stale Locks
-
-Reconciler uses a special path:
-1. Sweep expired locks first (`expire_stale_locks()`).
-2. For each symbol with non-terminal state, attempt to acquire `kind=reconcile` with `_allow_preempt=false`.
-3. If acquisition fails because someone else holds the lock and it's NOT yet expired → **skip this symbol this pass**; reconcile only idle symbols. Prevents reconciler from racing against an in-flight entry.
-4. After a configurable `RECONCILE_FORCE_AFTER` (default 5 minutes) of continuous lock-busy on the same symbol, escalate to `_allow_preempt=true` AND raise `system_alerts(severity=warning, category=long_held_lock)` so an operator can intervene.
-
----
-
-## 7. Replay Compatibility
-
-`replay_signal()` already requeues a signal. The replayed signal goes through dispatch like any other; when its `execution_jobs` row leases, the executor must call `acquire_execution_lock(symbol, kind='replay', ...)` exactly like a normal entry/exit — replays are not special-cased and cannot bypass locking.
-
-The replay UI shows a warning banner if the target symbol currently holds a non-`replay` lock: "Symbol is busy (kind=entry, age 12s). Replay will queue and retry."
-
----
-
-## 8. Duplicate Webhook Retry Protection
-
-Layered defense — locks are the last layer:
-1. `signals.dedupe_key` (already in place) — rejects duplicate inbound webhooks before they are even queued.
-2. `execution_jobs.dedupe_key` (Phase 3) — rejects duplicate jobs derived from the same `(signal_id, kind, attempt)`.
-3. `execution_locks` — even if both layers above fail, the second job to attempt acquisition for the same symbol gets `granted:false` and either waits or aborts.
-4. Bybit `orderLinkId` — Bybit-side dedupe of any orders that somehow get through.
-
----
-
-## 9. Worker Identity & Heartbeat Loop
-
-Each Edge Function invocation:
-1. Generates a stable `owner_id = crypto.randomUUID()` at startup, stored in module-level `WORKER_ID` constant.
-2. Wraps the critical section in:
-
-```ts
-const lock = await acquireLock(symbol, "entry", { jobId, signalId, ttlSec: 30 });
-if (!lock.granted) return { status: "skipped", reason: "symbol_busy", holder: lock.holder };
-const beat = setInterval(async () => {
-  const ok = await heartbeat(symbol);
-  if (!ok) { aborted = true; clearInterval(beat); /* trigger graceful abort */ }
-}, 5_000);
-try { await doWork(); }
-finally { clearInterval(beat); await releaseLock(symbol); }
-```
-
-3. `try { ... } finally { release }` guarantees release on normal exits and exceptions; TTL covers crashes.
-
----
-
-## 10. Dashboard Surfacing
-
-New "Execution Locks" panel on the Positions page (and a small chip in the StatusBar):
-
-- **StatusBar chip**: `🔒 3 locked` (clickable → opens the panel). Red dot if any lock is past TTL but not yet swept.
-- **Panel table** (`current_execution_locks` view, refresh 2s):
-  - Symbol · Kind chip · Owner (truncated) · Age · Heartbeat age · Expires in · Job/Signal links · `Steal` button (operator role; opens confirm modal that calls `acquire_execution_lock(..., kind='manual', _allow_preempt=true)`).
-  - Row tinted amber when `heartbeat_age > 2 × cadence` (worker likely dead, will expire soon).
-  - Row tinted red when expired.
-- **Per-symbol detail** in Positions row: when a row's `symbol` is locked, show a small `🔒 entry · 12s` badge inline.
-- **Audit log** filter chip for `lock_*` events from `execution_lock_events`.
-
----
-
-## 11. Failure Modes Covered
-
-| Scenario                                         | Outcome |
-|--------------------------------------------------|---------|
-| Worker crashes mid-entry                         | Lock expires after TTL; another worker re-acquires; reconciler resolves any half-done Bybit state. |
-| Two webhooks for same signal arrive in parallel  | Signal dedupe rejects #2; even if both reached executor, only one gets the lock. |
-| Reconciler fires while exit is mid-flight        | Reconciler sees fresh lock, skips symbol that pass. |
-| Operator hits Replay during entry                | Replay queues; lock acquisition fails until entry finishes; UI shows busy banner. |
-| Exit signal arrives during a slow entry          | Exit preempts; entry's next heartbeat returns false → entry aborts pre-submit; if entry already submitted to Bybit, reconciler folds the result in. |
-| Lock row stuck because of a Postgres bug        | Sweeper expires it; or operator clicks Steal. |
-| Network partition between worker and DB         | Heartbeat fails → worker treats lock as lost and aborts further side-effects. |
-
----
-
-## 12. Out of Scope
-
-- Cross-symbol locks (portfolio-level) — handled by Phase 2 concurrency cap.
-- Distributed consensus across regions — single Postgres is the source of truth.
-- Lock fairness/queueing — callers re-poll with backoff; we don't implement a wait queue.
-
----
-
-## 13. Implementation Order (when approved)
-
-1. Migration: `lock_kind` enum, `execution_locks`, `execution_lock_events`, `current_execution_locks` view, RLS.
-2. SQL functions: `acquire_execution_lock`, `release_execution_lock`, `heartbeat_execution_lock`, `expire_stale_locks`. Tests via direct SQL.
-3. `_shared/locks.ts` helper: `acquireLock / heartbeat / releaseLock / withSymbolLock(symbol, kind, fn)` wrapper.
-4. Cron: `/api/public/hooks/expire-locks` every 30s calling `expire_stale_locks()`.
-5. Wire `withSymbolLock` into Phase 3 `execute-entry`, `execute-exit`, `protection-monitor`, `reconcile`, and the replay path.
-6. Dashboard: StatusBar chip + Positions panel + Steal modal + audit filter.
-7. Test plan: simulated crash mid-entry, exit-preempts-entry, reconcile-skips-busy-symbol, operator-steal, double-webhook-replay.
+- No changes to `op-rotate-webhook-secret` (rotation flow stays one-time-reveal).
+- No changes to parser, dedupe, dispatcher, or strategy mapping.
+- No change to the actual secret value — same `TRADINGVIEW_WEBHOOK_SECRET` is reused for both auth paths.
