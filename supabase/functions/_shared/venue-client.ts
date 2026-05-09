@@ -126,11 +126,8 @@ export class VenueBybitClient implements BybitClient {
     }).select("id").single();
 
     try {
-      const r = await this.rest.request<{ orderId: string; orderLinkId: string }>({
-        endpoint: "/v5/order/create",
-        method: "POST",
-        idempotencyKey: req.orderLinkId,
-        body: {
+      const r = await this.rest.request<{ orderId: string; orderLinkId: string }>(
+        buildOrderCreateRequest({
           category: meta.category,
           symbol: req.symbol,
           side: req.side,
@@ -139,9 +136,9 @@ export class VenueBybitClient implements BybitClient {
           reduceOnly: req.reduceOnly,
           orderLinkId: req.orderLinkId,
           timeInForce: "IOC",
-          ...(req.orderType === "Limit" && req.price ? { price: String(req.price) } : {}),
-        },
-      });
+          price: req.orderType === "Limit" && req.price ? String(req.price) : undefined,
+        }),
+      );
 
       let filledQty = 0; let avgPrice: number | null = null; let fee = 0; let status: SubmitOrderResult["status"] = "submitted";
       for (let i = 0; i < 4; i++) {
