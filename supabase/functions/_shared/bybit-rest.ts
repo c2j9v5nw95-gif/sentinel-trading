@@ -33,6 +33,8 @@ export interface BybitCreds {
   apiSecret: string;
   baseUrl: string;          // https://api-testnet.bybit.com or https://api.bybit.com
   recvWindowMs?: number;    // default 5000
+  /** Tag identifying which caller built this client — "diag" | "live-executor" | "testnet-executor". */
+  label?: string;
 }
 
 export class BybitError extends Error {
@@ -115,6 +117,7 @@ export class BybitRest {
     const isPost = opts.method === "POST";
     const bodyStr = isPost ? JSON.stringify(opts.body ?? {}) : "";
     const queryStr = !isPost ? this.serializeQuery(opts.query) : "";
+    const label = this.creds.label ?? "unknown";
 
     let attempt = 0;
     let lastError: Error | null = null;
@@ -129,6 +132,32 @@ export class BybitRest {
       const url = isPost
         ? `${this.creds.baseUrl}${opts.endpoint}`
         : `${this.creds.baseUrl}${opts.endpoint}${queryStr ? `?${queryStr}` : ""}`;
+
+      // Redacted request metadata — written for EVERY Bybit call so a 403 from the
+      // executor can be diff'd against the diagnostics request that succeeded.
+      const reqMeta = {
+        evt: "bybit_request",
+        label,
+        attempt,
+        base_url: this.creds.baseUrl,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        query: opts.query
+          ? Object.fromEntries(
+              Object.entries(opts.query).filter(([_k, v]) => v !== undefined && v !== null && v !== ""),
+            )
+          : null,
+        query_string: queryStr || null,
+        body_keys: opts.body ? Object.keys(opts.body) : null,
+        body_size: bodyStr.length || 0,
+        recv_window_ms: Number(recvWindow),
+        timestamp_ms: Number(ts),
+        api_key_prefix: this.creds.apiKey.slice(0, 4) + "***",
+        sign_len: sign.length,
+        recvWindow,
+        idempotency_key: opts.idempotencyKey ?? null,
+      };
+      console.log(JSON.stringify(reqMeta));
 
       try {
         const res = await fetch(url, {
@@ -171,6 +200,10 @@ export class BybitRest {
           // 403 with non-JSON body == upstream WAF/edge block, not Bybit itself.
           const kind: "forbidden" | "bad_json" =
             res.status === 403 ? "forbidden" : "bad_json";
+          console.log(JSON.stringify({
+            evt: "bybit_transport_error",
+            label, kind, ...diagnostics,
+          }));
           throw new BybitTransportError(kind, diagnostics);
         }
 

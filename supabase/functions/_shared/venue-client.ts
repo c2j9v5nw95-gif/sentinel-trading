@@ -25,7 +25,12 @@ export class VenueBybitClient implements BybitClient {
     if (!opts.apiKey || !opts.apiSecret) {
       throw new Error(`BYBIT_${opts.mode.toUpperCase()}_API_KEY / BYBIT_${opts.mode.toUpperCase()}_API_SECRET not configured`);
     }
-    this.rest = new BybitRest({ apiKey: opts.apiKey, apiSecret: opts.apiSecret, baseUrl: opts.baseUrl });
+    this.rest = new BybitRest({
+      apiKey: opts.apiKey,
+      apiSecret: opts.apiSecret,
+      baseUrl: opts.baseUrl,
+      label: `${opts.mode}-executor`,
+    });
   }
 
   private async meta(symbol: string): Promise<SymbolMeta> {
