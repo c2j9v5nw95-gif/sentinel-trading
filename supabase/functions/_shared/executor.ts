@@ -18,7 +18,7 @@ import { Trail } from "./trail.ts";
 import { notify } from "./telegram.ts";
 import { fetchInstrumentRules, fetchLastPrice } from "./bybit-public.ts";
 import { resolveSizing } from "./sizing-resolver.ts";
-import { BybitError } from "./bybit-rest.ts";
+import { BybitError, BybitTransportError } from "./bybit-rest.ts";
 
 export interface ExecOutcome {
   ok: boolean;
