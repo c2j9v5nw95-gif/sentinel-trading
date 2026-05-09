@@ -5,6 +5,8 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { VenueBybitClient } from "./venue-client.ts";
+import { bridgeConfigured } from "./bridge-rest.ts";
+import { bridgeRecentlyHealthy, pingBridgeHealth, recordBridgeHealth } from "./bridge-health.ts";
 
 /** Official Bybit mainnet endpoint. Always the safe default. */
 export const DEFAULT_LIVE_BASE = "https://api.bybit.com";
