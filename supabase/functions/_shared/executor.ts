@@ -311,17 +311,7 @@ export async function executeEntry(
   await logEvent(sb, posRow.id, "entry_filled",
     { fill_price: fillPrice, qty: fill.filledQty, fee: fill.feeUsdt });
 
-  if (mode === "live" || mode === "testnet") {
-    notify({
-      severity: mode === "live" ? "warning" : "info",
-      category: "live_entry",
-      execution_mode: mode, symbol: signal.symbol, side,
-      leverage: Number(breakdown.effectiveLeverage),
-      qty: fill.filledQty, price: fillPrice,
-      exposure: fill.filledQty * fillPrice,
-      reason: signal.entry_reason ?? signal.strategy_code ?? "entry",
-    });
-  }
+  // (live_entry notify is sent AFTER SL placement so it can confirm protection)
 
   // SL placement (fixed % from entry).
   const slPct = Number(sym.sl_pct ?? 1.5) / 100;
@@ -383,6 +373,26 @@ export async function executeEntry(
       });
       trail.add("auto_close_failed", "fail", (closeErr as Error).message);
     }
+  }
+
+  // Confirmed entry notification — now that SL is on the venue.
+  if (mode === "live" || mode === "testnet") {
+    notify({
+      severity: mode === "live" ? "warning" : "info",
+      category: "live_entry",
+      execution_mode: mode, symbol: signal.symbol, side,
+      leverage: Number(breakdown.effectiveLeverage),
+      qty: fill.filledQty,
+      entry_price: fillPrice,
+      exposure: fill.filledQty * fillPrice,
+      reason: signal.entry_reason ?? signal.strategy_code ?? "entry",
+      sl_price: slPrice,
+      sl_pct: Number(sym.sl_pct ?? 1.5),
+      tsl_enabled: !!sym.tsl_enabled,
+      tsl_activation_pct: sym.tsl_enabled ? Number(sym.tsl_activation_profit_pct ?? 1.0) : null,
+      tsl_callback_pct: sym.tsl_enabled ? Number(sym.tsl_callback_pct ?? 0.5) : null,
+      confirmed_by_venue: true,
+    });
   }
 
   return {
@@ -525,16 +535,32 @@ export async function executeExit(
   });
 
   if (mode === "live" || mode === "testnet") {
-    const reason = mapping?.exitReason ?? signal.exit_reason ?? purpose;
+    const rawReason = mapping?.exitReason ?? signal.exit_reason ?? purpose;
     let category: "tp_hit" | "sl_hit" | "live_exit" = "live_exit";
-    if (purpose === "tp1" || purpose === "tp2_rest" || reason === "tp1" || reason === "tp2_rest") category = "tp_hit";
-    else if (reason === "sl_failsafe" || reason === "sl") category = "sl_hit";
+    let reasonLabel = String(rawReason);
+    if (purpose === "tp1" || rawReason === "tp1") { category = "tp_hit"; reasonLabel = "TP1 hit"; }
+    else if (purpose === "tp2_rest" || rawReason === "tp2_rest") { category = "tp_hit"; reasonLabel = "TP2 (rest) hit"; }
+    else if (rawReason === "sl_failsafe" || rawReason === "sl") { category = "sl_hit"; reasonLabel = "SL hit"; }
+    else if (rawReason === "manual") { reasonLabel = "Manual exit"; }
+
+    const entry = posRow.entry_price != null ? Number(posRow.entry_price) : null;
+    const notional = entry != null ? entry * fill.filledQty : null;
+    const pnlPct = notional && notional > 0 ? (pnl / notional) * 100 : null;
+    const openedAt = posRow.opened_at ? new Date(posRow.opened_at).getTime() : null;
+    const holdSec = openedAt ? (Date.now() - openedAt) / 1000 : null;
+
     notify({
       severity: category === "sl_hit" ? "warning" : "info",
       category,
       execution_mode: mode, symbol: signal.symbol, side,
-      qty: fill.filledQty, price: fillPrice, pnl,
-      reason: String(reason),
+      qty: fill.filledQty,
+      entry_price: entry,
+      exit_price: fillPrice,
+      pnl,
+      pnl_pct: pnlPct,
+      hold_seconds: holdSec,
+      leverage: posRow.leverage != null ? Number(posRow.leverage) : null,
+      reason: reasonLabel,
     });
   }
 

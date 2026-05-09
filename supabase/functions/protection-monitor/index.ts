@@ -27,6 +27,8 @@ interface PositionRow {
   tsl_active: boolean; tsl_activated_at: string | null;
   tsl_high_water_price: number | null; tsl_trigger_price: number | null;
   protection_state: string;
+  opened_at: string | null;
+  leverage: number | null;
 }
 
 function linkId(p: string) { return `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`; }
@@ -85,6 +87,31 @@ async function closeAtMarket(
     protection_state: "closed", last_seen_price: fillPrice,
   }).eq("id", pos.id);
   await logEvent(sb, pos.id, `${reason}_triggered`, { fill_price: fillPrice });
+
+  // Telegram exit mini-report (live/testnet only).
+  if (pos.execution_mode !== "paper") {
+    const qty = Number(pos.qty_open ?? 0);
+    const entry = pos.entry_price != null ? Number(pos.entry_price) : null;
+    const dir = pos.side === "long" ? 1 : -1;
+    const pnl = entry != null ? (fillPrice - entry) * qty * dir : 0;
+    const notional = entry != null ? entry * qty : null;
+    const pnlPct = notional && notional > 0 ? (pnl / notional) * 100 : null;
+    const openedAt = pos.opened_at ? new Date(pos.opened_at).getTime() : null;
+    const holdSec = openedAt ? (Date.now() - openedAt) / 1000 : null;
+    const category: "sl_hit" | "live_exit" = reason === "sl" ? "sl_hit" : "live_exit";
+    const reasonLabel = reason === "sl" ? "SL hit (protection-monitor)"
+      : reason === "tsl" ? "TSL hit"
+      : `Protection exit: ${reason}`;
+    notify({
+      severity: category === "sl_hit" ? "warning" : "info",
+      category,
+      execution_mode: pos.execution_mode, symbol: pos.symbol, side: pos.side,
+      qty, entry_price: entry, exit_price: fillPrice,
+      pnl, pnl_pct: pnlPct, hold_seconds: holdSec,
+      leverage: pos.leverage != null ? Number(pos.leverage) : null,
+      reason: reasonLabel,
+    });
+  }
 }
 
 async function processPosition(sb: SupabaseClient, pos: PositionRow): Promise<string> {
@@ -176,7 +203,7 @@ Deno.serve(async (req) => {
 
   const { data: positions, error } = await sb.from("positions").select(
     "id,symbol,side,execution_mode,qty_open,entry_price,sl_price,tsl_active," +
-    "tsl_activated_at,tsl_high_water_price,tsl_trigger_price,protection_state",
+    "tsl_activated_at,tsl_high_water_price,tsl_trigger_price,protection_state,opened_at,leverage",
   ).is("closed_at", null);
   if (error) {
     return new Response(JSON.stringify({ ok: false, error: error.message }),
