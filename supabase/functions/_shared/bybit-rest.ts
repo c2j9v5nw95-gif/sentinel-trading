@@ -48,6 +48,30 @@ export class BybitError extends Error {
   }
 }
 
+export interface BybitTransportDiagnostics {
+  base_url: string;
+  endpoint: string;
+  http_status: number;
+  content_type?: string;
+  cf_ray?: string;
+  server?: string;
+  request_id?: string;
+  body_snippet?: string;
+}
+
+/**
+ * Transport-level failure (Cloudflare/WAF block, non-JSON body, network).
+ * Distinct from BybitError (which is API-level with a retCode). Never retried.
+ */
+export class BybitTransportError extends Error {
+  constructor(
+    public kind: "forbidden" | "bad_json" | "network",
+    public diagnostics: BybitTransportDiagnostics,
+  ) {
+    super(`bybit_transport_${kind}:${diagnostics.http_status}:${diagnostics.endpoint}`);
+  }
+}
+
 function jitter(ms: number) { return ms + Math.floor(Math.random() * (ms / 2)); }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
