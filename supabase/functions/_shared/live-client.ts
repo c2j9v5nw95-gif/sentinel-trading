@@ -90,14 +90,27 @@ function alternateDiagnosticFreshnessMs(): number {
 }
 
 export class LiveBybitClient extends VenueBybitClient {
-  constructor(sb: SupabaseClient) {
+  constructor(sb: SupabaseClient, opts: { useBridge: boolean }) {
     super(sb, {
       mode: "live",
       baseUrl: liveBaseUrlInfo().url,
       apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
       apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
+      useBridge: opts.useBridge,
     });
   }
+}
+
+/**
+ * Resolves the operator's bridge-mode preference for live execution.
+ * Returns true when bridge is BOTH allowed by app_settings AND configured.
+ * Defaults to true when the column is unset (matches the historic behavior).
+ */
+export async function resolveUseExecutionBridge(sb: SupabaseClient): Promise<boolean> {
+  const { data } = await sb.from("app_settings")
+    .select("use_execution_bridge").maybeSingle();
+  const allowed = (data as any)?.use_execution_bridge !== false;
+  return allowed && bridgeConfigured();
 }
 
 /**

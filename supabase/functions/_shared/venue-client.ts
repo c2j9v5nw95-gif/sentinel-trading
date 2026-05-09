@@ -29,12 +29,26 @@ export class VenueBybitClient implements BybitClient {
 
   constructor(
     private sb: SupabaseClient,
-    opts: { mode: Extract<ExecutionMode, "testnet" | "live">; baseUrl: string; apiKey: string; apiSecret: string },
+    opts: {
+      mode: Extract<ExecutionMode, "testnet" | "live">;
+      baseUrl: string;
+      apiKey: string;
+      apiSecret: string;
+      /**
+       * Operator override for live mode. When `false`, force the direct path
+       * even if the bridge is configured. When `undefined`, default to using
+       * the bridge whenever it is configured (live only).
+       */
+      useBridge?: boolean;
+    },
   ) {
     this.mode = opts.mode;
     // Bridge is only used for live mode. Testnet keeps direct path so we can
-    // continue to compare/diff request shapes during the cutover.
-    this.viaBridge = opts.mode === "live" && bridgeConfigured();
+    // continue to compare/diff request shapes during the cutover. The
+    // operator-controlled `useBridge` flag (mirrors app_settings.use_execution_bridge)
+    // acts as a kill-switch — when explicitly false we fall back to direct.
+    const bridgeAllowed = opts.useBridge !== false;
+    this.viaBridge = opts.mode === "live" && bridgeAllowed && bridgeConfigured();
 
     if (this.viaBridge) {
       this.rest = new BridgeBybitRest({

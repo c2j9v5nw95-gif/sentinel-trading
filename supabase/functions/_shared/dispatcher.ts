@@ -20,7 +20,7 @@ import { evaluateRisk, recordDecision } from "./risk-engine.ts";
 import { resolveStrategyCode, isExit, isEntry, type SignalAction } from "./strategy-map.ts";
 import { Trail, flushTrail } from "./trail.ts";
 import { resolveExecutionMode } from "./execution-mode.ts";
-import { LIVE_GATE_WORKER_VERSION, liveExecutionGate } from "./live-client.ts";
+import { LIVE_GATE_WORKER_VERSION, liveExecutionGate, resolveUseExecutionBridge } from "./live-client.ts";
 import { withSymbolLock } from "./locks.ts";
 import { executeEntry, executeExit } from "./executor.ts";
 import { BybitTransportError } from "./bybit-rest.ts";
@@ -241,6 +241,14 @@ export async function dispatchSignal(
       liveGatePassed = true;
     }
 
+    // Resolve operator-controlled bridge mode for live execution. Cheap (one
+    // row from app_settings); only consulted in live mode.
+    let useBridge: boolean | undefined;
+    if (resolved.mode === "live") {
+      useBridge = await resolveUseExecutionBridge(sb);
+      trail.add("live_bridge_mode_resolved", "info", useBridge ? "bridge" : "direct");
+    }
+
     trail.add("accepted", "info");
 
     const lockKind = exitMode ? "exit" : "entry";
@@ -248,8 +256,8 @@ export async function dispatchSignal(
       { signalId: signal.id, allowPreempt: exitMode },
       async () => {
         return exitMode
-          ? await executeExit(sb, signal, resolved.mode, trail, { liveGatePassed })
-          : await executeEntry(sb, signal, resolved.mode, trail, { liveGatePassed });
+          ? await executeExit(sb, signal, resolved.mode, trail, { liveGatePassed, useBridge })
+          : await executeEntry(sb, signal, resolved.mode, trail, { liveGatePassed, useBridge });
       });
 
     if (!locked.ok && locked.reason === "symbol_busy") {
