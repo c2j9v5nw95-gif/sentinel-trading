@@ -38,12 +38,17 @@ function credsFor(mode: Mode) {
       apiKey: Deno.env.get("BYBIT_TESTNET_API_KEY") ?? "",
       apiSecret: Deno.env.get("BYBIT_TESTNET_API_SECRET") ?? "",
       baseUrl: "https://api-testnet.bybit.com",
+      is_alternate: false,
+      base_source: "default" as const,
     };
   }
+  const info = liveBaseUrlInfo();
   return {
     apiKey: Deno.env.get("BYBIT_LIVE_API_KEY") ?? "",
     apiSecret: Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "",
-    baseUrl: liveBaseUrl(),
+    baseUrl: info.url,
+    is_alternate: info.is_alternate,
+    base_source: info.source,
   };
 }
 
