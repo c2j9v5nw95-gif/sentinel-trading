@@ -17,7 +17,8 @@
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { BybitRest, BybitError, BybitTransportError } from "../_shared/bybit-rest.ts";
+import { BybitRest, BybitError, BybitTransportError, type BybitTrace } from "../_shared/bybit-rest.ts";
+import { buildPositionListRequest, buildOrderCreateRequest } from "../_shared/bybit-requests.ts";
 import { liveBaseUrlInfo, DEFAULT_LIVE_BASE } from "../_shared/live-client.ts";
 import { notify } from "../_shared/telegram.ts";
 
@@ -158,9 +159,29 @@ Deno.serve(async (req) => {
     checks.live_gate = { ok: true, detail: { note: "read-only checks allowed regardless of live_enabled" } };
   }
 
+  // Capture per-endpoint trace summaries (response headers + sign fingerprints)
+  // so the panel can diff a passing diagnostic against a failing executor call.
+  const traceByEndpoint: Record<string, Partial<BybitTrace>> = {};
   const rest = new BybitRest({
     apiKey: creds.apiKey, apiSecret: creds.apiSecret, baseUrl: creds.baseUrl,
     recvWindowMs: 5000, label: `diag-${mode}`,
+    traceWriter: (t) => {
+      // Last attempt wins per endpoint+query_string combo.
+      const key = `${t.method} ${t.endpoint}${t.query_string ? "?" + t.query_string : ""}`;
+      traceByEndpoint[key] = {
+        label: t.label, base_url: t.base_url, endpoint: t.endpoint, method: t.method,
+        query: t.query, query_string: t.query_string,
+        body_keys: t.body_keys, body_size: t.body_size, body_sha256_prefix: t.body_sha256_prefix,
+        sign_payload_prefix: t.sign_payload_prefix, sign_len: t.sign_len,
+        timestamp_ms: t.timestamp_ms, recv_window_ms: t.recv_window_ms,
+        http_status: t.http_status, content_type: t.content_type,
+        cf_ray: t.cf_ray, server: t.server, bapi_request_id: t.bapi_request_id,
+        amz_cf_id: t.amz_cf_id, amz_cf_pop: t.amz_cf_pop, via: t.via,
+        ret_code: t.ret_code, ret_msg: t.ret_msg,
+        body_snippet: t.body_snippet, duration_ms: t.duration_ms,
+        ok: t.ok, error_kind: t.error_kind,
+      };
+    },
   });
 
   // 1) API auth + 2) account info  (signed call: /v5/account/info)
@@ -206,12 +227,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 4) open positions — /v5/position/list
+  // 4) open positions — /v5/position/list (settleCoin sweep)
   if (checks.api_auth.ok) {
-    const t = await timed(() => rest.request({
-      endpoint: "/v5/position/list", method: "GET",
-      query: { category: "linear", settleCoin: "USDT" },
-    }));
+    const t = await timed(() => rest.request(
+      buildPositionListRequest({ category: "linear", settleCoin: "USDT" }),
+    ));
     if (t.err) {
       const err = explainBybitError(t.err);
       checks.read_positions = { ok: false, error: err, ms: t.ms };
@@ -223,15 +243,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 4b) MIRROR-OF-EXECUTOR: /v5/position/list?category=linear&symbol=<symbol>
-  // The executor reads positions per-symbol (not per settleCoin). If WAF/edge
-  // blocks the per-symbol query but allows the settleCoin query, ONLY this
-  // check will fail — that diff pinpoints the executor 403.
+  // 4b) MIRROR-OF-EXECUTOR — uses the SAME builder the executor uses.
   if (checks.api_auth.ok) {
-    const t = await timed(() => rest.request({
-      endpoint: "/v5/position/list", method: "GET",
-      query: { category: "linear", symbol },
-    }));
+    const t = await timed(() => rest.request(
+      buildPositionListRequest({ category: "linear", symbol }),
+    ));
     if (t.err) {
       const err = explainBybitError(t.err);
       checks.read_positions_by_symbol = { ok: false, error: err, ms: t.ms };
@@ -334,15 +350,14 @@ Deno.serve(async (req) => {
   // path the executor uses with deliberately-invalid qty=0. Lets us prove
   // whether Cloudflare/WAF lets us through, separately from API logic.
   if (checks.api_auth.ok) {
-    const t = await timed(() => rest.request({
-      endpoint: "/v5/order/create", method: "POST",
-      body: {
+    const t = await timed(() => rest.request(
+      buildOrderCreateRequest({
         category: "linear", symbol, side: "Buy", orderType: "Market",
         qty: "0", reduceOnly: false,
         orderLinkId: `REACH-${Date.now().toString(36)}`,
         timeInForce: "IOC",
-      },
-    }));
+      }),
+    ));
     if (t.err) {
       const err = explainBybitError(t.err);
       // A bybit_<retCode> response (any retCode) means we REACHED the endpoint
@@ -448,6 +463,8 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Stash per-endpoint trace summaries so the UI can diff against executor traces.
+  (checks._meta!.detail as Record<string, unknown>).traces = traceByEndpoint;
   const persisted = await persist(sb, u.user.id, mode, ok, checks, permissions, accountType, lastResponse, topError);
 
   return json({

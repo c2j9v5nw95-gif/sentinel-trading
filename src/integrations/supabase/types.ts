@@ -212,6 +212,117 @@ export type Database = {
         }
         Relationships: []
       }
+      bybit_request_traces: {
+        Row: {
+          amz_cf_id: string | null
+          amz_cf_pop: string | null
+          api_key_prefix: string | null
+          attempt: number | null
+          bapi_request_id: string | null
+          base_url: string
+          body_keys: Json | null
+          body_sha256_prefix: string | null
+          body_size: number | null
+          body_snippet: string | null
+          cf_ray: string | null
+          content_type: string | null
+          created_at: string
+          duration_ms: number | null
+          endpoint: string
+          error_kind: string | null
+          http_status: number | null
+          id: string
+          idempotency_key: string | null
+          label: string
+          method: string
+          mode: string | null
+          ok: boolean
+          query: Json | null
+          query_string: string | null
+          recv_window_ms: number | null
+          ret_code: number | null
+          ret_msg: string | null
+          server: string | null
+          sign_len: number | null
+          sign_payload_prefix: string | null
+          signal_id: string | null
+          timestamp_ms: number | null
+          via: string | null
+        }
+        Insert: {
+          amz_cf_id?: string | null
+          amz_cf_pop?: string | null
+          api_key_prefix?: string | null
+          attempt?: number | null
+          bapi_request_id?: string | null
+          base_url: string
+          body_keys?: Json | null
+          body_sha256_prefix?: string | null
+          body_size?: number | null
+          body_snippet?: string | null
+          cf_ray?: string | null
+          content_type?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          endpoint: string
+          error_kind?: string | null
+          http_status?: number | null
+          id?: string
+          idempotency_key?: string | null
+          label: string
+          method: string
+          mode?: string | null
+          ok?: boolean
+          query?: Json | null
+          query_string?: string | null
+          recv_window_ms?: number | null
+          ret_code?: number | null
+          ret_msg?: string | null
+          server?: string | null
+          sign_len?: number | null
+          sign_payload_prefix?: string | null
+          signal_id?: string | null
+          timestamp_ms?: number | null
+          via?: string | null
+        }
+        Update: {
+          amz_cf_id?: string | null
+          amz_cf_pop?: string | null
+          api_key_prefix?: string | null
+          attempt?: number | null
+          bapi_request_id?: string | null
+          base_url?: string
+          body_keys?: Json | null
+          body_sha256_prefix?: string | null
+          body_size?: number | null
+          body_snippet?: string | null
+          cf_ray?: string | null
+          content_type?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          endpoint?: string
+          error_kind?: string | null
+          http_status?: number | null
+          id?: string
+          idempotency_key?: string | null
+          label?: string
+          method?: string
+          mode?: string | null
+          ok?: boolean
+          query?: Json | null
+          query_string?: string | null
+          recv_window_ms?: number | null
+          ret_code?: number | null
+          ret_msg?: string | null
+          server?: string | null
+          sign_len?: number | null
+          sign_payload_prefix?: string | null
+          signal_id?: string | null
+          timestamp_ms?: number | null
+          via?: string | null
+        }
+        Relationships: []
+      }
       error_log: {
         Row: {
           context: Json | null
