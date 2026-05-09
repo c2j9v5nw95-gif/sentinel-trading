@@ -67,19 +67,35 @@ export interface BybitClient {
 // LiveBybitClient lives in live-client.ts and is gated by liveExecutionGate.
 // It is intentionally independent from TestnetBybitClient initialization, so
 // live execution never requires BYBIT_TESTNET_* credentials.
-import { LiveBybitClient, liveExecutionGate } from "./live-client.ts";
+import { LiveBybitClient, liveExecutionGate, resolveUseExecutionBridge } from "./live-client.ts";
 
 export function getClient(
   mode: ExecutionMode,
   sb: SupabaseClient,
-  opts?: { liveGatePassed?: boolean },
+  opts?: { liveGatePassed?: boolean; useBridge?: boolean },
 ): BybitClient {
   if (mode === "paper")   return new PaperBybitClient(sb);
   if (mode === "testnet") return new TestnetBybitClient(sb);
-  if (mode === "live" && opts?.liveGatePassed) return new LiveBybitClient(sb);
+  if (mode === "live" && opts?.liveGatePassed) {
+    if (typeof opts.useBridge !== "boolean") {
+      throw new Error("live_execution_requires_resolved_bridge_flag: pass useBridge from resolveUseExecutionBridge(sb)");
+    }
+    return new LiveBybitClient(sb, { useBridge: opts.useBridge });
+  }
   // mode === "live" without a passed gate. Callers must pre-check via
-  // liveExecutionGate() and forward { liveGatePassed: true } to opt in.
+  // liveExecutionGate() and forward { liveGatePassed: true, useBridge } to opt in.
   throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
 }
 
-export { liveExecutionGate, LiveBybitClient };
+/** Async helper for callers that don't have a pre-resolved useBridge flag. */
+export async function getClientAsync(
+  mode: ExecutionMode,
+  sb: SupabaseClient,
+  opts?: { liveGatePassed?: boolean },
+): Promise<BybitClient> {
+  if (mode !== "live") return getClient(mode, sb, opts);
+  const useBridge = await resolveUseExecutionBridge(sb);
+  return getClient(mode, sb, { ...opts, useBridge });
+}
+
+export { liveExecutionGate, LiveBybitClient, resolveUseExecutionBridge };
