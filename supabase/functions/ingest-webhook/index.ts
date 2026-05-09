@@ -25,17 +25,34 @@ Deno.serve(async (req) => {
   const bodyText = await req.text();
 
   const expected = Deno.env.get("TRADINGVIEW_WEBHOOK_SECRET");
+  let urlToken: string | undefined;
+  try { urlToken = new URL(req.url).searchParams.get("token") ?? undefined; } catch { /* ignore */ }
   const providedSecret = extractSecret(bodyText);
-  const authOk = !!expected && providedSecret === expected;
+
+  // Constant-time compare
+  const eq = (a: string, b: string): boolean => {
+    if (a.length !== b.length) return false;
+    let r = 0;
+    for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return r === 0;
+  };
+
+  let authMethod: "url_token" | "payload_secret" | "none" = "none";
+  if (expected) {
+    if (urlToken && eq(urlToken, expected)) authMethod = "url_token";
+    else if (providedSecret && eq(providedSecret, expected)) authMethod = "payload_secret";
+  }
+  const authOk = authMethod !== "none";
 
   if (!authOk) {
-    const status = providedSecret ? "bad_secret" : "malformed";
+    const status = (urlToken || providedSecret) ? "bad_secret" : "malformed";
     await sb.from("raw_alerts").insert({
       transport: "webhook",
       remote_ip: ip,
       headers,
       body_text: bodyText,
       auth_status: status,
+      auth_method: urlToken ? "url_token" : (providedSecret ? "payload_secret" : "none"),
     });
     await sb.from("system_alerts").insert({
       severity: "warning",
@@ -71,6 +88,7 @@ Deno.serve(async (req) => {
       headers,
       body_text: bodyText,
       auth_status: "malformed",
+      auth_method: authMethod,
     });
     return new Response("Bad payload", { status: 400 });
   }
@@ -159,6 +177,7 @@ Deno.serve(async (req) => {
     headers,
     body_text: bodyText,
     auth_status: "ok",
+    auth_method: authMethod,
     signal_id: signal?.id ?? null,
   });
 

@@ -6,30 +6,34 @@ import { Card } from "@/components/PageHeader";
 const PROJECT_REF = "djqhpgbsgelzhrfyxfhl";
 const WEBHOOK_URL = `https://${PROJECT_REF}.supabase.co/functions/v1/ingest-webhook`;
 
-const EXAMPLE_ALERTS: { label: string; body: string }[] = [
+const TOKEN_ALERTS: { label: string; body: string }[] = [
   { label: "Long entry (EL1)",
-    body: "secret=YOUR_SECRET;type=trade;action=ENTER-LONG;ticker={{ticker}};strategy=EL1;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=ENTER-LONG;ticker={{ticker}};strategy=EL1;tag=STRAT2;barTime={{barTime}}" },
   { label: "Short entry (ES1)",
-    body: "secret=YOUR_SECRET;type=trade;action=ENTER-SHORT;ticker={{ticker}};strategy=ES1;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=ENTER-SHORT;ticker={{ticker}};strategy=ES1;tag=STRAT2;barTime={{barTime}}" },
   { label: "Long TP1 (XL1)",
-    body: "secret=YOUR_SECRET;type=trade;action=EXIT-LONG;ticker={{ticker}};strategy=XL1;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=EXIT-LONG;ticker={{ticker}};strategy=XL1;tag=STRAT2;barTime={{barTime}}" },
   { label: "Long TP2 / REST (XL4)",
-    body: "secret=YOUR_SECRET;type=trade;action=EXIT-LONG;ticker={{ticker}};strategy=XL4;portion=REST;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=EXIT-LONG;ticker={{ticker}};strategy=XL4;portion=REST;tag=STRAT2;barTime={{barTime}}" },
   { label: "Long SL/failsafe (XL2)",
-    body: "secret=YOUR_SECRET;type=trade;action=EXIT-LONG;ticker={{ticker}};strategy=XL2;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=EXIT-LONG;ticker={{ticker}};strategy=XL2;tag=STRAT2;barTime={{barTime}}" },
   { label: "Short TP1 (XS1)",
-    body: "secret=YOUR_SECRET;type=trade;action=EXIT-SHORT;ticker={{ticker}};strategy=XS1;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=EXIT-SHORT;ticker={{ticker}};strategy=XS1;tag=STRAT2;barTime={{barTime}}" },
   { label: "Short TP2 / REST (XS4)",
-    body: "secret=YOUR_SECRET;type=trade;action=EXIT-SHORT;ticker={{ticker}};strategy=XS4;portion=REST;tag=STRAT2;barTime={{barTime}}" },
+    body: "type=trade;action=EXIT-SHORT;ticker={{ticker}};strategy=XS4;portion=REST;tag=STRAT2;barTime={{barTime}}" },
   { label: "Health heartbeat",
-    body: "secret=YOUR_SECRET;type=stats;action=HEALTH;ticker={{ticker}};strategy=HEALTH_ALL;trigger=HEARTBEAT;netProfit={{strategy.netprofit}};equity={{strategy.equity}};profitFactor={{strategy.profitfactor}};winrate={{strategy.winrate}};closedTrades={{strategy.closedtrades}};openTrades={{strategy.opentrades}};maxDD={{strategy.max_drawdown}};maxDDpct={{strategy.max_drawdown_percent}};positionSize={{strategy.position_size}};barTime={{barTime}}" },
+    body: "type=stats;action=HEALTH;ticker={{ticker}};strategy=HEALTH_ALL;trigger=HEARTBEAT;netProfit={{strategy.netprofit}};equity={{strategy.equity}};profitFactor={{strategy.profitfactor}};winrate={{strategy.winrate}};closedTrades={{strategy.closedtrades}};openTrades={{strategy.opentrades}};maxDD={{strategy.max_drawdown}};maxDDpct={{strategy.max_drawdown_percent}};positionSize={{strategy.position_size}};barTime={{barTime}}" },
 ];
+
+const LEGACY_PAYLOAD_EXAMPLE =
+  "secret=YOUR_SECRET;type=trade;action=ENTER-LONG;ticker={{ticker}};strategy=EL1;tag=STRAT2;barTime={{barTime}}";
 
 interface RawAlert {
   id: string;
   created_at: string;
   remote_ip: string | null;
   auth_status: string;
+  auth_method: string | null;
   body_text: string | null;
   signal_id: string | null;
 }
@@ -69,7 +73,7 @@ export function WebhookSettingsCard() {
     queryFn: async () => {
       const { data } = await supabase
         .from("raw_alerts")
-        .select("id, created_at, remote_ip, auth_status, body_text, signal_id")
+        .select("id, created_at, remote_ip, auth_status, auth_method, body_text, signal_id")
         .eq("transport", "webhook")
         .order("created_at", { ascending: false })
         .limit(10);
@@ -119,21 +123,51 @@ export function WebhookSettingsCard() {
     } catch { /* ignore */ }
   };
 
+  const tokenForUrl = newSecret ?? `••••${settings?.webhook_secret_hint ?? "????"}`;
+  const recommendedUrl = `${WEBHOOK_URL}?token=${tokenForUrl}`;
+  const tokenIsReal = !!newSecret;
+
   return (
     <Card title="TradingView webhook">
       <div className="space-y-4 text-sm">
-        <div>
-          <div className="text-xs text-muted-foreground mb-1">Webhook URL (set in TradingView alert)</div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded border border-border bg-muted px-2 py-1 text-xs">
-              {WEBHOOK_URL}
-            </code>
-            <button
-              onClick={() => copy(WEBHOOK_URL, "url")}
-              className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-accent"
-            >
-              {copied === "url" ? "Copied" : "Copy"}
-            </button>
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">
+              Recommended TradingView URL (URL-token auth — no <code>secret=</code> in alert body)
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 break-all rounded border border-border bg-muted px-2 py-1 text-xs">
+                {recommendedUrl}
+              </code>
+              <button
+                onClick={() => copy(recommendedUrl, "rec")}
+                disabled={!tokenIsReal}
+                title={tokenIsReal ? "" : "Rotate secret to reveal a copyable URL"}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+              >
+                {copied === "rec" ? "Copied" : "Copy"}
+              </button>
+            </div>
+            {!tokenIsReal && (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Token is masked — secrets are never stored as plaintext. Click <b>Rotate secret</b> below to generate and reveal a new token once.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">Webhook URL (no token — for payload-secret mode or manual testing)</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 break-all rounded border border-border bg-muted px-2 py-1 text-xs">
+                {WEBHOOK_URL}
+              </code>
+              <button
+                onClick={() => copy(WEBHOOK_URL, "url")}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-accent"
+              >
+                {copied === "url" ? "Copied" : "Copy"}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -170,23 +204,23 @@ export function WebhookSettingsCard() {
                 </button>
               </div>
               <p className="mt-2 text-muted-foreground">
-                Paste this into the <code>TRADINGVIEW_WEBHOOK_SECRET</code> backend secret AND
-                into every TradingView alert message body. The old secret stops working as soon
-                as you update the backend secret.
+                Paste this into the <code>TRADINGVIEW_WEBHOOK_SECRET</code> backend secret. Then
+                use the recommended URL above (with <code>?token=…</code>) in TradingView — your
+                Pine Script alert messages do not need to contain <code>secret=</code>.
               </p>
             </div>
           )}
         </div>
 
         <div>
-          <div className="font-medium mb-2">Pine Script alert templates</div>
+          <div className="font-medium mb-2">Pine Script alert templates (URL-token mode)</div>
           <p className="text-xs text-muted-foreground mb-2">
-            Copy any of these into the TradingView alert "Message" field (replace
-            <code className="mx-1">YOUR_SECRET</code> with the active secret).
+            Use these as-is in TradingView's alert "Message" field. Authentication happens via the
+            <code className="mx-1">?token=…</code> in the webhook URL — no <code>secret=</code> needed in the body.
             Format is semicolon-separated <code>key=value</code> — do NOT use JSON.
           </p>
           <div className="space-y-2">
-            {EXAMPLE_ALERTS.map((ex) => (
+            {TOKEN_ALERTS.map((ex) => (
               <div key={ex.label} className="rounded border border-border bg-muted/40 p-2">
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-xs font-medium">{ex.label}</span>
@@ -201,6 +235,18 @@ export function WebhookSettingsCard() {
               </div>
             ))}
           </div>
+
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+              Payload-secret mode (legacy — use only if you cannot set the URL)
+            </summary>
+            <div className="mt-2 rounded border border-border bg-muted/40 p-2">
+              <p className="text-[11px] text-muted-foreground mb-1">
+                Use the no-token URL above and prepend <code>secret=YOUR_SECRET;</code> to every alert body.
+              </p>
+              <code className="block break-all text-xs leading-snug">{LEGACY_PAYLOAD_EXAMPLE}</code>
+            </div>
+          </details>
         </div>
 
         <div>
@@ -217,6 +263,10 @@ export function WebhookSettingsCard() {
                   r.auth_status === "ok" ? "border-success/40 bg-success/10 text-success"
                   : r.auth_status === "bad_secret" ? "border-danger/40 bg-danger/10 text-danger"
                   : "border-warning/40 bg-warning/10 text-warning";
+                const methodBadge =
+                  r.auth_method === "url_token" ? "border-primary/40 bg-primary/10 text-primary"
+                  : r.auth_method === "payload_secret" ? "border-border bg-muted text-muted-foreground"
+                  : "border-border bg-muted text-muted-foreground";
                 return (
                   <div key={r.id} className="rounded border border-border bg-card p-2 text-xs tabular">
                     <div className="flex flex-wrap items-center gap-2">
@@ -226,6 +276,11 @@ export function WebhookSettingsCard() {
                       <span className={`rounded border px-1.5 py-0.5 ${authBadge}`}>
                         {r.auth_status}
                       </span>
+                      {r.auth_method && r.auth_method !== "none" && (
+                        <span className={`rounded border px-1.5 py-0.5 ${methodBadge}`}>
+                          {r.auth_method}
+                        </span>
+                      )}
                       {sig && (
                         <>
                           <span className="rounded border border-border bg-muted px-1.5 py-0.5">

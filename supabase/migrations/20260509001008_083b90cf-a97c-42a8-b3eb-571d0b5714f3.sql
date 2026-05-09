@@ -1,0 +1,1 @@
+ALTER TABLE public.raw_alerts ADD COLUMN IF NOT EXISTS auth_method text;
