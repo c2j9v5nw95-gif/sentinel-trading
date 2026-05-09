@@ -18,6 +18,7 @@ import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
 import { Route as AppSignalsRouteImport } from './routes/_app.signals'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppPositionsRouteImport } from './routes/_app.positions'
+import { Route as AppPerformanceRouteImport } from './routes/_app.performance'
 import { Route as AppOverviewRouteImport } from './routes/_app.overview'
 import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
@@ -67,6 +68,11 @@ const AppPositionsRoute = AppPositionsRouteImport.update({
   path: '/positions',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPerformanceRoute = AppPerformanceRouteImport.update({
+  id: '/performance',
+  path: '/performance',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppOverviewRoute = AppOverviewRouteImport.update({
   id: '/overview',
   path: '/overview',
@@ -95,6 +101,7 @@ export interface FileRoutesByFullPath {
   '/audit': typeof AppAuditRoute
   '/invariants': typeof AppInvariantsRoute
   '/overview': typeof AppOverviewRoute
+  '/performance': typeof AppPerformanceRoute
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/audit': typeof AppAuditRoute
   '/invariants': typeof AppInvariantsRoute
   '/overview': typeof AppOverviewRoute
+  '/performance': typeof AppPerformanceRoute
   '/positions': typeof AppPositionsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/_app/audit': typeof AppAuditRoute
   '/_app/invariants': typeof AppInvariantsRoute
   '/_app/overview': typeof AppOverviewRoute
+  '/_app/performance': typeof AppPerformanceRoute
   '/_app/positions': typeof AppPositionsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/signals': typeof AppSignalsRoute
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/invariants'
     | '/overview'
+    | '/performance'
     | '/positions'
     | '/settings'
     | '/signals'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/invariants'
     | '/overview'
+    | '/performance'
     | '/positions'
     | '/settings'
     | '/signals'
@@ -170,6 +181,7 @@ export interface FileRouteTypes {
     | '/_app/audit'
     | '/_app/invariants'
     | '/_app/overview'
+    | '/_app/performance'
     | '/_app/positions'
     | '/_app/settings'
     | '/_app/signals'
@@ -249,6 +261,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPositionsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/performance': {
+      id: '/_app/performance'
+      path: '/performance'
+      fullPath: '/performance'
+      preLoaderRoute: typeof AppPerformanceRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/overview': {
       id: '/_app/overview'
       path: '/overview'
@@ -285,6 +304,7 @@ interface AppRouteChildren {
   AppAuditRoute: typeof AppAuditRoute
   AppInvariantsRoute: typeof AppInvariantsRoute
   AppOverviewRoute: typeof AppOverviewRoute
+  AppPerformanceRoute: typeof AppPerformanceRoute
   AppPositionsRoute: typeof AppPositionsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSignalsRoute: typeof AppSignalsRoute
@@ -298,6 +318,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAuditRoute: AppAuditRoute,
   AppInvariantsRoute: AppInvariantsRoute,
   AppOverviewRoute: AppOverviewRoute,
+  AppPerformanceRoute: AppPerformanceRoute,
   AppPositionsRoute: AppPositionsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSignalsRoute: AppSignalsRoute,

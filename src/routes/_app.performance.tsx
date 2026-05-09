@@ -316,11 +316,11 @@ function OverrideDrawer({ snap, symbol, override, onClose }: any) {
         </div>
 
         <div className="space-y-3 text-sm">
-          <Field label="Account balance %" value={form.account_balance_percent} onChange={(v) => setForm({ ...form, account_balance_percent: v })} placeholder="(bruk regel/default)" />
-          <Field label="Leverage" value={form.leverage} onChange={(v) => setForm({ ...form, leverage: v })} placeholder="(bruk regel/default)" />
-          <Field label="Position size multiplier" value={form.position_size_multiplier} onChange={(v) => setForm({ ...form, position_size_multiplier: v })} placeholder="(bruk regel/default)" />
-          <Field label="Max notional USDT" value={form.max_position_notional_usdt} onChange={(v) => setForm({ ...form, max_position_notional_usdt: v })} placeholder="(symbol cap)" />
-          <Field label="Max margin USDT" value={form.max_margin_usage_usdt} onChange={(v) => setForm({ ...form, max_margin_usage_usdt: v })} placeholder="(symbol cap)" />
+          <Field label="Account balance %" value={form.account_balance_percent} onChange={(v: string) => setForm({ ...form, account_balance_percent: v })} placeholder="(bruk regel/default)" />
+          <Field label="Leverage" value={form.leverage} onChange={(v: string) => setForm({ ...form, leverage: v })} placeholder="(bruk regel/default)" />
+          <Field label="Position size multiplier" value={form.position_size_multiplier} onChange={(v: string) => setForm({ ...form, position_size_multiplier: v })} placeholder="(bruk regel/default)" />
+          <Field label="Max notional USDT" value={form.max_position_notional_usdt} onChange={(v: string) => setForm({ ...form, max_position_notional_usdt: v })} placeholder="(symbol cap)" />
+          <Field label="Max margin USDT" value={form.max_margin_usage_usdt} onChange={(v: string) => setForm({ ...form, max_margin_usage_usdt: v })} placeholder="(symbol cap)" />
           <div>
             <label className="block text-xs text-muted-foreground">Force state</label>
             <select
