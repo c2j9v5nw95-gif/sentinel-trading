@@ -1,55 +1,64 @@
-# Kontrollsenter: rename + collapse + add-symbol
+## Problem
 
-## Endring 1 — Rename "Performance" → "Kontrollsenter"
+PENGUUSDT ENTER-LONG signaler kommer som `QUEUED`, men feiler i dispatcher med:
 
-- Rute: `/_app/performance` → `/_app/kontrollsenter`
-- Sidemeny-label: "Performance" → "Kontrollsenter"
-- Sidetittel + beskrivelse oppdateres
-- Filnavn: `src/routes/_app.performance.tsx` → `src/routes/_app.kontrollsenter.tsx`
+```
+exec_error: live_execution_disabled: complete liveExecutionGate before requesting mode='live'
+```
 
-(TanStack Router regenererer routeTree automatisk.)
+…og blir requeued helt til de dør. EXIT-LONG blir deretter avvist med `risk:no_open_position` fordi entry aldri ble utført.
 
-## Endring 2 — Én rad per ticker (kollaps)
+### Rotårsak
 
-I dag: én rad per (symbol × strategy × tag) — gir duplikater når H_SHORT/H_LONG kommer i tillegg til HEALTH_ALL.
+`supabase/functions/_shared/bybit-client.ts → getClient()` kaster ALLTID når `mode === 'live'`:
 
-Ny logikk i `SymbolsTab`:
+```ts
+throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
+```
 
-1. Spør `health_snapshots` som før, sortert nyeste først.
-2. **Foretrukket strategi:** velg **siste snapshot der `strategy = 'HEALTH_ALL'`** for hvert symbol.
-3. **Fallback:** hvis et symbol *aldri* har sendt HEALTH_ALL, bruk siste snapshot uansett strategi (så ingenting forsvinner stille).
-4. Vis en liten "via heartbeat" / "via H_SHORT"-tag i strategi-kolonnen så du ser hvor tallene kom fra.
-5. Kolonne "Strategy / tag" omdøpes til "Kilde" i rad-konteksten (heartbeat / annet) — egen "Kilde"-kolonne for sizing-source flyttes til drawer-en (frigjør plass).
+Men ingen i kodebasen kaller faktisk `liveExecutionGate()` før de ber om live-klient. Resultat: live-execution er hardkodet av, selv om:
+- `app_settings.live_enabled = true`
+- `symbols.execution_mode_override = 'live'` for PENGUUSDT
+- `emergency_stop = false`, `live_risk_halted = false`, ingen kritiske invariant-brudd
 
-**Sizing-resolveren rør ikke** — den slår fortsatt opp per (symbol, strategy, tag) når et faktisk handelssignal kommer inn, så per-strategi-data går ikke tapt. Det er bare visningen som forenkles.
+`LiveBybitClient` finnes og er klar, men blir aldri instansiert.
 
-## Endring 3 — "Add symbol"-knapp inline
+## Løsning
 
-På rader hvor `kilde = "no symbol"`:
+Aktivér live-pathen ved å la dispatcher kjøre gaten, og la factory instansiere `LiveBybitClient` når gaten har passert.
 
-- Erstatt "Edit"-knappen med **"+ Add symbol"** (samme plass).
-- Klikk → modal som forhåndsutfyller `symbol` (read-only) og defaults:
-  - `enabled: true`
-  - `account_balance_percent: 5`, `leverage: 10`, `position_size_multiplier: 1.0`
-  - `sl_pct: 1.5`, `tsl_enabled: true`, `tsl_activation_profit_pct: 1.0`, `tsl_callback_pct: 0.5`
-  - `max_position_notional_usdt`, `max_margin_usage_usdt` tom (ingen cap)
-  - `execution_mode_override: null` (arve global)
-- Bruker kan justere før Lagre, eller Lagre rett som er.
-- Etter lagring: rad-en oppdaterer seg automatisk (queryClient invalidate `["symbols-perf"]`), og "Edit"-knappen vises i stedet.
+### 1. `supabase/functions/_shared/bybit-client.ts`
+Legg til en eksplisitt opt-in i factory:
 
-Modal-komponenten gjenbrukes som `<AddSymbolModal>` — enkel form med samme `<Field>`-helper som allerede finnes i fila.
+```ts
+export function getClient(
+  mode: ExecutionMode,
+  sb: SupabaseClient,
+  opts?: { liveGatePassed?: boolean },
+): BybitClient {
+  if (mode === "paper")   return new PaperBybitClient(sb);
+  if (mode === "testnet") return new TestnetBybitClient(sb);
+  if (mode === "live" && opts?.liveGatePassed) return new LiveBybitClient(sb);
+  throw new Error("live_execution_disabled: complete liveExecutionGate before requesting mode='live'");
+}
+```
 
-## Hva endres i kode
+### 2. `supabase/functions/_shared/dispatcher.ts`
+Etter `resolveExecutionMode(...)`, kall `liveExecutionGate(sb)` når `mode === 'live'`:
 
-- **Endret/omdøpt:** `src/routes/_app.performance.tsx` → `src/routes/_app.kontrollsenter.tsx`
-  - Kollaps-logikk i `SymbolsTab`-queryen
-  - Conditional render: "+ Add symbol" på no-symbol rader
-  - Ny `AddSymbolModal`-komponent i samme fil
-  - Header-tekst oppdatert
-- **Endret:** `src/components/AppLayout.tsx`
-  - Nav-entry `to: "/performance"` → `to: "/kontrollsenter"`, label "Kontrollsenter"
-- **Auto:** `src/routeTree.gen.ts` regenereres av router-pluginen
+- Hvis gaten returnerer en reason (f.eks. `live_api_keys_missing`, `emergency_stop_active`): sett signal `status='rejected'`, `decision_reason = 'live_gate:<reason>'`, logg i `risk_decisions` + `audit_log`, ingen retry. Trail-event `live_gate_blocked`.
+- Hvis gaten returnerer `null`: trail `live_gate_passed`, send `liveGatePassed: true` ned til `executeEntry` / `executeExit`.
 
-## Spørsmål før implementering
+### 3. `supabase/functions/_shared/executor.ts`
+- Utvid signaturen til `executeEntry` og `executeExit` med `opts?: { liveGatePassed?: boolean }`.
+- Send `opts` videre til `getClient(mode, sb, opts)` på linje 55 og 290.
 
-Ingen — alle valgene er tatt. Kjører.
+### 4. Verifisering
+- Sjekk at `BYBIT_LIVE_API_KEY` og `BYBIT_LIVE_API_SECRET` faktisk er satt som secrets (ellers vil gaten returnere `live_api_keys_missing` og signaler vil bli avvist med klar grunn istedenfor å henge i kø).
+- Re-injiser en test-signal eller vent på neste TradingView-alert; PENGUUSDT ENTER-LONG bør nå gå til `processed` med `decision_reason='executed:live'`, og påfølgende EXIT-LONG vil finne en åpen posisjon å lukke.
+
+## Hva endringen IKKE gjør
+
+- Ingen endringer i risk engine, sizing eller TSL/SL-logikk.
+- Paper/testnet-paths uendret.
+- Sikkerhetsgaten beholdes — vi bare KALLER den nå.
