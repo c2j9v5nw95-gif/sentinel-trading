@@ -617,3 +617,102 @@ function Row({ k, v, highlight }: { k: string; v: string; highlight?: boolean })
     </div>
   );
 }
+
+function AddSymbolDialog({
+  existing,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  existing: string[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (args: { symbol: string; category: string; enabled: boolean }) => void;
+}) {
+  const [symbol, setSymbol] = useState("");
+  const [category, setCategory] = useState("linear");
+  const [enabled, setEnabled] = useState(false);
+
+  const normalized = symbol.trim().toUpperCase();
+  const duplicate = normalized.length > 0 && existing.includes(normalized);
+  const valid = /^[A-Z0-9]{4,20}$/.test(normalized) && !duplicate;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-1 text-lg font-semibold">Add symbol</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          New symbols start in <code>inherit</code> mode (paper). Switch to live later
+          via the row dropdown to trigger the live confirmation flow.
+        </p>
+
+        <label className="mb-1 block text-xs uppercase text-muted-foreground">Symbol</label>
+        <input
+          autoFocus
+          value={symbol}
+          onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+          placeholder="e.g. LABUSDT"
+          className="mb-1 w-full rounded border border-border bg-background px-3 py-2 text-sm font-mono"
+        />
+        {duplicate && (
+          <p className="mb-3 text-xs text-danger">Symbol already exists.</p>
+        )}
+        {!duplicate && symbol && !valid && (
+          <p className="mb-3 text-xs text-muted-foreground">
+            4–20 chars, A–Z and 0–9 only.
+          </p>
+        )}
+        {!symbol && <div className="mb-3" />}
+
+        <label className="mb-1 block text-xs uppercase text-muted-foreground">Category</label>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="mb-4 w-full rounded border border-border bg-background px-3 py-2 text-sm"
+        >
+          <option value="linear">linear (USDT perp)</option>
+          <option value="inverse">inverse</option>
+          <option value="spot">spot</option>
+        </select>
+
+        <label className="mb-4 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+          />
+          Enable immediately (otherwise add disabled and turn on later)
+        </label>
+
+        <div className="rounded border border-border bg-background/60 p-3 text-xs text-muted-foreground">
+          Defaults applied: <code>sl_pct=1.5</code>, <code>leverage=10</code>,{" "}
+          <code>balance%=5</code>, <code>multiplier=1.0</code>, TSL on (1.0 / 0.5),
+          isolated margin, webhook transport. Edit on the row after creating.
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded border border-border bg-background px-4 py-2 text-sm hover:bg-muted"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm({ symbol: normalized, category, enabled })}
+            disabled={!valid || busy}
+            className="rounded bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Add symbol
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
