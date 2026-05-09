@@ -10,7 +10,7 @@
 // All execution is wrapped by the caller in withSymbolLock(symbol, kind=entry|exit).
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getClient } from "./bybit-client.ts";
+import { getClient, type BybitClient } from "./bybit-client.ts";
 import type { ExecutionMode } from "./execution-mode.ts";
 import { computeEntrySizing, validateSymbolSizing } from "./sizing.ts";
 import { resolveStrategyCode, isExit, sideOf, type SignalAction } from "./strategy-map.ts";
@@ -43,6 +43,51 @@ function linkId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function logExecutorHeartbeat(stage: string, signal: any, mode: ExecutionMode, extra: Record<string, unknown> = {}) {
+  console.log(JSON.stringify({
+    source: "executor",
+    event: "heartbeat",
+    stage,
+    signal_id: signal.id,
+    symbol: signal.symbol,
+    action: signal.action,
+    mode,
+    at: new Date().toISOString(),
+    ...extra,
+  }));
+}
+
+function initializeClient(
+  sb: SupabaseClient,
+  signal: any,
+  mode: ExecutionMode,
+  trail: Trail,
+  opts?: { liveGatePassed?: boolean },
+): { ok: true; client: BybitClient } | { ok: false; reason: "client_init_failed"; error: string } {
+  trail.add("executor_loaded", "info", undefined, { mode });
+  logExecutorHeartbeat("executor_loaded", signal, mode);
+  try {
+    const client = getClient(mode, sb, opts);
+    trail.add("client_initialized", "pass", undefined, { mode });
+    logExecutorHeartbeat("client_initialized", signal, mode);
+    return { ok: true, client };
+  } catch (e) {
+    const error = (e as Error).message ?? String(e);
+    trail.add("client_initialized", "fail", "client_init_failed", { mode, error });
+    console.error(JSON.stringify({
+      source: "executor",
+      event: "client_init_failed",
+      signal_id: signal.id,
+      symbol: signal.symbol,
+      action: signal.action,
+      mode,
+      error,
+      at: new Date().toISOString(),
+    }));
+    return { ok: false, reason: "client_init_failed", error };
+  }
+}
+
 // ----------------------------------------------------------------------------
 // ENTRY
 // ----------------------------------------------------------------------------
@@ -53,7 +98,9 @@ export async function executeEntry(
   trail: Trail,
   opts?: { liveGatePassed?: boolean },
 ): Promise<ExecOutcome> {
-  const client = getClient(mode, sb, opts);
+  const initialized = initializeClient(sb, signal, mode, trail, opts);
+  if (!initialized.ok) return { ok: false, reason: initialized.reason };
+  const client = initialized.client;
   const sym = await loadSymbolConfig(sb, signal.symbol);
   const action = signal.action as SignalAction;
   const side = sideOf(action);
@@ -172,6 +219,8 @@ export async function executeEntry(
 
   const orderLink = linkId(`E-${signal.symbol}`);
   const submitSide = side === "long" ? "Buy" : "Sell";
+  trail.add("order_submit_attempted", "info", undefined, { purpose: "entry", side: submitSide, qty: breakdown.estimatedQty });
+  logExecutorHeartbeat("order_submit_attempted", signal, mode, { purpose: "entry", side: submitSide, qty: breakdown.estimatedQty });
   const fill = await client.submitOrder({
     symbol: signal.symbol, side: submitSide, qty: breakdown.estimatedQty,
     reduceOnly: false, orderLinkId: orderLink, signalId: signal.id, positionId: posRow.id,
@@ -289,7 +338,9 @@ export async function executeExit(
   trail: Trail,
   opts?: { liveGatePassed?: boolean },
 ): Promise<ExecOutcome> {
-  const client = getClient(mode, sb, opts);
+  const initialized = initializeClient(sb, signal, mode, trail, opts);
+  if (!initialized.ok) return { ok: false, reason: initialized.reason };
+  const client = initialized.client;
   const action = signal.action as SignalAction;
   if (!isExit(action)) return { ok: false, reason: "not_exit_action" };
   const side = sideOf(action);
@@ -350,6 +401,8 @@ export async function executeExit(
     refPrice = await fetchLastPrice(signal.symbol);
   }
 
+  trail.add("order_submit_attempted", "info", undefined, { purpose, side: submitSide, qty });
+  logExecutorHeartbeat("order_submit_attempted", signal, mode, { purpose, side: submitSide, qty });
   const fill = await client.submitOrder({
     symbol: signal.symbol, side: submitSide, qty, reduceOnly: true,
     orderLinkId: orderLink, signalId: signal.id, positionId: posRow.id,
