@@ -1,53 +1,64 @@
 ## Mål
 
-Gjøre alle relevante parametre i Symbols-tabellen redigerbare direkte fra UI, slik at du slipper å gå via SQL/Cloud for å justere sizing, SL, TSL, TP og hard caps per symbol.
+Trygt switche fra paper til live trading på Bybit. Live-modusen har flere harde gates som må være grønne, både i UI og i edge-funksjonene. Denne planen er en **sjekkliste + flyt**, ikke en kode-endring (alt er allerede implementert).
 
-## Hva som skal kunne endres per rad
+## To måter å gå live på
 
-| Felt | Type | Validering |
+1. **Globalt live** (`app_settings.live_enabled = true`) — alle symboler uten override går live.
+2. **Per-symbol live** (`symbols.execution_mode_override = 'live'`) — anbefalt: behold global = paper, og sett kun PENGUUSDT til live i Symbols-siden. Andre symboler forblir trygt på paper.
+
+Anbefaling: **start med per-symbol live på ÉN coin** med små caps, ikke globalt.
+
+## Live-gates (alle må være grønne)
+
+Dette er sjekket både i `liveExecutionGate` (edge) og i Settings-siden (UI):
+
+| Gate | Hvor | Hvordan fikse |
 |---|---|---|
-| `enabled` | toggle (✓/—) | bool |
-| `execution_mode_override` | dropdown (allerede gjort) | uendret, men live-bytte beholder eksisterende `ENABLE LIVE`-bekreftelse |
-| `preferred_transport` | dropdown: `webhook` / `email` | enum |
-| `account_balance_percent` | number input | 0–100 |
-| `leverage` | number input | 1–100 |
-| `position_size_multiplier` | number input | > 0 |
-| `margin_mode` | dropdown: `isolated` / `cross` | enum |
-| `sl_pct` | number input | > 0 |
-| `tsl_enabled` | toggle | bool |
-| `tsl_activation_profit_pct` | number input | ≥ 0 |
-| `tsl_callback_pct` | number input | > 0 |
-| `tp2_enabled` | toggle | bool |
-| `tp1_exit_percent` | number input | 1–100 |
-| `max_position_notional_usdt` | number input (tom = NULL) | ≥ 0 eller null |
-| `max_margin_usage_usdt` | number input (tom = NULL) | ≥ 0 eller null |
+| `BYBIT_LIVE_API_KEY` + `BYBIT_LIVE_API_SECRET` satt | Cloud secrets | Allerede satt ✅ |
+| `app_settings.live_enabled = true` (kun for global) | Settings-side | Trykk "Live" radio + skriv `ENABLE LIVE` |
+| `app_settings.emergency_stop = false` | Settings-side | Skal være av |
+| `app_settings.live_risk_halted = false` | Live risk-banner | Skal være av |
+| Ingen åpne kritiske invariant-violations | Invariants-side | Acknowledge alle åpne |
+| Bybit live diagnostic OK siste 24t | Settings → "Test live connection" | Kjør test, alle read-only checks må være ✓ |
+| (Per-symbol vei) `symbols.execution_mode_override = 'live'` | Symbols-side | Per-symbol mode-dropdown → live + skriv `ENABLE LIVE` |
 
-## UX-mønster: inline edit + lagre per rad
+I tillegg finnes en *risk breaker* som auto-pauser entries (men ikke exits) hvis:
+- åpne posisjoner > `live_risk_max_open_positions` (default 1)
+- total eksponering > `live_risk_max_total_exposure_pct` (default 50%)
+- per-symbol eksponering > `live_risk_max_symbol_exposure_pct` (default 30%)
+- urealisert drawdown > `live_risk_max_unrealized_drawdown_pct` (default 5%)
+- daglig tap > `live_risk_max_daily_loss_pct` (default 5%)
+- ≥ `live_risk_max_consecutive_losses` tap på rad (default 4)
 
-For å holde det enkelt og trygt:
+## Anbefalt flyt (per-symbol live for PENGUUSDT)
 
-1. **Hver rad får en "Edit"-knapp** lengst til høyre. Klikker du, blir feltene i den raden til input/select/toggles. Andre rader er fortsatt read-only.
-2. **Lokal draft state** holder endringene til du trykker **Save** (kaller én `update`-mutation mot `symbols` med diffen) eller **Cancel** (kaster draft).
-3. **Live-bytte** håndteres som i dag via `ConfirmLiveDialog` med `ENABLE LIVE`-frase.
-4. **Validering** før save: tall-felter må parse, grenseverdier sjekkes, ellers vises rød ramme + tooltip og knappen er disabled.
-5. Etter save: `invalidateQueries(["symbols"])` så tabellen henter fersk state.
+1. **Verifiser API-nøkler**: gå til Settings → Bybit Diagnostics → "Run live test". Alle read-only checks skal være ✓ (account, balance, position read, order read). `safe_order_test` kan være rød — den krever at live allerede er på.
+2. **Sjekk balanse**: live wallet skal vise faktisk saldo i USDT.
+3. **Acknowledge alle kritiske invariants** hvis noen er åpne (Invariants-siden).
+4. **Sett konservative caps på PENGUUSDT** før du flipper:
+   - `account_balance_percent`: f.eks. 1–2 % (ikke standard 5)
+   - `leverage`: f.eks. 3–5x (ikke 10)
+   - `max_position_notional_usdt`: hard cap, f.eks. $50
+   - `max_margin_usage_usdt`: hard cap, f.eks. $10
+   - `sl_pct`: behold 1.5 (eller stramere)
+5. **Bytt mode på PENGUUSDT-raden** i Symbols → `live`. Bekreft `ENABLE LIVE`-frasen. Systemet vil:
+   - Sette `execution_mode_override = 'live'`
+   - **Overskrive sizing til defaults** (`balance%=5, leverage=10, multiplier=1.0`) ⚠️
+   - Du må deretter justere tilbake til de konservative verdiene fra steg 4 via Edit-knappen.
+6. **Send én test-alert** fra TradingView. Sjekk Signals-siden:
+   - Status skal bli `processed`
+   - Decision trail skal vise `entry_submitted: pass` og `sl_armed: pass`
+   - Telegram-varsel `live_entry` skal komme
+7. **Verifiser på Bybit-app**: at posisjonen finnes, leverage er riktig, SL er satt.
+8. **Følg med på exit**: når exit-alert kommer, sjekk at `exit_submitted: pass` og at posisjonen er flat på Bybit.
 
-```text
-SYMBOL    ON  MODE     TRANSPORT  BAL%  LEV  MULT  MARGIN     SL%  TSL ACT/CB  TP2  TP1%  MAX NOT  MAX MAR  ACTIONS
-PENGUUSDT [✓] [paper▾] [webhook▾] [ 5 ] [10] [1.0] [isolated▾][1.5][1.0]/[0.5] [✓]  [100] [    ]   [    ]   [Save] [Cancel]
-ZECUSDT    ✓  paper    webhook     5    10x  1     isolated   1.5  1.0/0.5     —    100   —        —        [Edit]
-```
+## Hva planen IKKE gjør
 
-## Tekniske detaljer
+- Ingen kode-endringer — alt er allerede på plass.
+- Endrer ikke risk-breaker-defaults (de kan strammes i Settings hvis ønsket).
+- Skrur ikke på global live — kun per-symbol PENGUUSDT.
 
-- **Fil**: kun `src/routes/_app.symbols.tsx` endres. Tabellraden refaktoreres til en egen `<SymbolRow>`-komponent som tar `symbol` + `onSaved`-callback og holder sin egen draft state.
-- **Mutation**: gjenbruker mønsteret fra `setOverride`-mutationen — én `useMutation` per rad er ikke nødvendig, en delt mutation som tar `{id, patch}` holder.
-- **NULL-håndtering for hard caps**: tom input → `null` i patch. Vis placeholder `—`.
-- **RLS**: `symbols`-tabellen har allerede `operator manages symbols` (ALL) policy, så `update` fungerer uten DB-endringer.
-- **Ingen DB-migrasjon** og ingen edge-function-endringer trengs.
+## Rekkefølge nå
 
-## Hva planen IKKE dekker
-
-- Legge til/slette symboler (kan komme i en oppfølger med "+ Add symbol"-knapp).
-- Bulk-edit av flere rader samtidig.
-- Endringer i hvordan executoren leser disse feltene (uendret oppførsel).
+Bekreft hvilken vei du vil gå (per-symbol vs. global), så veileder jeg deg gjennom punkt 4–5 med eksakte caps. Eller om du heller vil ha en **"go live"-wizard** som slår sammen disse stegene i én UI-flyt.
