@@ -79,6 +79,7 @@ export async function dispatchSignal(
   // Existing trail (from ingest) is preserved and extended.
   const trail = new Trail();
   for (const s of (signal.decision_trail ?? [])) trail.add(s.step, s.outcome, s.reason, s.metrics);
+  trail.add("queued", "info");
   trail.add("claimed", "info", undefined, { retry_count: signal.retry_count });
 
   try {
@@ -219,15 +220,24 @@ export async function dispatchSignal(
     if (!locked.ok) throw new Error(`exec_error:${locked.details}`);
 
     const exec = locked.value;
-    const finalStatus = exec.ok ? "processed" : "rejected";
+    const initFailed = exec.reason === "client_init_failed";
+    const finalStatus = exec.ok ? "processed" : initFailed ? "error" : "rejected";
     trail.add(exec.ok ? "executed" : "exec_failed",
       exec.ok ? "pass" : "fail", exec.reason,
       { position_id: exec.position_id, fill_price: exec.fill_price, qty: exec.filled_qty });
+    if (initFailed) {
+      await sb.from("error_log").insert({
+        source: "executor", message: "client_init_failed",
+        context: { signal_id: signal.id, symbol: signal.symbol, mode: resolved.mode, action },
+      });
+    }
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
       status: finalStatus, processed_at: new Date().toISOString(),
       decision_reason: exec.ok
         ? `executed:${resolved.mode}`
+        : initFailed
+          ? "client_init_failed"
         : `exec_rejected:${exec.reason ?? "unknown"}`,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
