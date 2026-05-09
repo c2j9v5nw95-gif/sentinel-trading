@@ -1,5 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+
+const FLIP_CONFIRM_PHRASE_ON = "ENABLE BRIDGE";
+const FLIP_CONFIRM_PHRASE_OFF = "DISABLE BRIDGE";
 
 interface BridgeHealthRow {
   id: string;
