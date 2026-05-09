@@ -287,8 +287,9 @@ export async function executeExit(
   signal: any,
   mode: ExecutionMode,
   trail: Trail,
+  opts?: { liveGatePassed?: boolean },
 ): Promise<ExecOutcome> {
-  const client = getClient(mode, sb);
+  const client = getClient(mode, sb, opts);
   const action = signal.action as SignalAction;
   if (!isExit(action)) return { ok: false, reason: "not_exit_action" };
   const side = sideOf(action);
