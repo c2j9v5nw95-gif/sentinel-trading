@@ -1020,6 +1020,39 @@ export type Database = {
         }
         Relationships: []
       }
+      sizing_rules: {
+        Row: {
+          action: Json
+          condition: Json
+          created_at: string
+          enabled: boolean
+          id: string
+          label: string
+          priority: number
+          updated_at: string
+        }
+        Insert: {
+          action?: Json
+          condition?: Json
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          label: string
+          priority: number
+          updated_at?: string
+        }
+        Update: {
+          action?: Json
+          condition?: Json
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          label?: string
+          priority?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       strategies: {
         Row: {
           created_at: string
@@ -1083,6 +1116,54 @@ export type Database = {
           exit_reason?: Database["public"]["Enums"]["exit_reason"] | null
           kind?: string
           side?: Database["public"]["Enums"]["position_side"]
+        }
+        Relationships: []
+      }
+      symbol_strategy_overrides: {
+        Row: {
+          account_balance_percent: number | null
+          created_at: string
+          force_state: string | null
+          id: string
+          leverage: number | null
+          max_margin_usage_usdt: number | null
+          max_position_notional_usdt: number | null
+          notes: string | null
+          position_size_multiplier: number | null
+          strategy: string
+          symbol: string
+          tag: string
+          updated_at: string
+        }
+        Insert: {
+          account_balance_percent?: number | null
+          created_at?: string
+          force_state?: string | null
+          id?: string
+          leverage?: number | null
+          max_margin_usage_usdt?: number | null
+          max_position_notional_usdt?: number | null
+          notes?: string | null
+          position_size_multiplier?: number | null
+          strategy: string
+          symbol: string
+          tag?: string
+          updated_at?: string
+        }
+        Update: {
+          account_balance_percent?: number | null
+          created_at?: string
+          force_state?: string | null
+          id?: string
+          leverage?: number | null
+          max_margin_usage_usdt?: number | null
+          max_position_notional_usdt?: number | null
+          notes?: string | null
+          position_size_multiplier?: number | null
+          strategy?: string
+          symbol?: string
+          tag?: string
+          updated_at?: string
         }
         Relationships: []
       }
