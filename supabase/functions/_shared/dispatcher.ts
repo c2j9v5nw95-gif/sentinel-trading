@@ -236,10 +236,11 @@ export async function dispatchSignal(
       trail.add("lock_busy", "fail", "symbol_in_use", locked.details as Record<string, unknown>);
       await flushTrail(sb, signal.id, trail);
       await sb.from("signals").update({
-        status: "queued", retry_count: (signal.retry_count ?? 0) + 1,
-        decision_reason: "symbol_busy_retry",
+        status: "error",
+        processed_at: new Date().toISOString(),
+        decision_reason: "symbol_busy_no_retry",
       }).eq("id", signal.id);
-      return { signalId: signal.id, status: "requeued", reason: "symbol_busy" };
+      return { signalId: signal.id, status: "error", reason: "symbol_busy", gate: "execution" };
     }
     if (!locked.ok) throw new Error(`exec_error:${locked.details}`);
 
@@ -282,47 +283,24 @@ export async function dispatchSignal(
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     const stack = (e as Error).stack ?? null;
-    const nextRetry = (signal.retry_count ?? 0) + 1;
 
     await sb.from("error_log").insert({
       source: "dispatcher", message: msg, stack,
-      context: { signal_id: signal.id, retry_count: nextRetry },
+      context: { signal_id: signal.id, retry_count: signal.retry_count ?? 0, fail_fast: true },
     });
 
-    if (nextRetry < MAX_RETRIES) {
-      trail.add("error_retry", "info", msg, { retry_count: nextRetry });
-      await flushTrail(sb, signal.id, trail);
-      await sb.from("signals").update({
-        status: "queued",
-        retry_count: nextRetry,
-      }).eq("id", signal.id);
-      return { signalId: signal.id, status: "requeued", reason: msg };
-    }
-
-    trail.add("dead_letter", "fail", msg, { retry_count: nextRetry });
+    trail.add("execution_error", "fail", msg, { retry_count: signal.retry_count ?? 0, fail_fast: true });
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
-      status: "dead_letter",
-      retry_count: nextRetry,
+      status: "error",
       processed_at: new Date().toISOString(),
-      decision_reason: `dead_letter:${msg.slice(0, 200)}`,
+      decision_reason: `execution_error:${msg.slice(0, 200)}`,
       error_stack: stack,
     }).eq("id", signal.id);
     await sb.from("audit_log").insert({
-      action: "signal_dead_letter", target: signal.id,
-      after: { error: msg, retry_count: nextRetry },
+      action: "signal_execution_error", target: signal.id,
+      after: { error: msg, retry_count: signal.retry_count ?? 0, fail_fast: true },
     });
-    await sb.from("system_alerts").insert({
-      severity: "critical", category: "dead_letter",
-      message: `Signal moved to dead-letter: ${msg.slice(0, 160)}`,
-      context: { signal_id: signal.id },
-    });
-    notify({
-      severity: "critical", category: "dead_letter",
-      symbol: signal.symbol ?? null,
-      reason: msg.slice(0, 200),
-      extra: { signal_id: signal.id },
-    });
-    return { signalId: signal.id, status: "dead_letter", reason: msg };
+    return { signalId: signal.id, status: "error", reason: msg, gate: "execution" };
   }
 }
