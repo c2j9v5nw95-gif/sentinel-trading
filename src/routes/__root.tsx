@@ -7,6 +7,8 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 import appCss from "../styles.css?url";
 
@@ -110,6 +112,23 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const router = useRouter();
+
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        queryClient.clear();
+        router.navigate({ to: "/login" });
+      } else if (event === "TOKEN_REFRESHED") {
+        // New access token — let in-flight queries pick it up.
+        queryClient.invalidateQueries();
+      } else if (event === "SIGNED_IN") {
+        // Re-evaluate route guards (e.g. _app beforeLoad) without a refresh.
+        router.invalidate();
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [queryClient, router]);
 
   return (
     <QueryClientProvider client={queryClient}>
