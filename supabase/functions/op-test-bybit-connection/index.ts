@@ -47,7 +47,20 @@ function credsFor(mode: Mode) {
   };
 }
 
-function explainBybitError(e: unknown): { code: string; message: string } {
+interface ExplainedError { code: string; message: string; detail?: unknown; }
+
+function explainBybitError(e: unknown): ExplainedError {
+  if (e instanceof BybitTransportError) {
+    const d = e.diagnostics;
+    const hint = e.kind === "forbidden"
+      ? "HTTP 403 with non-JSON body — Cloudflare/WAF/egress IP/region block BEFORE Bybit. Not an API-key issue. Try BYBIT_API_BASE_URL=https://api.bytick.com or use a proxy."
+      : "Non-JSON response from Bybit — likely upstream block. See body_snippet.";
+    return {
+      code: `bybit_transport_${e.kind}`,
+      message: `${e.kind.toUpperCase()} on ${d.endpoint} (HTTP ${d.http_status}) — ${hint}`,
+      detail: d,
+    };
+  }
   if (e instanceof BybitError) {
     const hint =
       e.retCode === 10003 || e.retCode === 10004 || e.retCode === 10005
