@@ -47,6 +47,7 @@ const CHECK_LABELS: Record<string, string> = {
   instrument_info: "Symbol instrument info",
   leverage_limits: "Leverage limits",
   permissions: "API key permissions",
+  order_endpoint_reachability: "Order endpoint reachable (executor path)",
   safe_order_test: "Safe order test (place + cancel)",
 };
 
