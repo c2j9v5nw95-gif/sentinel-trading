@@ -3,7 +3,7 @@
 // Implementations:
 //   - PaperBybitClient   — Postgres-backed simulator
 //   - TestnetBybitClient — real Bybit V5 TESTNET REST
-//   - LiveBybitClient    — disabled stub (mainnet not enabled until Phase 4)
+//   - LiveBybitClient    — real Bybit V5 MAINNET REST
 //
 // Executor stays mode-agnostic: getClient(mode) returns the right one.
 
@@ -65,8 +65,8 @@ export interface BybitClient {
 }
 
 // LiveBybitClient lives in live-client.ts and is gated by liveExecutionGate.
-// The factory below refuses to instantiate it unless the gate passes — keeping
-// mainnet execution blocked by default while remaining schema/API-ready.
+// It is intentionally independent from TestnetBybitClient initialization, so
+// live execution never requires BYBIT_TESTNET_* credentials.
 import { LiveBybitClient, liveExecutionGate } from "./live-client.ts";
 
 export function getClient(
