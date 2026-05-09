@@ -59,8 +59,9 @@ function parseKvText(body: string): Record<string, string> {
   // Find the first occurrence of "<word>=" so we can tolerate prefixed noise.
   const startIdx = body.search(/[A-Za-z_][A-Za-z0-9_]*\s*=/);
   const slice = startIdx >= 0 ? body.slice(startIdx) : body;
-  // Split on ';' or any newline. Tabs/extra spaces handled by trim.
-  const parts = slice.split(/[;\n\r]+/);
+  // Split on ';', newline, or '|' (TradingView often glues alert message and
+  // study output with ' | ' between the two halves).
+  const parts = slice.split(/[;\n\r|]+/);
   const obj: Record<string, string> = {};
   for (const part of parts) {
     const idx = part.indexOf("=");
