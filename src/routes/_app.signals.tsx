@@ -29,6 +29,14 @@ type Signal = {
   error_stack: string | null;
 };
 
+type DiagnosticRow = {
+  id: string;
+  mode: string;
+  ok: boolean;
+  created_at: string;
+  checks: Record<string, unknown> | null;
+};
+
 function SignalsPage() {
   const qc = useQueryClient();
   const replay = useServerFn(replaySignal);
@@ -48,6 +56,22 @@ function SignalsPage() {
   const dead = (all.data ?? []).filter((s) => s.status === "dead_letter");
   const live = (all.data ?? []).filter((s) => s.status !== "dead_letter");
 
+  const diagnostics = useQuery({
+    queryKey: ["bybit_diagnostics", "live", "gate_debug"],
+    queryFn: async () => {
+      const { data } = await supabase.from("bybit_diagnostics")
+        .select("id,mode,ok,created_at,checks")
+        .eq("mode", "live")
+        .eq("ok", true)
+        .order("created_at", { ascending: false })
+        .limit(25);
+      return (data ?? []) as DiagnosticRow[];
+    },
+    refetchInterval: 5_000,
+  });
+
+  const latestGateBlock = live.find((s) => s.decision_reason?.startsWith("live_gate:alternate_base_requires_passing_diagnostic")) ?? null;
+
   const replayMut = useMutation({
     mutationFn: (args: { signalId: string; bypassDedupe: boolean }) =>
       replay({ data: args }),
@@ -57,6 +81,8 @@ function SignalsPage() {
   return (
     <>
       <PageHeader title="Signals" description="Normalized + deduped signal stream with full decision trail." />
+
+      <LiveGateDebugPanel diagnostics={diagnostics.data ?? []} latestGateBlock={latestGateBlock} />
 
       {dead.length > 0 && (
         <Card title={`Dead-letter queue (${dead.length})`}>
