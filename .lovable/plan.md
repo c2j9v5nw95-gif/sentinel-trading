@@ -1,125 +1,99 @@
-# Fix Bybit 403 / non-JSON execution failure
+## Goal
 
-## Rotårsak
+Stop chasing endpoints. Pin live execution to `api.bybit.com` and add deterministic, side-by-side request/response tracing so the next failure isolates the root cause to one of: runtime/IP block, malformed request, signing mismatch, payload shape, account-mode mismatch, or regional Bybit protection.
 
-Når `api.bybit.com` returnerer **HTTP 403 med ikke-JSON body** (typisk Cloudflare/WAF som blokkerer Supabase Edge sin egress-IP/region før forespørselen treffer Bybit selv), klassifiserer `bybit-rest.ts` det som `bad_json:403` og kaster en generisk `BybitError(retCode: -1)`. Det skiller seg ikke fra "Bybit svarte med ødelagt JSON", så:
+## Step 1 — Revert base URL
 
-- meldingen som havner i `signals.decision_reason` er kryptisk
-- vi får ingen Telegram-varsel
-- vi mangler diagnostikk (`cf-ray`, `server`, `endpoint`, body-snippet)
-- vi har ikke noe operatør-verktøy som tester nøyaktig samme mainnet-endepunkt som executor bruker
-- base-URL er hardkodet — vi kan ikke bytte til alternativ Bybit-domene/proxy uten redeploy med kodeendring
+- Update the `BYBIT_API_BASE_URL` secret to `https://api.bybit.com` (operator action via secrets tool — I'll prompt for confirmation before changing).
+- No code change needed; `liveBaseUrlInfo()` already prefers env and falls back to the official mainnet default. Once the secret matches the default, the gate treats it as `is_alternate=false` and skips the alternate-base diagnostic gate automatically.
+- Add a one-line operator banner in `BybitDiagnosticsPanel` confirming "Active base URL = official mainnet, alternate-base gate inactive".
 
-Signalet ender allerede som `status='error'` (fail-fast fra forrige tur fungerer), så vi trenger ikke endre kø-logikken — bare gjøre feilen forståelig, varslet og enklere å omgå.
+## Step 2 — Single shared Bybit transport (no behavioral drift)
 
-## Plan
+Both diagnostics and executor already go through `BybitRest`. Lock parity by:
 
-### 1. Ny error-klasse: `BybitTransportError`
-Egen klasse for transport-nivå feil (Cloudflare-block, ikke-JSON, network), separat fra `BybitError` (som er API-nivå med `retCode`).
+- Making `getPosition(symbol)` in `venue-client.ts` and the diagnostics `read_positions_by_symbol` call use a single shared helper `buildPositionListRequest({ symbol })` so query keys/order/casing cannot drift.
+- Same treatment for the order-create reachability probe (`buildOrderCreateProbe()` → used by diagnostics; executor calls it with real qty/side).
+- Add a unit-style assert at handler boot that the helpers produce the expected canonical query strings.
 
-```ts
-// bybit-rest.ts
-export class BybitTransportError extends Error {
-  constructor(
-    public kind: "forbidden" | "bad_json" | "network",
-    public httpStatus: number,
-    public endpoint: string,
-    public diagnostics: {
-      content_type?: string;
-      cf_ray?: string;
-      server?: string;
-      request_id?: string;
-      body_snippet?: string;
-      base_url: string;
-    }
-  ) {
-    super(`bybit_transport_${kind}:${httpStatus}:${endpoint}`);
-  }
-}
-```
+## Step 3 — Full redacted request/response trace
 
-`request()` kaster denne i stedet for `BybitError` når:
-- `res.status === 403` og body ikke parses som JSON → `kind: "forbidden"` (ikke retryable)
-- annen status med ikke-JSON body → `kind: "bad_json"` (ikke retryable)
+Extend `bybit-rest.ts` so EVERY call (not just transport errors) writes a single structured `bybit_trace` log line on completion containing:
 
-Begge logger fulle headers (`content-type`, `cf-ray`, `server`, `x-bapi-request-id`) + de første 500 tegnene av body.
+Request side (already partially logged):
+- `label`, `attempt`, `base_url`, `endpoint`, `method`
+- `query` (object) + `query_string` (exact serialized form used for signing)
+- `body_keys`, `body_size`, `body_sha256_prefix` (first 8 hex chars — proves body parity without leaking)
+- `recv_window_ms`, `timestamp_ms`
+- `sign_payload_prefix` (`ts+key+recv+...` first 32 chars, redacting key to prefix only)
+- `sign_len`, `api_key_prefix`
+- `idempotency_key`
 
-### 2. Konfigurerbar base-URL
-Les `BYBIT_API_BASE_URL` fra env i `live-client.ts`. Default: `https://api.bybit.com`. Lar operatør bytte til `api.bytick.com` (offisielt mirror) eller egen proxy uten redeploy.
+Response side (new):
+- `http_status`, `content_type`, `content_length`
+- `cf_ray`, `server`, `x-bapi-request-id`, `x-amz-cf-id`, `x-amz-cf-pop`, `via`
+- `ret_code`, `ret_msg` when JSON
+- `body_snippet` (first 500 chars) — always on non-2xx, on transport error, OR when env `BYBIT_TRACE_BODY=1`
+- `duration_ms`
 
-```ts
-const LIVE_BASE = Deno.env.get("BYBIT_API_BASE_URL") ?? "https://api.bybit.com";
-```
+Failure-fast rules:
+- Drop the existing one-shot retry on 5xx/429 for `/v5/position/list` and `/v5/order/create` while we audit (`MAX_ATTEMPTS=1` for these two endpoints behind a `BYBIT_AUDIT_MODE=1` flag). Other endpoints keep current behavior.
+- `BybitTransportError` keeps full diagnostics; gate already surfaces it. No silent retries.
 
-Ny secret `BYBIT_API_BASE_URL` (valgfri) registreres via `add_secret` når brukeren godkjenner.
+## Step 4 — Diagnostics surfaces the same trace
 
-### 3. Dispatcher: håndter transport-feil eksplisitt
-I `dispatcher.ts` catch-blokken: hvis `e instanceof BybitTransportError`, lag en strukturert `decision_reason` (`bybit_transport_forbidden:/v5/order/create`) og legg full diagnostikk i `error_log.context` + `system_alerts.context`. Status forblir `error` (allerede fail-fast).
+`op-test-bybit-connection` already mirrors the executor `getPosition` shape (`read_positions_by_symbol`). Extend it to also persist the new response-side fields (cf_ray, server, x-bapi-request-id, body_sha256_prefix, sign_payload_prefix) into `checks._meta.detail`, so a single SQL query can diff a passing diagnostic vs the failing executor request line-by-line.
 
-### 4. Telegram critical alert
-Send `severity: "critical"`, `category: "bybit_diagnostic_failure"` med:
-- symbol, action, endpoint, http_status, cf_ray, server, body-snippet
-- klar tekst som forklarer "Cloudflare/WAF/IP-block — dette er IKKE en API-key feil"
+## Step 5 — Audit UI on /signals
 
-Bruker `notify(...)` som allerede finnes (fire-and-forget, deduper kritisk).
+When a signal fails with `bybit_transport_forbidden`, the existing Live Gate Debug Panel gains a "Transport Audit" card that shows, side by side:
 
-### 5. Operatør-diagnose for samme endpoint som executor
-Utvid `op-test-bybit-connection` med en ny check: **`order_endpoint_reachability`** som gjør en *signed* `POST /v5/order/create` med ugyldig `qty=0` mot mainnet. Forventet utfall:
-- 200 + `retCode != 0` → endpoint nådd, signering OK ✅ (Cloudflare slipper oss gjennom)
-- `BybitTransportError(forbidden)` → bevist Cloudflare-block, viser cf-ray + server i UI ❌
+| field | last passing diagnostic | failing executor call |
+| --- | --- | --- |
+| base_url, endpoint, query_string | ✓ | ✗ |
+| sign_payload_prefix, body_sha256_prefix | ✓ | ✗ |
+| http_status, server, cf_ray, x-bapi-request-id | ✓ | ✗ |
+| body_snippet | ✓ | ✗ |
 
-Dette gir operatør et eksakt en-knapp svar på "blir vi blokkert akkurat nå?" mot samme URL som executor faktisk bruker.
+Data source: read latest `bybit_diagnostics` row for the symbol, plus the matching `bybit_trace` log line for the failed signal (looked up by `signal_id` in edge logs via existing logs query path, or persisted into a new `bybit_request_traces` table — see Decision below).
 
-### 6. UI-forklaring
-I `BybitDiagnosticsPanel.tsx`: når en check feiler med `code: "bybit_transport_forbidden"`, vis en infoboks:
+## Step 6 — Replay & verify
 
-> **Cloudflare/WAF blokkerer forespørselen før den når Bybit.**
-> Dette er ikke en API-nøkkel-feil. Mulige årsaker:
-> - Lovable Cloud sin egress-IP står på Bybit/Cloudflare sin blokkliste
-> - Geografisk region-restriksjon
-> - WAF-regel utløst av rate eller header-mønster
->
-> Tiltak: prøv `BYBIT_API_BASE_URL=https://api.bytick.com` eller sett opp en proxy. Diagnostikk: cf-ray=`<verdi>`, server=`<verdi>`.
+Once deployed:
+1. Confirm secret = `https://api.bybit.com`, gate logs `is_alternate=false`.
+2. Run live diagnostics for PENGUUSDT (will include trace fields).
+3. Replay one PENGUUSDT signal.
+4. Inspect the audit card — three outcomes determine the diagnosis:
+   - Same query/sign/body fingerprints, same headers, same 200 response → bug elsewhere.
+   - Same fingerprints, executor gets 403/CloudFront body → **runtime/IP block** specific to that worker invocation.
+   - Different fingerprints → **request shape / signing drift** (helper not actually shared).
+   - 200 on `/v5/position/list` but 403/error on `/v5/order/create` → **account-mode / order payload** issue, not transport.
 
-Vise `cf_ray` / `server` / `body_snippet` fra `bybit_diagnostics.checks.order_endpoint_reachability.error.detail` så operatør kan eskalere til Bybit support med konkret bevis.
+## Decision needed before I implement
 
-### 7. Signal-kortet i `_app.signals.tsx`
-Når `decision_reason` starter med `bybit_transport_forbidden:`, vis et lite varsel med samme korte forklaring (egress/Cloudflare) og lenke til diagnose-panelet, i stedet for den rå strengen.
+I want one answer before starting:
 
-## Tekniske detaljer (filer)
+**Where to store the trace for the audit UI?**
+1. **Edge function logs only** (parse via existing `edge_function_logs` query keyed by `signal_id`). No schema change. Slightly slower UI, log retention is bounded.
+2. **New `bybit_request_traces` table** (insert one row per Bybit call with the redacted trace). Persistent, queryable, easier UI, costs ~1 insert per Bybit request.
 
-- **`supabase/functions/_shared/bybit-rest.ts`**
-  - Legg til `BybitTransportError` (eksportert)
-  - I `request()`: detekter `res.status === 403` *før* JSON-parse → kast `BybitTransportError("forbidden", ...)`. Hvis JSON.parse feiler ellers → kast `BybitTransportError("bad_json", ...)`. Begge kastes umiddelbart (ingen retry — er ikke i `isRetryableHttpStatus`).
-  - I catch-grenen: ikke retry på `BybitTransportError`.
+I recommend **option 2** for executor calls only (skip table writes for paper/testnet) so the audit survives log retention and the UI is a simple SQL query.
 
-- **`supabase/functions/_shared/live-client.ts`**
-  - `LIVE_BASE = Deno.env.get("BYBIT_API_BASE_URL") ?? "https://api.bybit.com"`.
-  - Ingen endring i klasse-strukturen.
+## Out of scope (intentionally)
 
-- **`supabase/functions/_shared/dispatcher.ts`**
-  - I catch-blokk: hvis `BybitTransportError`, bygg `decision_reason = "bybit_transport_${kind}:${endpoint}"`, fyll `error_log.context.diagnostics`, og kall `notify({severity:"critical", category:"bybit_diagnostic_failure", ...})`.
+- No further endpoint switching.
+- No retry-policy changes outside the two audited endpoints.
+- No changes to signing algorithm or auth headers — we are verifying parity, not rewriting.
 
-- **`supabase/functions/_shared/venue-client.ts`**
-  - I `submitOrder` catch: re-kast `BybitTransportError` urørt så dispatcher fanger det med riktig type. Allerede dekket — bare verifisere at vi ikke wrapper det i `Error`.
+## Technical detail (for reviewers)
 
-- **`supabase/functions/op-test-bybit-connection/index.ts`**
-  - Ny check `order_endpoint_reachability` (live-mode only).
-  - I `explainBybitError`: håndter `BybitTransportError` separat → `code: "bybit_transport_forbidden"` med diagnostics.
+Files touched:
+- `supabase/functions/_shared/bybit-rest.ts` — trace logging, audit-mode no-retry, sha256 prefix helper.
+- `supabase/functions/_shared/venue-client.ts` — use shared `buildPositionListRequest` / `buildOrderCreateProbe`.
+- `supabase/functions/_shared/bybit-requests.ts` (new) — canonical request builders + boot-time assertions.
+- `supabase/functions/op-test-bybit-connection/index.ts` — persist response-side trace fields under `checks._meta.detail`.
+- `supabase/functions/_shared/live-client.ts` — already auto-detects default base; only banner-state hint added.
+- `src/components/BybitDiagnosticsPanel.tsx` + `src/routes/_app.signals.tsx` — Transport Audit card.
+- (If option 2 chosen) migration: `bybit_request_traces` table + RLS (operator read).
 
-- **`src/components/BybitDiagnosticsPanel.tsx`**
-  - Render forklaring + diagnostics for `bybit_transport_forbidden`.
-
-- **`src/routes/_app.signals.tsx`**
-  - Friendly rendering for `decision_reason` som starter med `bybit_transport_*`.
-
-## Hva som IKKE endres
-
-- `MAX_ENTRY_SIGNAL_AGE_MS = 30s` (fail-fast fra forrige tur er riktig)
-- Kø-håndtering / cron / pg_cron — separat sak (signaler blir korrekt `error`, ikke stuck)
-- Ingen retry for transport-feil — vi ønsker rask, klar feiling
-
-## Hva brukeren må bekrefte før implementasjon
-
-1. **Skal jeg legge til `BYBIT_API_BASE_URL` som ny (valgfri) secret nå?** Hvis ja, jeg ber om verdien etterpå (default `https://api.bybit.com` brukes hvis ikke satt).
-2. **Telegram critical alert**: nåværende `notify(...)` deduperer i 5 min. OK?
+Secrets: update `BYBIT_API_BASE_URL` → `https://api.bybit.com`. Optional new env: `BYBIT_AUDIT_MODE=1`, `BYBIT_TRACE_BODY=1`.
