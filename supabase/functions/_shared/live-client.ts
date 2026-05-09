@@ -134,30 +134,68 @@ export async function liveExecutionGate(sb: SupabaseClient, input: GateLookupInp
 export async function findPassingAlternateDiagnostic(
   sb: SupabaseClient,
   baseUrl: string,
-): Promise<{ id: string; created_at: string; age_ms: number; base_url: string } | null> {
+  input: GateLookupInput = {},
+): Promise<{ match: DiagnosticMatch | null; rejections: DiagnosticRejection[]; rows_seen: number; query: Record<string, unknown> }> {
   const since = new Date(Date.now() - ALTERNATE_DIAGNOSTIC_FRESHNESS_MS).toISOString();
+  const expectedBase = normalizeBaseUrl(baseUrl)!;
+  const query = {
+    table: "bybit_diagnostics",
+    mode: "live",
+    ok: true,
+    created_at_gte: since,
+    order: "created_at desc",
+    limit: 25,
+    expected_base_url: expectedBase,
+    expected_symbol: input.symbol ?? null,
+    worker_version: LIVE_GATE_WORKER_VERSION,
+  };
   const { data: rows } = await sb.from("bybit_diagnostics")
     .select("id,ok,checks,created_at")
     .eq("mode", "live")
     .eq("ok", true)
     .gte("created_at", since)
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(25);
+  const rejections: DiagnosticRejection[] = [];
+  console.log(JSON.stringify({ evt: "live_gate_lookup_start", ...query, rows_seen: rows?.length ?? 0, signal_id: input.signalId ?? null }));
   for (const r of rows ?? []) {
-    const meta = (r.checks as Record<string, unknown> | null)?._meta as
-      { detail?: { base_url?: string }; base_url?: string } | undefined;
-    // Support both shapes: _meta.detail.base_url (current writer) and
-    // legacy _meta.base_url (older rows).
-    const recordedBase = meta?.detail?.base_url ?? meta?.base_url;
-    if (recordedBase === baseUrl) {
-      const created = new Date(r.created_at as string).getTime();
-      return {
-        id: r.id as string,
-        created_at: r.created_at as string,
-        age_ms: Date.now() - created,
-        base_url: recordedBase,
-      };
+    const created = new Date(r.created_at as string).getTime();
+    const age_ms = Date.now() - created;
+    const recorded = diagnosticBaseAndSymbol(r.checks);
+    const rejectionBase = {
+      diagnostic_id: r.id as string,
+      passed_at: r.created_at as string,
+      age_ms,
+      base_url: recorded.base_url,
+      symbol: recorded.symbol,
+    };
+    if (recorded.base_url !== expectedBase) {
+      const rej = { ...rejectionBase, reason: `base_url_mismatch:${recorded.base_url ?? "missing"}` };
+      rejections.push(rej);
+      console.log(JSON.stringify({ evt: "live_gate_diagnostic_rejected", ...query, ...rej, signal_id: input.signalId ?? null }));
+      continue;
     }
+    const match = {
+      id: r.id as string,
+      created_at: r.created_at as string,
+      age_ms,
+      base_url: recorded.base_url,
+      symbol: recorded.symbol,
+    };
+    console.log(JSON.stringify({
+      evt: "live_gate_diagnostic_selected",
+      worker_version: LIVE_GATE_WORKER_VERSION,
+      diagnostic_id: match.id,
+      passed_at: match.created_at,
+      age_ms: match.age_ms,
+      base_url: match.base_url,
+      symbol: match.symbol,
+      mode: "live",
+      executor_lookup_query: query,
+      signal_id: input.signalId ?? null,
+    }));
+    return { match, rejections, rows_seen: rows?.length ?? 0, query };
   }
-  return null;
+  console.log(JSON.stringify({ evt: "live_gate_lookup_no_match", ...query, rejections, signal_id: input.signalId ?? null }));
+  return { match: null, rejections, rows_seen: rows?.length ?? 0, query };
 }
