@@ -73,15 +73,22 @@ function SymbolsTab() {
         .from("health_snapshots")
         .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at")
         .order("created_at", { ascending: false })
-        .limit(1000);
-      const seen = new Set<string>();
-      const latest: Snap[] = [];
+        .limit(2000);
+      // Collapse to one row per ticker.
+      // Preferred: latest HEALTH_ALL snapshot (heartbeat = authoritative current state).
+      // Fallback: latest snapshot of any strategy when no HEALTH_ALL exists.
+      const allBySymbol = new Map<string, Snap[]>();
       for (const r of (data ?? []) as Snap[]) {
-        const k = `${r.symbol}|${r.strategy}|${r.tag ?? ""}`;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        latest.push(r);
+        const arr = allBySymbol.get(r.symbol) ?? [];
+        arr.push(r);
+        allBySymbol.set(r.symbol, arr);
       }
+      const latest: Snap[] = [];
+      for (const [, arr] of allBySymbol) {
+        const heartbeat = arr.find((r) => r.strategy === "HEALTH_ALL");
+        latest.push(heartbeat ?? arr[0]);
+      }
+      latest.sort((a, b) => a.symbol.localeCompare(b.symbol));
       return latest;
     },
   });
@@ -112,6 +119,7 @@ function SymbolsTab() {
   });
 
   const [editing, setEditing] = useState<Snap | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     if (!snaps || !symbols) return [];
@@ -139,55 +147,64 @@ function SymbolsTab() {
           <thead className="text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="py-2">Symbol</th>
-              <th>Strategy / tag</th>
+              <th>Kilde</th>
               <th className="text-right">Winrate</th>
               <th className="text-right">PF</th>
               <th className="text-right">Net profit</th>
               <th className="text-right">% equity</th>
               <th className="text-right">Lev</th>
               <th>Status</th>
-              <th>Kilde</th>
               <th>Sist</th>
               <th></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {rows.map((r) => (
-              <tr key={`${r.snap.symbol}|${r.snap.strategy}|${r.snap.tag}`}>
-                <td className="py-2 font-medium">{r.snap.symbol}</td>
-                <td className="text-xs text-muted-foreground">
-                  {r.snap.strategy}{r.snap.tag ? ` / ${r.snap.tag}` : ""}
-                </td>
-                <td className="text-right">{fmtNum(r.snap.winrate, 1)}{r.snap.winrate != null ? "%" : ""}</td>
-                <td className="text-right">{fmtNum(r.snap.profit_factor, 2)}</td>
-                <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
-                  {fmtNum(r.snap.net_profit, 2)}
-                </td>
-                <td className="text-right">{fmtNum(r.eval.balance_pct, 1)}</td>
-                <td className="text-right">{fmtNum(r.eval.leverage, 0)}x</td>
-                <td>
-                  {r.eval.blocked ? (
-                    <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">BLOCKED</span>
-                  ) : r.snap == null ? (
-                    <span className="rounded bg-yellow-500/20 px-2 py-0.5 text-xs text-yellow-600">no data</span>
-                  ) : (
-                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-600">trades</span>
-                  )}
-                </td>
-                <td className="text-xs text-muted-foreground">{r.eval.source}</td>
-                <td className="text-xs text-muted-foreground">
-                  {r.snap.bar_time ? new Date(r.snap.bar_time).toLocaleString() : "—"}
-                </td>
-                <td className="text-right">
-                  <button
-                    className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/40"
-                    onClick={() => setEditing(r.snap)}
-                  >
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const noSymbol = !r.sym;
+              const sourceLabel = r.snap.strategy === "HEALTH_ALL" ? "heartbeat" : `via ${r.snap.strategy}`;
+              return (
+                <tr key={r.snap.symbol}>
+                  <td className="py-2 font-medium">{r.snap.symbol}</td>
+                  <td className="text-xs text-muted-foreground">{sourceLabel}</td>
+                  <td className="text-right">{fmtNum(r.snap.winrate, 1)}{r.snap.winrate != null ? "%" : ""}</td>
+                  <td className="text-right">{fmtNum(r.snap.profit_factor, 2)}</td>
+                  <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
+                    {fmtNum(r.snap.net_profit, 2)}
+                  </td>
+                  <td className="text-right">{noSymbol ? "—" : fmtNum(r.eval.balance_pct, 1)}</td>
+                  <td className="text-right">{noSymbol ? "—" : `${fmtNum(r.eval.leverage, 0)}x`}</td>
+                  <td>
+                    {noSymbol ? (
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">unregistered</span>
+                    ) : r.eval.blocked ? (
+                      <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">BLOCKED</span>
+                    ) : (
+                      <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-600">trades</span>
+                    )}
+                  </td>
+                  <td className="text-xs text-muted-foreground">
+                    {r.snap.bar_time ? new Date(r.snap.bar_time).toLocaleString() : "—"}
+                  </td>
+                  <td className="text-right">
+                    {noSymbol ? (
+                      <button
+                        className="rounded border border-primary px-2 py-1 text-xs text-primary hover:bg-primary/10"
+                        onClick={() => setAdding(r.snap.symbol)}
+                      >
+                        + Add symbol
+                      </button>
+                    ) : (
+                      <button
+                        className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/40"
+                        onClick={() => setEditing(r.snap)}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -201,6 +218,7 @@ function SymbolsTab() {
           onClose={() => setEditing(null)}
         />
       )}
+      {adding && <AddSymbolModal symbol={adding} onClose={() => setAdding(null)} />}
     </Card>
   );
 }
