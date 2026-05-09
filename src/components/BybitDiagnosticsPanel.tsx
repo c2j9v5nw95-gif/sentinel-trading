@@ -105,6 +105,14 @@ export function BybitDiagnosticsPanel() {
       : null,
   } as DiagnosticResponse : null);
 
+  // Derive active base URL — prefer top-level (fresh run); fall back to _meta in checks.
+  const metaDetail = (view?.checks?._meta?.detail ?? null) as
+    | { base_url?: string; is_alternate?: boolean; base_source?: string; default_base?: string }
+    | null;
+  const activeBaseUrl = view?.base_url ?? metaDetail?.base_url ?? null;
+  const isAlternateBase = view?.is_alternate_base ?? metaDetail?.is_alternate ?? false;
+  const defaultBase = view?.default_base ?? metaDetail?.default_base ?? "https://api.bybit.com";
+
   const safeOrderReady = !safeOrder || confirmPhrase === SAFE_ORDER_PHRASE;
 
   return (
