@@ -49,7 +49,32 @@ interface SmokeRow {
 
 export function BridgeStatusPanel() {
   const qc = useQueryClient();
+  const [flipPhrase, setFlipPhrase] = useState("");
 
+  const { data: settings } = useQuery({
+    queryKey: ["app_settings", "bridge_flag"],
+    queryFn: async () => {
+      const { data } = await supabase.from("app_settings")
+        .select("id, use_execution_bridge, live_enabled").maybeSingle();
+      return data;
+    },
+    refetchInterval: 10_000,
+  });
+
+  const flipBridge = useMutation({
+    mutationFn: async (next: boolean) => {
+      if (!settings?.id) throw new Error("settings_missing");
+      const { error } = await supabase.from("app_settings")
+        .update({ use_execution_bridge: next })
+        .eq("id", settings.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setFlipPhrase("");
+      qc.invalidateQueries({ queryKey: ["app_settings"] });
+      qc.invalidateQueries({ queryKey: ["app_settings", "bridge_flag"] });
+    },
+  });
   const { data: rows } = useQuery({
     queryKey: ["bridge_health_checks"],
     queryFn: async () => {
