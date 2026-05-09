@@ -173,6 +173,48 @@ export type Database = {
         }
         Relationships: []
       }
+      balance_snapshots: {
+        Row: {
+          account_mode: string | null
+          available_balance: number | null
+          captured_at: string
+          error: string | null
+          id: string
+          raw: Json | null
+          realized_pnl: number | null
+          source: string
+          total_equity: number | null
+          unrealized_pnl: number | null
+          used_margin: number | null
+        }
+        Insert: {
+          account_mode?: string | null
+          available_balance?: number | null
+          captured_at?: string
+          error?: string | null
+          id?: string
+          raw?: Json | null
+          realized_pnl?: number | null
+          source: string
+          total_equity?: number | null
+          unrealized_pnl?: number | null
+          used_margin?: number | null
+        }
+        Update: {
+          account_mode?: string | null
+          available_balance?: number | null
+          captured_at?: string
+          error?: string | null
+          id?: string
+          raw?: Json | null
+          realized_pnl?: number | null
+          source?: string
+          total_equity?: number | null
+          unrealized_pnl?: number | null
+          used_margin?: number | null
+        }
+        Relationships: []
+      }
       bridge_health_checks: {
         Row: {
           bridge_version: string | null
