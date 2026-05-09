@@ -4,10 +4,10 @@ import { AppLayout } from "@/components/AppLayout";
 
 export const Route = createFileRoute("/_app")({
   beforeLoad: async () => {
-    // getSession() reads the cached session and auto-refreshes the access
-    // token if it's near expiry. getUser() would force a network round-trip
-    // and 401 the moment the access token expired, kicking the user out
-    // even when their refresh token is still valid.
+    // SSR har ingen localStorage; la klient-siden avgjøre etter hydrering.
+    // Uten denne guarden bouncer hver SSR-runde (Vite-restart, hard reload,
+    // deeplink) brukeren til /login fordi getSession() returnerer null på serveren.
+    if (typeof window === "undefined") return;
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw redirect({ to: "/login" });
   },
