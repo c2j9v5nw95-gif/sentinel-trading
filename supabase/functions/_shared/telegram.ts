@@ -18,6 +18,7 @@ export type Category =
   | "bybit_diagnostic_failure"
   | "dead_letter"
   | "emergency_stop"
+  | "bridge_unreachable"
   | "test";
 
 export interface AlertPayload {
