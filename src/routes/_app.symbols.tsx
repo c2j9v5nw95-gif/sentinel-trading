@@ -200,6 +200,20 @@ function SymbolsPage() {
           }}
         />
       )}
+
+      {adding && (
+        <AddSymbolDialog
+          existing={(data ?? []).map((s) => s.symbol.toUpperCase())}
+          busy={addSymbol.isPending}
+          onCancel={() => setAdding(false)}
+          onConfirm={(args) =>
+            addSymbol.mutate(args, {
+              onSuccess: () => setAdding(false),
+              onError: (e) => alert((e as Error).message),
+            })
+          }
+        />
+      )}
     </>
   );
 }
