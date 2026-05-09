@@ -51,8 +51,9 @@ export async function executeEntry(
   signal: any,
   mode: ExecutionMode,
   trail: Trail,
+  opts?: { liveGatePassed?: boolean },
 ): Promise<ExecOutcome> {
-  const client = getClient(mode, sb);
+  const client = getClient(mode, sb, opts);
   const sym = await loadSymbolConfig(sb, signal.symbol);
   const action = signal.action as SignalAction;
   const side = sideOf(action);
