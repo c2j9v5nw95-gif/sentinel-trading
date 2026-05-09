@@ -192,6 +192,35 @@ export function BybitDiagnosticsPanel() {
               )}
             </div>
 
+            {activeBaseUrl && (
+              <div className={`rounded-md border p-2 text-xs ${
+                isAlternateBase
+                  ? "border-warning/40 bg-warning/10"
+                  : "border-border/60 bg-muted/40"
+              }`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-muted-foreground">Active base URL:</span>
+                  <code className="font-mono">{activeBaseUrl}</code>
+                  {isAlternateBase ? (
+                    <span className="rounded border border-warning/50 bg-warning/15 px-1.5 py-0.5 font-semibold text-warning">
+                      ALTERNATE
+                    </span>
+                  ) : (
+                    <span className="rounded border border-success/40 bg-success/15 px-1.5 py-0.5 font-semibold text-success">
+                      OFFICIAL
+                    </span>
+                  )}
+                </div>
+                {isAlternateBase && view?.mode === "live" && (
+                  <p className="mt-1 text-muted-foreground">
+                    Operator override via <code>BYBIT_API_BASE_URL</code> (default is <code>{defaultBase}</code>).
+                    Live execution against this endpoint is BLOCKED until a fresh diagnostic passes here.
+                    Re-run the diagnostic above after any change to confirm the new endpoint signs correctly.
+                  </p>
+                )}
+              </div>
+            )}
+
             {view.error && (
               <div className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs space-y-1">
                 <div className="font-mono text-danger">{view.error.code}</div>
