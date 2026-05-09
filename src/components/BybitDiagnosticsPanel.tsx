@@ -5,10 +5,21 @@ import { Card } from "@/components/PageHeader";
 
 type Mode = "testnet" | "live";
 
+interface TransportDiagnostics {
+  base_url?: string;
+  endpoint?: string;
+  http_status?: number;
+  content_type?: string;
+  cf_ray?: string;
+  server?: string;
+  request_id?: string;
+  body_snippet?: string;
+}
+
 interface CheckResult {
   ok: boolean;
   detail?: unknown;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; detail?: TransportDiagnostics };
   ms?: number;
 }
 
