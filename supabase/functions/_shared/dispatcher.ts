@@ -42,9 +42,9 @@ async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
   };
   await sb.from("health_snapshots").insert({
     symbol: signal.symbol, strategy: signal.strategy, tag: signal.tag ?? "",
-    net_profit: num(payload.net_profit),
+    net_profit: num(payload.net_profit ?? payload.netProfit),
     winrate: num(payload.winrate),
-    profit_factor: num(payload.profit_factor),
+    profit_factor: num(payload.profit_factor ?? payload.profitFactor),
     bar_time: signal.bar_time,
     source_signal_id: signal.id,
     payload,
