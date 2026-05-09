@@ -269,33 +269,6 @@ function SettingsPage() {
           ) : null}
         </Card>
 
-        <Card title="Webhook secret">
-          {data ? (
-            <dl className="grid grid-cols-2 gap-3 text-sm tabular">
-              <dt className="text-muted-foreground">Version</dt>
-              <dd>v{data.webhook_secret_version}</dd>
-              <dt className="text-muted-foreground">Hint (last 4)</dt>
-              <dd>{data.webhook_secret_hint ?? "—"}</dd>
-              <dt className="text-muted-foreground">Rotated at</dt>
-              <dd>
-                {data.webhook_secret_rotated_at
-                  ? new Date(data.webhook_secret_rotated_at).toLocaleString()
-                  : "never"}
-              </dd>
-            </dl>
-          ) : null}
-          <button
-            disabled
-            title="Wired in Phase 3"
-            className="mt-4 rounded-md border border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground"
-          >
-            Rotate webhook secret
-          </button>
-          <p className="mt-2 text-xs text-muted-foreground">
-            The actual secret value lives in Edge Function secrets. The database stores
-            only metadata.
-          </p>
-        </Card>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4">
         <LiveRiskBreakerCard />
