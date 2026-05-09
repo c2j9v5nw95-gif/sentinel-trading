@@ -1,82 +1,105 @@
-# Plan: balance_snapshots + isolert snapshot-service
+## Mål
 
-Strengt read-only analytics-lag. Ingen endringer i dispatcher, bridge, executor, risk engine, sizing, signal-handling eller execution clients.
+Forbedre Telegram-meldingene slik at du:
+1. Får en **bekreftet entry-melding** som viser at SL faktisk er satt på Bybit (med pris og %), og hvilken TSL-konfig som vil aktiveres senere.
+2. Får en **avsluttende minirapport** når en posisjon stenges — med PnL i USDT og %, hva som avsluttet trade, holdetid, entry/exit-pris osv.
+3. Får faktisk Telegram-melding også når SL eller TSL trigger via `protection-monitor` (i dag: helt stille).
 
-## 1. Ny tabell: `balance_snapshots`
+Strengt kun varsel-/notifikasjons-laget. **Ingen endringer i** dispatcher, executor-flyten, ordre-routing, sizing, risk engine eller bridge.
 
-Read-only fra UI-perspektiv. Skrives kun av snapshot-edge-funksjonen.
+---
 
-Kolonner:
-- `id uuid pk`
-- `source text` — `'paper'` eller `'live'`
-- `captured_at timestamptz default now()` (indeksert)
-- `total_equity numeric` — total konto-equity i USDT
-- `available_balance numeric` — fri saldo
-- `unrealized_pnl numeric`
-- `realized_pnl numeric` (kun paper; null for live)
-- `used_margin numeric`
-- `account_mode text` — f.eks. `unified:3` eller `paper`
-- `raw jsonb` — full respons (debug / fremtidige metrics)
-- `error text` — populeres hvis snapshot feilet (vi lagrer rad uansett for monitoring)
+## Endringer
 
-Indekser: `(source, captured_at desc)`.
+### 1. `supabase/functions/_shared/telegram.ts` — rikere melding
 
-RLS: kun `operator` kan lese. Ingen insert/update/delete-policy → kun service-role (cron + edge function) kan skrive. Mønster identisk med `bridge_health_checks` / `bridge_smoke_tests`.
+Utvid `AlertPayload` med valgfrie felter:
+- `entry_price`, `exit_price`
+- `pnl_pct` (PnL i % av notional)
+- `hold_seconds` (varighet)
+- `sl_price`, `sl_pct`, `tsl_enabled`, `tsl_activation_pct`, `tsl_callback_pct`
+- `confirmed_by_venue: boolean` (entry-bekreftelse)
 
-## 2. Ny edge function: `analytics-snapshot-balances`
+Oppdater `buildMessage()` slik at:
+- For `live_entry`: viser entry pris + qty + leverage + exposure + en "Protection"-blokk med `SL @ <pris> (-<sl_pct>%) ✅ confirmed` og `TSL: aktiveres ved +<X>%, callback <Y>%`. Hvis `confirmed_by_venue=false` → vis ⚠️ i stedet.
+- For `tp_hit`/`sl_hit`/`live_exit`: rendres som en **mini-rapport**:
+  ```
+  ✅ EXIT — PENGUUSDT LONG
+  Reason: TP1 hit
+  Entry: 0.01234 → Exit: 0.01290
+  Qty: 1234.5 (50% closed)
+  PnL: +6.91 USDT (+4.55%)
+  Hold: 2m 14s
+  ```
+  Tegn (✅/❌) basert på `pnl ≥ 0`.
 
-**Helt separat fra execution-stacken.** Importerer ikke fra `_shared/dispatcher.ts`, `_shared/executor.ts`, `_shared/live-client.ts`, `_shared/venue-client.ts`, `_shared/locks.ts`, `_shared/risk-engine.ts` eller `_shared/sizing*`.
+Ingen endringer i gating (rate limit / dedupe / severity beholdes).
 
-Tillatte imports:
-- `_shared/db.ts` (kun `serviceClient`)
-- `_shared/bybit-rest.ts` (read-only signer; brukes allerede av `op-live-wallet` og `op-test-bybit-connection`)
+### 2. `supabase/functions/_shared/executor.ts` — entry & exit
 
-Logikk:
-1. Les `paper_wallet` (singleton-rad). Skriv én rad med `source='paper'`.
-2. Les `app_settings.live_enabled`. Hvis true OG `BYBIT_LIVE_API_KEY` + `BYBIT_LIVE_API_SECRET` finnes:
-   - Kall `/v5/account/info` og `/v5/account/wallet-balance` (samme kall som `op-live-wallet`).
-   - Skriv én rad med `source='live'`.
-3. Ved feil: logg en rad med `error` satt, `total_equity=null`. Funksjonen returnerer alltid 200 så cron ikke kverner retries.
+**Entry (`executeEntry`):**
+- Flytt `notify({ category: "live_entry" })` slik at den sendes **etter** at SL er forsøkt satt (ikke før).
+- Inkluder i payload: `entry_price`, `sl_price`, `sl_pct`, `tsl_enabled`, `tsl_activation_pct`, `tsl_callback_pct`, `confirmed_by_venue: true`.
+- Hvis SL feiler og auto-close-pathen kjører: `unprotected_position`-meldingen finnes allerede — uendret.
 
-Konservativ: ingen ordre-API, ingen position-API, ingen mutasjoner mot Bybit. Kun GET wallet-endpoints.
+**Exit (`executeExit`):**
+- I `notify({ category: tp_hit | sl_hit | live_exit })` (rundt linje 532), legg til:
+  - `entry_price = posRow.entry_price`
+  - `exit_price = fillPrice`
+  - `pnl` (finnes), `pnl_pct = pnl / (entry_price * filledQty) * 100`
+  - `hold_seconds = (now - posRow.opened_at) / 1000`
+  - `qty = fill.filledQty`, `leverage = posRow.leverage`
+  - Bedre `reason`-streng (f.eks. "TP1 hit", "TP2 (rest) hit", "SL failsafe", "Manual exit").
 
-`supabase/config.toml`: `verify_jwt = false` for funksjonen siden den kalles av cron uten JWT.
+### 3. `supabase/functions/protection-monitor/index.ts` — TSL/SL-stille-exit
 
-## 3. pg_cron: hvert 5. minutt
+I `closeAtMarket()`, etter vellykket fyll og DB-update:
+- Beregn `pnl` og `pnl_pct` (samme formel som executor).
+- Kall `notify({ category: reason === "sl" ? "sl_hit" : "tsl_update" /* eller ny "tsl_hit" via live_exit */ })` med samme rike payload som exit-rapporten.
+- Bruk **eksisterende kategorier** (`sl_hit`, `tp_hit`, `live_exit`) — ingen DB-/enum-endringer. TSL-trigger rapporteres som `live_exit` med `reason: "TSL hit"` for å unngå å innføre ny kategori.
 
-Via supabase--insert (ikke migrasjon, siden URL/anon-key er prosjektspesifikk):
+Kun for `mode !== "paper"`, som ellers i koden.
 
-```sql
-select cron.schedule(
-  'analytics-snapshot-balances-5min',
-  '*/5 * * * *',
-  $$ select net.http_post(
-       url:='https://djqhpgbsgelzhrfyxfhl.supabase.co/functions/v1/analytics-snapshot-balances',
-       headers:='{"Content-Type":"application/json","apikey":"<anon>"}'::jsonb,
-       body:='{}'::jsonb
-     ) $$
-);
+---
+
+## Hva som IKKE endres
+
+- Ingen endring i `signals`, `positions`, `orders`, `notification_settings` schema.
+- Ingen endring i hvilke kategorier som er aktivert by default.
+- Ingen endring i rate limit / dedupe.
+- Ingen endring i dispatcher, sizing, risk-engine, bridge eller live execution-pathen.
+- `paper_wallet`-oppdatering uendret.
+
+---
+
+## Eksempel — slik vil neste PENGUUSDT-trade se ut på Telegram
+
+**Entry (etter at SL er bekreftet på Bybit):**
+```
+ℹ️ LIVE_ENTRY [WARNING]
+Symbol: PENGUUSDT LONG
+Leverage: 10x · Qty: 1234.5 · Entry: 0.01234
+Exposure: 152.34 USDT
+
+Protection ✅
+SL @ 0.01215 (−1.50%) confirmed
+TSL: arms at +1.0% profit, 0.5% callback
 ```
 
-Ekstensjoner `pg_cron` og `pg_net` aktiveres hvis ikke allerede på.
+**Exit:**
+```
+✅ TP_HIT — PENGUUSDT LONG
+Reason: TP1 hit (50% closed)
+Entry: 0.01234 → Exit: 0.01290
+Qty: 617.2
+PnL: +3.46 USDT (+2.80%)
+Hold: 2m 14s
+```
 
-## 4. UI: ingen endringer i denne runden
+---
 
-Tabellen begynner å samle data umiddelbart. Equity curve / drawdown-grafer kobles på når vi bygger den nye Overview/Analytics-siden i neste runde — da har vi historikk å vise fra dag 1.
+## Risiko / forbehold
 
-## Garantier
-
-- Ingen filer i `_shared/dispatcher.ts`, `_shared/executor.ts`, `_shared/live-client.ts`, `_shared/risk-engine.ts`, `_shared/sizing*`, `_shared/locks.ts`, `_shared/bridge-rest.ts`, eller noen `execute-*` / `process-signal` / `protection-monitor` / `bybit-reconcile` / `bybit-recovery` funksjon røres.
-- Snapshot-funksjonen er en isolert leser. Den deler kun den lavnivå HMAC-signeren (`bybit-rest.ts`) som allerede brukes av andre read-only diagnose-endepunkter.
-- 5-minutters cadence → ~288 rader/dag/source. Ubetydelig DB-belastning. Ingen rate-limit-risiko mot Bybit (read-endpoints, ett kall hvert 5. min).
-- Feil i snapshot påvirker ikke trading: cron logger til `cron.job_run_details`, funksjonen returnerer 200, raden får `error`-felt satt for synlighet.
-
-## Tekniske detaljer (utvikler)
-
-Filer som opprettes:
-- migration: `create table public.balance_snapshots ...` + RLS
-- `supabase/functions/analytics-snapshot-balances/index.ts`
-- `supabase/config.toml`: legge til block for ny funksjon med `verify_jwt = false`
-- supabase--insert: `cron.schedule(...)` + `create extension if not exists pg_cron; create extension if not exists pg_net;`
-
-Ingen klient-kode eller trading-relaterte filer endres.
+- Entry-meldingen sendes nå ~100–500 ms senere (etter SL-bekreftelse). Det er fortsatt umiddelbart i menneskelig tidsskala.
+- TSL-trigger som tidligere var stille på Telegram blir nå hørbar — det vil si flere meldinger ved aktiv handel. Hvis det blir for mye, kan vi senere legge til en egen toggle.
+- Rate limit på 60 s gjelder fortsatt — entry og exit som kommer innen 60 s av hverandre kan fortsatt bli kollapset. Du har sagt du øker TV-timeframe, så dette skal ikke være et problem i praksis.
