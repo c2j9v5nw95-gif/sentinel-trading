@@ -241,6 +241,14 @@ export async function dispatchSignal(
       liveGatePassed = true;
     }
 
+    // Resolve operator-controlled bridge mode for live execution. Cheap (one
+    // row from app_settings); only consulted in live mode.
+    let useBridge: boolean | undefined;
+    if (resolved.mode === "live") {
+      useBridge = await resolveUseExecutionBridge(sb);
+      trail.add("live_bridge_mode_resolved", "info", useBridge ? "bridge" : "direct");
+    }
+
     trail.add("accepted", "info");
 
     const lockKind = exitMode ? "exit" : "entry";
@@ -248,8 +256,8 @@ export async function dispatchSignal(
       { signalId: signal.id, allowPreempt: exitMode },
       async () => {
         return exitMode
-          ? await executeExit(sb, signal, resolved.mode, trail, { liveGatePassed })
-          : await executeEntry(sb, signal, resolved.mode, trail, { liveGatePassed });
+          ? await executeExit(sb, signal, resolved.mode, trail, { liveGatePassed, useBridge })
+          : await executeEntry(sb, signal, resolved.mode, trail, { liveGatePassed, useBridge });
       });
 
     if (!locked.ok && locked.reason === "symbol_busy") {
