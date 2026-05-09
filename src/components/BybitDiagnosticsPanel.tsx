@@ -237,6 +237,20 @@ export function BybitDiagnosticsPanel() {
                     Re-run the diagnostic above after any change to confirm the new endpoint signs correctly.
                   </p>
                 )}
+                {mode === "live" && validatingRecord && validatedAgeMs != null && (
+                  <p className="mt-1 text-success">
+                    ✓ Active base URL validated for live execution
+                    <span className="ml-1 text-muted-foreground">
+                      (record {String(validatingRecord.id).slice(0, 8)} · passed {Math.round(validatedAgeMs / 60000)}m ago · valid for 60m)
+                    </span>
+                  </p>
+                )}
+                {mode === "live" && isAlternateBase && !validatingRecord && (
+                  <p className="mt-1 text-danger">
+                    ✗ No passing diagnostic for this base URL within the last 60m — live execution will be rejected with{" "}
+                    <code>live_gate:alternate_base_requires_passing_diagnostic</code>.
+                  </p>
+                )}
               </div>
             )}
 
