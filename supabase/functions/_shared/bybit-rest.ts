@@ -187,6 +187,8 @@ export class BybitRest {
         );
       } catch (e) {
         lastError = e as Error;
+        // Transport errors (Cloudflare/WAF block, non-JSON) are never retried.
+        if (e instanceof BybitTransportError) throw e;
         if (e instanceof BybitError) {
           const retryable = isRetryableHttpStatus(e.httpStatus) || RETRYABLE_RET_CODES.has(e.retCode);
           if (retryable && attempt < MAX_ATTEMPTS) {
