@@ -427,6 +427,10 @@ Deno.serve(async (req) => {
 
   return json({
     ok, mode, symbol, checks, permissions, account_type: accountType,
+    base_url: creds.baseUrl,
+    is_alternate_base: creds.is_alternate,
+    base_source: creds.base_source,
+    default_base: DEFAULT_LIVE_BASE,
     last_response: lastResponse, error: topError,
   });
 });
