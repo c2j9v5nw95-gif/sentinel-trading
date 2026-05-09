@@ -120,8 +120,8 @@ function RootComponent() {
         queryClient.clear();
         router.navigate({ to: "/login" });
       } else if (event === "TOKEN_REFRESHED") {
-        // New access token — let in-flight queries pick it up.
-        queryClient.invalidateQueries();
+        // No-op: Supabase persisterer ny token automatisk; ingen grunn til å
+        // invalidere alle queries hver gang access-tokenet rulleres.
       } else if (event === "SIGNED_IN") {
         // Re-evaluate route guards (e.g. _app beforeLoad) without a refresh.
         router.invalidate();
