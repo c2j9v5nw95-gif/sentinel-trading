@@ -814,6 +814,7 @@ export type Database = {
       }
       raw_alerts: {
         Row: {
+          auth_method: string | null
           auth_status: Database["public"]["Enums"]["auth_status"]
           body_text: string | null
           created_at: string
@@ -825,6 +826,7 @@ export type Database = {
           transport: Database["public"]["Enums"]["transport_kind"]
         }
         Insert: {
+          auth_method?: string | null
           auth_status: Database["public"]["Enums"]["auth_status"]
           body_text?: string | null
           created_at?: string
@@ -836,6 +838,7 @@ export type Database = {
           transport: Database["public"]["Enums"]["transport_kind"]
         }
         Update: {
+          auth_method?: string | null
           auth_status?: Database["public"]["Enums"]["auth_status"]
           body_text?: string | null
           created_at?: string
