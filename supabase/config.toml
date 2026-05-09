@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.record-health]
 verify_jwt = false
+
+[functions.op-bridge-health]
+verify_jwt = false
