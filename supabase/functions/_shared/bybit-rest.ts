@@ -154,7 +154,12 @@ export class BybitRest {
       } catch (e) {
         lastError = e as Error;
         if (e instanceof BybitError) {
-          if (attempt >= MAX_ATTEMPTS) throw e;
+          const retryable = isRetryableHttpStatus(e.httpStatus) || RETRYABLE_RET_CODES.has(e.retCode);
+          if (retryable && attempt < MAX_ATTEMPTS) {
+            await sleep(jitter(250 * attempt));
+            continue;
+          }
+          throw e;
         } else if (attempt < MAX_ATTEMPTS) {
           await sleep(jitter(300 * attempt));
           continue;
