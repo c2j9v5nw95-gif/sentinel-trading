@@ -9,7 +9,8 @@ import type {
   BybitClient, PositionSnapshot, SubmitOrderRequest, SubmitOrderResult, WalletSnapshot,
 } from "./bybit-client.ts";
 import type { ExecutionMode } from "./execution-mode.ts";
-import { BybitRest, BybitError } from "./bybit-rest.ts";
+import { BybitRest, BybitError, type BybitTrace } from "./bybit-rest.ts";
+import { buildPositionListRequest, buildOrderCreateRequest } from "./bybit-requests.ts";
 
 interface SymbolMeta { category: "linear"; }
 
@@ -30,6 +31,49 @@ export class VenueBybitClient implements BybitClient {
       apiSecret: opts.apiSecret,
       baseUrl: opts.baseUrl,
       label: `${opts.mode}-executor`,
+      traceWriter: (trace) => this.persistTrace(trace),
+    });
+  }
+
+  /** Tag every subsequent call with this signal id so traces can be diff'd. */
+  setSignalContext(signalId: string | null) { this.rest.setSignalContext(signalId); }
+
+  private async persistTrace(trace: BybitTrace) {
+    // Persist live traces always; testnet only when explicitly enabled.
+    if (this.mode !== "live" && Deno.env.get("BYBIT_PERSIST_TESTNET_TRACES") !== "1") return;
+    await this.sb.from("bybit_request_traces").insert({
+      label: trace.label,
+      mode: this.mode,
+      signal_id: trace.signal_id,
+      base_url: trace.base_url,
+      endpoint: trace.endpoint,
+      method: trace.method,
+      query: trace.query,
+      query_string: trace.query_string,
+      body_keys: trace.body_keys,
+      body_size: trace.body_size,
+      body_sha256_prefix: trace.body_sha256_prefix,
+      recv_window_ms: trace.recv_window_ms,
+      timestamp_ms: trace.timestamp_ms,
+      sign_payload_prefix: trace.sign_payload_prefix,
+      sign_len: trace.sign_len,
+      api_key_prefix: trace.api_key_prefix,
+      idempotency_key: trace.idempotency_key,
+      attempt: trace.attempt,
+      http_status: trace.http_status,
+      content_type: trace.content_type,
+      cf_ray: trace.cf_ray,
+      server: trace.server,
+      bapi_request_id: trace.bapi_request_id,
+      amz_cf_id: trace.amz_cf_id,
+      amz_cf_pop: trace.amz_cf_pop,
+      via: trace.via,
+      ret_code: trace.ret_code,
+      ret_msg: trace.ret_msg,
+      body_snippet: trace.body_snippet,
+      duration_ms: trace.duration_ms,
+      ok: trace.ok,
+      error_kind: trace.error_kind,
     });
   }
 
@@ -53,11 +97,9 @@ export class VenueBybitClient implements BybitClient {
 
   async getPosition(symbol: string): Promise<PositionSnapshot> {
     const meta = await this.meta(symbol);
-    const r = await this.rest.request<{ list: Array<{ symbol: string; side: string; size: string; avgPrice: string; leverage: string }> }>({
-      endpoint: "/v5/position/list",
-      method: "GET",
-      query: { category: meta.category, symbol },
-    });
+    const r = await this.rest.request<{ list: Array<{ symbol: string; side: string; size: string; avgPrice: string; leverage: string }> }>(
+      buildPositionListRequest({ category: meta.category, symbol }),
+    );
     const row = r.result?.list?.find((p) => Number(p.size) > 0);
     if (!row) return { symbol, side: "none", size: 0, entryPrice: null, leverage: null };
     return {
