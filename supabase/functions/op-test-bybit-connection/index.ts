@@ -350,15 +350,14 @@ Deno.serve(async (req) => {
   // path the executor uses with deliberately-invalid qty=0. Lets us prove
   // whether Cloudflare/WAF lets us through, separately from API logic.
   if (checks.api_auth.ok) {
-    const t = await timed(() => rest.request({
-      endpoint: "/v5/order/create", method: "POST",
-      body: {
+    const t = await timed(() => rest.request(
+      buildOrderCreateRequest({
         category: "linear", symbol, side: "Buy", orderType: "Market",
         qty: "0", reduceOnly: false,
         orderLinkId: `REACH-${Date.now().toString(36)}`,
         timeInForce: "IOC",
-      },
-    }));
+      }),
+    ));
     if (t.err) {
       const err = explainBybitError(t.err);
       // A bybit_<retCode> response (any retCode) means we REACHED the endpoint
