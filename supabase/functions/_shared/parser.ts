@@ -55,12 +55,29 @@ function num(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+// Accept ISO strings as-is and convert numeric epoch (seconds or milliseconds)
+// to ISO. TradingView's HEALTH alerts emit `barTime=1778311800000` (epoch ms);
+// Postgres timestamptz cannot parse a bare number string, so we normalize here.
+function normalizeBarTime(v: unknown): string | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const s = String(v).trim();
+  if (/^\d+$/.test(s)) {
+    const n = Number(s);
+    if (!Number.isFinite(n)) return undefined;
+    // Heuristic: < 10^12 → seconds, otherwise milliseconds.
+    const ms = n < 1e12 ? n * 1000 : n;
+    return new Date(ms).toISOString();
+  }
+  return s;
+}
+
 function parseKvText(body: string): Record<string, string> {
   // Find the first occurrence of "<word>=" so we can tolerate prefixed noise.
   const startIdx = body.search(/[A-Za-z_][A-Za-z0-9_]*\s*=/);
   const slice = startIdx >= 0 ? body.slice(startIdx) : body;
-  // Split on ';' or any newline. Tabs/extra spaces handled by trim.
-  const parts = slice.split(/[;\n\r]+/);
+  // Split on ';', newline, or '|' (TradingView often glues alert message and
+  // study output with ' | ' between the two halves).
+  const parts = slice.split(/[;\n\r|]+/);
   const obj: Record<string, string> = {};
   for (const part of parts) {
     const idx = part.indexOf("=");
@@ -122,7 +139,7 @@ function fromObject(o: Record<string, unknown>): ParsedAlert {
     tag: o.tag != null ? String(o.tag) : "",
     strategy_code: strategyCode,
     portion: o.portion != null ? String(o.portion) : undefined,
-    bar_time: o.barTime != null ? String(o.barTime) : (o.bar_time != null ? String(o.bar_time) : undefined),
+    bar_time: normalizeBarTime(o.barTime ?? o.bar_time),
     net_profit: num(o.netProfit ?? o.net_profit),
     winrate: num(o.winrate),
     profit_factor: num(o.profitFactor ?? o.profit_factor),
