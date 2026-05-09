@@ -123,7 +123,7 @@ function fromObject(o: Record<string, unknown>): ParsedAlert {
     tag: o.tag != null ? String(o.tag) : "",
     strategy_code: strategyCode,
     portion: o.portion != null ? String(o.portion) : undefined,
-    bar_time: o.barTime != null ? String(o.barTime) : (o.bar_time != null ? String(o.bar_time) : undefined),
+    bar_time: normalizeBarTime(o.barTime ?? o.bar_time),
     net_profit: num(o.netProfit ?? o.net_profit),
     winrate: num(o.winrate),
     profit_factor: num(o.profitFactor ?? o.profit_factor),
