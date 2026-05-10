@@ -79,11 +79,33 @@ function backoffElapsed(pos: PositionRow): boolean {
 
 
 
+async function reconcileFlat(
+  sb: SupabaseClient, pos: PositionRow, reason: string,
+): Promise<void> {
+  await sb.from("positions").update({
+    qty_open: 0, closed_at: new Date().toISOString(),
+    protection_state: "closed",
+    exit_recovery_state: "recovered",
+    exit_recovery_last_error: null,
+  }).eq("id", pos.id);
+  await sb.from("position_events").insert({
+    position_id: pos.id, event_type: "exit_recovery_succeeded",
+    detail: { attempt: pos.exit_recovery_attempts ?? 0, reason, source: "venue_flat_recheck" },
+  });
+  await sb.from("audit_log").insert({
+    action: "exit_recovery_succeeded", target: pos.id,
+    after: { reason, source: "venue_flat_recheck" },
+  });
+}
+
 async function attemptRecovery(
   sb: SupabaseClient, pos: PositionRow, venueSize: number, venueSide: "long" | "short" | "none",
 ): Promise<"recovered" | "retry" | "manual"> {
   const attempt = (pos.exit_recovery_attempts ?? 0) + 1;
   const linkId = shortLink(pos.id, attempt);
+  const transport = pos.execution_mode === "live"
+    ? (bridgeConfigured() ? "bridge" : "direct")
+    : "direct";
 
   // Mark in_progress immediately so a concurrent dispatcher won't double-flag.
   await sb.from("positions").update({
@@ -94,11 +116,11 @@ async function attemptRecovery(
 
   await sb.from("position_events").insert({
     position_id: pos.id, event_type: "exit_recovery_attempted",
-    detail: { attempt, link_id: linkId, venue_size: venueSize, venue_side: venueSide },
+    detail: { attempt, link_id: linkId, venue_size: venueSize, venue_side: venueSide, transport },
   });
   await sb.from("audit_log").insert({
     action: "exit_recovery_attempted", target: pos.id,
-    after: { attempt, link_id: linkId, max_attempts: MAX_RECOVERY_ATTEMPTS },
+    after: { attempt, link_id: linkId, max_attempts: MAX_RECOVERY_ATTEMPTS, transport },
   });
 
   // Use the venue size as the source of truth — never the local qty_open.
@@ -106,11 +128,15 @@ async function attemptRecovery(
   const submitSide = pos.side === "long" ? "Sell" : "Buy";
 
   let lastError: string | null = null;
+  let client: BybitClient;
   try {
-    const client = pos.execution_mode === "live"
-      ? await getClientAsync("live", sb, { liveGatePassed: true })
-      : getClient(pos.execution_mode, sb);
+    client = recoveryClient(sb, pos.execution_mode);
+  } catch (e) {
+    lastError = `client_init_failed:${(e as Error).message?.slice(0, 200)}`;
+    return await failAttempt(sb, pos, attempt, linkId, lastError);
+  }
 
+  try {
     const fill = await client.submitOrder({
       symbol: pos.symbol, side: submitSide, qty,
       reduceOnly: true,                  // SAFETY: never opens new exposure.
@@ -121,7 +147,6 @@ async function attemptRecovery(
 
     if (fill.status === "filled") {
       const fillPrice = fill.avgFillPrice ?? Number(pos.entry_price ?? 0);
-      // Compute realized PnL.
       let pnl = 0; let pnlPct: number | null = null;
       if (pos.entry_price != null) {
         const dir = pos.side === "long" ? 1 : -1;
@@ -142,38 +167,64 @@ async function attemptRecovery(
 
       await sb.from("position_events").insert({
         position_id: pos.id, event_type: "exit_recovery_succeeded",
-        detail: { attempt, fill_price: fillPrice, qty: fill.filledQty, pnl, pnl_pct: pnlPct, link_id: linkId },
+        detail: { attempt, fill_price: fillPrice, qty: fill.filledQty, pnl, pnl_pct: pnlPct, link_id: linkId, transport },
       });
       await sb.from("audit_log").insert({
         action: "exit_recovery_succeeded", target: pos.id,
-        after: { attempt, fill_price: fillPrice, qty: fill.filledQty, pnl, pnl_pct: pnlPct },
+        after: { attempt, fill_price: fillPrice, qty: fill.filledQty, pnl, pnl_pct: pnlPct, transport },
       });
 
       const openedAt = pos.opened_at ? new Date(pos.opened_at).getTime() : null;
       const holdSec = openedAt ? (Date.now() - openedAt) / 1000 : null;
       if (pos.execution_mode !== "paper") {
         notify({
-          severity: "warning",
-          category: "live_exit",
-          execution_mode: pos.execution_mode,
-          symbol: pos.symbol, side: pos.side,
+          severity: "warning", category: "live_exit",
+          execution_mode: pos.execution_mode, symbol: pos.symbol, side: pos.side,
           qty: fill.filledQty,
           entry_price: pos.entry_price != null ? Number(pos.entry_price) : null,
-          exit_price: fillPrice,
-          pnl, pnl_pct: pnlPct, hold_seconds: holdSec,
+          exit_price: fillPrice, pnl, pnl_pct: pnlPct, hold_seconds: holdSec,
           leverage: pos.leverage != null ? Number(pos.leverage) : null,
-          reason: `Recovered exit (attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS}) — auto force-close`,
+          reason: `Recovered exit (attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS}) via ${transport} — auto force-close`,
         });
       }
       return "recovered";
     }
 
+    // unknown/submitted/rejected: never assume success. Re-check venue NOW.
+    // If venue is flat, the order (or a prior one) succeeded — reconcile only.
+    // If venue still open, treat as failure and retry with backoff.
     lastError = `unfilled:${fill.status}${fill.message ? ":" + fill.message : ""}`;
+    try {
+      const recheck = await client.getPosition(pos.symbol);
+      if (recheck.size <= 0) {
+        await reconcileFlat(sb, pos, `post_attempt_recheck:${fill.status}`);
+        return "recovered";
+      }
+    } catch (rcErr) {
+      lastError += `;recheck_failed:${(rcErr as Error).message?.slice(0, 100)}`;
+    }
   } catch (e) {
     lastError = (e as Error).message?.slice(0, 300) ?? "submit_threw";
+    // Submit threw — could still have reached venue. Re-check before retrying.
+    try {
+      const recheck = await client.getPosition(pos.symbol);
+      if (recheck.size <= 0) {
+        await reconcileFlat(sb, pos, `post_throw_recheck:${lastError.slice(0, 80)}`);
+        return "recovered";
+      }
+    } catch (rcErr) {
+      lastError += `;recheck_failed:${(rcErr as Error).message?.slice(0, 100)}`;
+    }
   }
 
-  // Failure path.
+  return await failAttempt(sb, pos, attempt, linkId, lastError, venueSize, transport);
+}
+
+async function failAttempt(
+  sb: SupabaseClient, pos: PositionRow, attempt: number,
+  linkId: string, lastError: string | null,
+  venueSize?: number, transport?: string,
+): Promise<"retry" | "manual"> {
   await sb.from("positions").update({
     exit_recovery_state: attempt >= MAX_RECOVERY_ATTEMPTS ? "manual_required" : "pending",
     exit_recovery_last_error: lastError,
@@ -181,38 +232,37 @@ async function attemptRecovery(
 
   await sb.from("position_events").insert({
     position_id: pos.id, event_type: "exit_recovery_failed",
-    detail: { attempt, error: lastError, link_id: linkId },
+    detail: { attempt, error: lastError, link_id: linkId, transport },
   });
   await sb.from("audit_log").insert({
     action: "exit_recovery_failed", target: pos.id,
-    after: { attempt, error: lastError, max_attempts: MAX_RECOVERY_ATTEMPTS },
+    after: { attempt, error: lastError, max_attempts: MAX_RECOVERY_ATTEMPTS, transport },
   });
   await sb.from("error_log").insert({
     source: "bybit-reconcile.recovery",
     message: `exit recovery attempt ${attempt} failed for ${pos.symbol}`,
-    context: { position_id: pos.id, attempt, link_id: linkId, error: lastError },
+    context: { position_id: pos.id, attempt, link_id: linkId, error: lastError, transport },
   });
 
   if (attempt >= MAX_RECOVERY_ATTEMPTS) {
     await sb.from("system_alerts").insert({
       severity: "critical", category: "exit_recovery_exhausted",
       message: `Exit recovery exhausted on ${pos.symbol} after ${attempt} attempts — manual close required`,
-      context: { position_id: pos.id, last_error: lastError, venue_size: venueSize },
+      context: { position_id: pos.id, last_error: lastError, venue_size: venueSize, transport },
     });
     notify({
       severity: "critical", category: "unprotected_position",
       execution_mode: pos.execution_mode, symbol: pos.symbol, side: pos.side,
       reason: `Exit recovery EXHAUSTED after ${attempt} attempts — close manually on Bybit`,
-      extra: { position_id: pos.id, last_error: lastError, venue_size: venueSize },
+      extra: { position_id: pos.id, last_error: lastError, venue_size: venueSize, transport },
     });
     return "manual";
   }
 
-  // Soft warning per attempt — operator can see retries pile up.
   notify({
     severity: "warning", category: "unprotected_position",
     execution_mode: pos.execution_mode, symbol: pos.symbol, side: pos.side,
-    reason: `Exit recovery attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS} failed: ${lastError}`,
+    reason: `Exit recovery attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS} failed via ${transport ?? "?"}: ${lastError}`,
     extra: { position_id: pos.id, venue_size: venueSize },
   });
   return "retry";
