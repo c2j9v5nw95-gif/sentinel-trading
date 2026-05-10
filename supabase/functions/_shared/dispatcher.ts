@@ -51,6 +51,36 @@ function isExecutorError(reason?: string): boolean {
   );
 }
 
+/**
+ * Flag a position so the recovery worker (bybit-reconcile) will attempt a
+ * bounded reduce-only force-close. Idempotent: only sets state to 'pending'
+ * if the position is open and not already in a terminal recovery state.
+ */
+async function markExitRecoveryPending(
+  sb: SupabaseClient, positionId: string, signalId: string, reason: string,
+): Promise<void> {
+  const { data: pos } = await sb.from("positions")
+    .select("id,closed_at,exit_recovery_state,exit_recovery_attempts")
+    .eq("id", positionId).maybeSingle();
+  if (!pos || pos.closed_at) return;
+  // Don't overwrite an active in_progress / manual_required state.
+  if (pos.exit_recovery_state === "in_progress" || pos.exit_recovery_state === "manual_required") return;
+
+  await sb.from("positions").update({
+    exit_recovery_state: "pending",
+    exit_recovery_requested_at: new Date().toISOString(),
+    exit_recovery_last_error: reason,
+  }).eq("id", positionId);
+  await sb.from("position_events").insert({
+    position_id: positionId, event_type: "exit_recovery_requested",
+    detail: { signal_id: signalId, reason },
+  });
+  await sb.from("audit_log").insert({
+    action: "exit_recovery_requested", target: positionId,
+    after: { signal_id: signalId, reason },
+  });
+}
+
 async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
   const payload = signal.payload ?? {};
   const num = (v: unknown) => {
