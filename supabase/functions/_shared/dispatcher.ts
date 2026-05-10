@@ -225,9 +225,20 @@ export async function dispatchSignal(
       // invariants are open — blocking exits traps open positions and amplifies risk.
       // We still respect emergency_stop, live_disabled_globally, and bridge health,
       // because those mean we cannot safely send orders at all.
-      const exitBypass = exitMode && (
+      // Risk-reducing exits MUST always be attempted. We only bypass gates that
+      // do NOT prevent us from physically sending a reduce-only order:
+      //   - live_risk_breaker_tripped / critical_invariants_open: app-level guards
+      //     that should not trap an open position.
+      //   - bridge_unhealthy:*: stale precheck. The bridge call itself may still
+      //     succeed; if it fails, the recovery worker (bybit-reconcile) will retry
+      //     with bounded backoff. Holding the position open is strictly worse.
+      // Hard blocks remain: emergency_stop_active, live_disabled_globally,
+      // live_api_keys_missing, settings_missing — those mean we genuinely cannot
+      // send any order.
+      const exitBypass = exitMode && !!rawGateReason && (
         rawGateReason === "live_risk_breaker_tripped" ||
-        rawGateReason === "critical_invariants_open"
+        rawGateReason === "critical_invariants_open" ||
+        rawGateReason.startsWith("bridge_unhealthy")
       );
       if (exitBypass) {
         trail.add("live_gate_bypassed_for_exit", "pass", rawGateReason);
