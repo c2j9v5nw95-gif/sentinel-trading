@@ -58,12 +58,7 @@ function backoffElapsed(pos: PositionRow): boolean {
   return ageSec >= waitSec;
 }
 
-async function clearRecoveryOnClose(sb: SupabaseClient, positionId: string) {
-  await sb.from("positions").update({
-    exit_recovery_state: "recovered",
-  }).eq("id", positionId).is("closed_at", null);
-  // The above NO-OPs after closed_at is set; the close branch sets exit_recovery_state separately.
-}
+async function _unused() { /* placeholder removed */ }
 
 async function attemptRecovery(
   sb: SupabaseClient, pos: PositionRow, venueSize: number, venueSide: "long" | "short" | "none",
