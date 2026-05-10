@@ -284,9 +284,7 @@ Deno.serve(async (req) => {
       const lockResult = await withSymbolLock(sb, p.symbol, "exit",
         { ttlSec: 30, allowPreempt: true },
         async () => {
-          const client = p.execution_mode === "live"
-            ? await getClientAsync("live", sb, { liveGatePassed: true })
-            : getClient(p.execution_mode as ExecutionMode, sb);
+          const client = recoveryClient(sb, p.execution_mode as ExecutionMode);
           const venue = await client.getPosition(p.symbol);
           const localQty = Number(p.qty_open ?? 0);
 
