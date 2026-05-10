@@ -957,6 +957,11 @@ export type Database = {
           entry_price: number | null
           entry_signal_id: string | null
           execution_mode: Database["public"]["Enums"]["execution_mode"]
+          exit_recovery_attempts: number
+          exit_recovery_last_at: string | null
+          exit_recovery_last_error: string | null
+          exit_recovery_requested_at: string | null
+          exit_recovery_state: string | null
           id: string
           last_exit_signal_id: string | null
           last_seen_price: number | null
@@ -987,6 +992,11 @@ export type Database = {
           entry_price?: number | null
           entry_signal_id?: string | null
           execution_mode?: Database["public"]["Enums"]["execution_mode"]
+          exit_recovery_attempts?: number
+          exit_recovery_last_at?: string | null
+          exit_recovery_last_error?: string | null
+          exit_recovery_requested_at?: string | null
+          exit_recovery_state?: string | null
           id?: string
           last_exit_signal_id?: string | null
           last_seen_price?: number | null
@@ -1017,6 +1027,11 @@ export type Database = {
           entry_price?: number | null
           entry_signal_id?: string | null
           execution_mode?: Database["public"]["Enums"]["execution_mode"]
+          exit_recovery_attempts?: number
+          exit_recovery_last_at?: string | null
+          exit_recovery_last_error?: string | null
+          exit_recovery_requested_at?: string | null
+          exit_recovery_state?: string | null
           id?: string
           last_exit_signal_id?: string | null
           last_seen_price?: number | null
