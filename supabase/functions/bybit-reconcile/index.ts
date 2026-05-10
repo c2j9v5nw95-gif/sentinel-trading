@@ -99,7 +99,8 @@ async function reconcileFlat(
 }
 
 async function attemptRecovery(
-  sb: SupabaseClient, pos: PositionRow, venueSize: number, venueSide: "long" | "short" | "none",
+  sb: SupabaseClient, pos: PositionRow,
+  initialSnapshot: { size: number; side: "long" | "short" | "none"; entryPrice: number | null; leverage: number | null },
 ): Promise<"recovered" | "retry" | "manual"> {
   const attempt = (pos.exit_recovery_attempts ?? 0) + 1;
   const linkId = shortLink(pos.id, attempt);
@@ -114,27 +115,60 @@ async function attemptRecovery(
     exit_recovery_last_at: new Date().toISOString(),
   }).eq("id", pos.id);
 
-  await sb.from("position_events").insert({
-    position_id: pos.id, event_type: "exit_recovery_attempted",
-    detail: { attempt, link_id: linkId, venue_size: venueSize, venue_side: venueSide, transport },
-  });
-  await sb.from("audit_log").insert({
-    action: "exit_recovery_attempted", target: pos.id,
-    after: { attempt, link_id: linkId, max_attempts: MAX_RECOVERY_ATTEMPTS, transport },
-  });
-
-  // Use the venue size as the source of truth — never the local qty_open.
-  const qty = venueSize;
-  const submitSide = pos.side === "long" ? "Sell" : "Buy";
-
-  let lastError: string | null = null;
   let client: BybitClient;
   try {
     client = recoveryClient(sb, pos.execution_mode);
   } catch (e) {
-    lastError = `client_init_failed:${(e as Error).message?.slice(0, 200)}`;
+    const lastError = `client_init_failed:${(e as Error).message?.slice(0, 200)}`;
     return await failAttempt(sb, pos, attempt, linkId, lastError);
   }
+
+  // SAFETY: Re-fetch venue position immediately before submit. Local DB
+  // can be stale; venue is source of truth for both size AND side.
+  let preSubmitSnapshot = initialSnapshot;
+  try {
+    const fresh = await client.getPosition(pos.symbol);
+    preSubmitSnapshot = { size: fresh.size, side: fresh.side, entryPrice: fresh.entryPrice, leverage: fresh.leverage };
+  } catch (e) {
+    // Pre-submit refetch failed — fall back to the snapshot we already have
+    // from the outer reconcile pass (still recent, taken seconds ago).
+    await sb.from("position_events").insert({
+      position_id: pos.id, event_type: "exit_recovery_presubmit_refetch_failed",
+      detail: { attempt, error: (e as Error).message?.slice(0, 200) },
+    });
+  }
+
+  // Venue went flat between outer check and pre-submit -> reconcile only.
+  if (preSubmitSnapshot.size <= 0 || preSubmitSnapshot.side === "none") {
+    await reconcileFlat(sb, pos, "presubmit_venue_flat");
+    return "recovered";
+  }
+
+  // Venue side is source of truth: close opposite of whatever Bybit shows.
+  const venueSize = preSubmitSnapshot.size;
+  const venueSide = preSubmitSnapshot.side as "long" | "short";
+  const qty = venueSize;
+  const submitSide: "Sell" | "Buy" = venueSide === "long" ? "Sell" : "Buy";
+
+  await sb.from("position_events").insert({
+    position_id: pos.id, event_type: "exit_recovery_attempted",
+    detail: {
+      attempt, link_id: linkId, transport,
+      venue_position: preSubmitSnapshot,
+      submit: { side: submitSide, qty, reduce_only: true, order_link_id: linkId },
+      local: { side: pos.side, qty_open: pos.qty_open },
+    },
+  });
+  await sb.from("audit_log").insert({
+    action: "exit_recovery_attempted", target: pos.id,
+    after: {
+      attempt, link_id: linkId, max_attempts: MAX_RECOVERY_ATTEMPTS, transport,
+      venue_position: preSubmitSnapshot,
+      submit: { side: submitSide, qty, reduce_only: true },
+    },
+  });
+
+  let lastError: string | null = null;
 
   try {
     const fill = await client.submitOrder({
