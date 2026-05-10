@@ -360,7 +360,10 @@ Deno.serve(async (req) => {
           // Recovery branch — venue still open AND we've been asked to flatten.
           if (p.exit_recovery_state === "pending" || p.exit_recovery_state === "in_progress") {
             if (!backoffElapsed(p)) return { ok: true, skipped: "backoff" };
-            const out = await attemptRecovery(sb, p, venue.size, venue.side);
+            const out = await attemptRecovery(sb, p, {
+              size: venue.size, side: venue.side,
+              entryPrice: venue.entryPrice, leverage: venue.leverage,
+            });
             if (out === "recovered") summary.recovered++;
             else if (out === "manual") summary.recovery_manual++;
             else summary.recovery_retried++;
