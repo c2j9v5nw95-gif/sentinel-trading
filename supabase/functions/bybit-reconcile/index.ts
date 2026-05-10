@@ -116,9 +116,7 @@ async function attemptRecovery(
         closed_at: new Date().toISOString(),
         protection_state: "closed",
         last_seen_price: fillPrice,
-        realized_pnl: Number(pos.entry_price ?? 0) > 0
-          ? pnl
-          : null,
+        realized_pnl: pnl,
         exit_recovery_state: "recovered",
         exit_recovery_last_error: null,
       }).eq("id", pos.id);
