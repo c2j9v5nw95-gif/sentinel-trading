@@ -21,11 +21,30 @@
 // Cron-friendly: runs every ~60s.
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
-import { getClient, getClientAsync } from "../_shared/bybit-client.ts";
+import { getClient } from "../_shared/bybit-client.ts";
 import { withSymbolLock } from "../_shared/locks.ts";
 import { notify } from "../_shared/telegram.ts";
+import { bridgeConfigured } from "../_shared/bridge-rest.ts";
 import type { ExecutionMode } from "../_shared/execution-mode.ts";
+import type { BybitClient } from "../_shared/bybit-client.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+/**
+ * Build a venue client for recovery use.
+ *
+ * SAFETY: Recovery is risk-reducing. We deliberately bypass the live execution
+ * gate (liveGatePassed=true) because recovery only sends reduce-only orders.
+ * For LIVE we FORCE useBridge=true whenever the bridge is configured —
+ * regardless of `app_settings.use_execution_bridge` and regardless of whether
+ * the bridge health-check is fresh. The bridge call itself may still succeed
+ * even when the precheck went stale; trying via bridge is strictly safer than
+ * leaving a position open. If bridge is not configured at all, we fall back
+ * to the direct path (which requires live API keys via the live client).
+ */
+function recoveryClient(sb: SupabaseClient, mode: ExecutionMode): BybitClient {
+  if (mode !== "live") return getClient(mode, sb);
+  return getClient("live", sb, { liveGatePassed: true, useBridge: bridgeConfigured() });
+}
 
 const TOLERANCE_PCT = 0.01;
 const MAX_RECOVERY_ATTEMPTS = 5;
