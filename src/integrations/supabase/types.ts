@@ -1639,6 +1639,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      manually_close_position: {
+        Args: { _exit_price: number; _note?: string; _position_id: string }
+        Returns: Json
+      }
       release_execution_lock: {
         Args: { _owner_id: string; _symbol: string }
         Returns: boolean
