@@ -307,6 +307,13 @@ export async function dispatchSignal(
         context: { signal_id: signal.id, symbol: signal.symbol, mode: resolved.mode, action },
       });
     }
+    // Safety net: when an EXIT fails for any reason and we still have a local
+    // position row, flag it for the recovery worker so bybit-reconcile will
+    // attempt a reduce-only force-close. Idempotent — sets state only.
+    if (exitMode && !exec.ok && exec.position_id && (resolved.mode === "live" || resolved.mode === "testnet")) {
+      await markExitRecoveryPending(sb, exec.position_id, signal.id, exec.reason ?? "exit_failed");
+      trail.add("exit_recovery_flagged", "info", exec.reason, { position_id: exec.position_id });
+    }
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
       status: finalStatus, processed_at: new Date().toISOString(),
