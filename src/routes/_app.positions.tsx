@@ -52,8 +52,8 @@ function PositionsPage() {
     mutationFn: async (args: { id: string; exit_price: number | null; note: string | null }) => {
       const { data, error } = await supabase.rpc("manually_close_position", {
         _position_id: args.id,
-        _exit_price: args.exit_price,
-        _note: args.note,
+        _exit_price: args.exit_price as number,
+        _note: args.note ?? undefined,
       });
       if (error) throw new Error(error.message);
       return data as { ok: boolean; realized_pnl: number; pnl_pct: number | null };
