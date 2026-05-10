@@ -73,9 +73,27 @@ function SignalsPage() {
   const latestGateBlock = live.find((s) => s.decision_reason?.startsWith("live_gate:alternate_base_requires_passing_diagnostic")) ?? null;
 
   const replayMut = useMutation({
-    mutationFn: (args: { signalId: string; bypassDedupe: boolean }) =>
-      replay({ data: args }),
+    mutationFn: async (args: { signalId: string; bypassDedupe: boolean }) => {
+      try {
+        return await replay({ data: args });
+      } catch (err) {
+        // Middleware (requireSupabaseAuth) throws raw Response BEFORE .handler() runs,
+        // so it bypasses server-side normalization. Convert here so we don't see "[object Response]".
+        if (err instanceof Response) {
+          const body = await err.text().catch(() => err.statusText);
+          throw new Error(`Replay failed (${err.status}): ${body || err.statusText}`);
+        }
+        if (err instanceof Error) throw err;
+        throw new Error(typeof err === "string" ? err : JSON.stringify(err));
+      }
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["signals"] }),
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Surface readable error in the sheet via alert as a fallback (replaces blank-screen [object Response])
+      console.error("[replaySignal] failed:", msg);
+      alert(`Replay failed: ${msg}`);
+    },
   });
 
   return (
