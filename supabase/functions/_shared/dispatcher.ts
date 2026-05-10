@@ -425,6 +425,16 @@ export async function dispatchSignal(
         action: "signal_execution_error", target: signal.id,
         after: { error: reason, kind: e.kind, diagnostics: d, fail_fast: true },
       });
+      // Transport-level failure on an exit signal — position likely still open.
+      if (signal.action && String(signal.action).startsWith("EXIT") && signal.symbol) {
+        const { data: openPos } = await sb.from("positions")
+          .select("id").eq("symbol", signal.symbol)
+          .in("execution_mode", ["live", "testnet"])
+          .is("closed_at", null).maybeSingle();
+        if (openPos?.id) {
+          await markExitRecoveryPending(sb, openPos.id, signal.id, reason);
+        }
+      }
       return { signalId: signal.id, status: "error", reason, gate: "execution" };
     }
 
