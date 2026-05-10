@@ -51,6 +51,36 @@ function isExecutorError(reason?: string): boolean {
   );
 }
 
+/**
+ * Flag a position so the recovery worker (bybit-reconcile) will attempt a
+ * bounded reduce-only force-close. Idempotent: only sets state to 'pending'
+ * if the position is open and not already in a terminal recovery state.
+ */
+async function markExitRecoveryPending(
+  sb: SupabaseClient, positionId: string, signalId: string, reason: string,
+): Promise<void> {
+  const { data: pos } = await sb.from("positions")
+    .select("id,closed_at,exit_recovery_state,exit_recovery_attempts")
+    .eq("id", positionId).maybeSingle();
+  if (!pos || pos.closed_at) return;
+  // Don't overwrite an active in_progress / manual_required state.
+  if (pos.exit_recovery_state === "in_progress" || pos.exit_recovery_state === "manual_required") return;
+
+  await sb.from("positions").update({
+    exit_recovery_state: "pending",
+    exit_recovery_requested_at: new Date().toISOString(),
+    exit_recovery_last_error: reason,
+  }).eq("id", positionId);
+  await sb.from("position_events").insert({
+    position_id: positionId, event_type: "exit_recovery_requested",
+    detail: { signal_id: signalId, reason },
+  });
+  await sb.from("audit_log").insert({
+    action: "exit_recovery_requested", target: positionId,
+    after: { signal_id: signalId, reason },
+  });
+}
+
 async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
   const payload = signal.payload ?? {};
   const num = (v: unknown) => {
@@ -225,9 +255,20 @@ export async function dispatchSignal(
       // invariants are open — blocking exits traps open positions and amplifies risk.
       // We still respect emergency_stop, live_disabled_globally, and bridge health,
       // because those mean we cannot safely send orders at all.
-      const exitBypass = exitMode && (
+      // Risk-reducing exits MUST always be attempted. We only bypass gates that
+      // do NOT prevent us from physically sending a reduce-only order:
+      //   - live_risk_breaker_tripped / critical_invariants_open: app-level guards
+      //     that should not trap an open position.
+      //   - bridge_unhealthy:*: stale precheck. The bridge call itself may still
+      //     succeed; if it fails, the recovery worker (bybit-reconcile) will retry
+      //     with bounded backoff. Holding the position open is strictly worse.
+      // Hard blocks remain: emergency_stop_active, live_disabled_globally,
+      // live_api_keys_missing, settings_missing — those mean we genuinely cannot
+      // send any order.
+      const exitBypass = exitMode && !!rawGateReason && (
         rawGateReason === "live_risk_breaker_tripped" ||
-        rawGateReason === "critical_invariants_open"
+        rawGateReason === "critical_invariants_open" ||
+        rawGateReason.startsWith("bridge_unhealthy")
       );
       if (exitBypass) {
         trail.add("live_gate_bypassed_for_exit", "pass", rawGateReason);
@@ -247,6 +288,18 @@ export async function dispatchSignal(
           action: "signal_dispatched", target: signal.id,
           after: { gate: "live_gate", outcome: "block", reason: gateReason },
         });
+        // Risk-reducing exit blocked by a hard gate (e.g. emergency_stop) —
+        // the position stays open. Flag for the recovery worker so an operator
+        // sees it and so reconcile can retry once the gate clears.
+        if (exitMode) {
+          const { data: openPos } = await sb.from("positions")
+            .select("id").eq("symbol", signal.symbol)
+            .in("execution_mode", ["live", "testnet"])
+            .is("closed_at", null).maybeSingle();
+          if (openPos?.id) {
+            await markExitRecoveryPending(sb, openPos.id, signal.id, `live_gate:${gateReason}`);
+          }
+        }
         return { signalId: signal.id, status: "rejected", reason: gateReason, gate: "live_gate" };
       }
       trail.add("live_gate_passed", "pass");
@@ -295,6 +348,13 @@ export async function dispatchSignal(
         source: "executor", message: exec.reason ?? "executor_error",
         context: { signal_id: signal.id, symbol: signal.symbol, mode: resolved.mode, action },
       });
+    }
+    // Safety net: when an EXIT fails for any reason and we still have a local
+    // position row, flag it for the recovery worker so bybit-reconcile will
+    // attempt a reduce-only force-close. Idempotent — sets state only.
+    if (exitMode && !exec.ok && exec.position_id && (resolved.mode === "live" || resolved.mode === "testnet")) {
+      await markExitRecoveryPending(sb, exec.position_id, signal.id, exec.reason ?? "exit_failed");
+      trail.add("exit_recovery_flagged", "info", exec.reason, { position_id: exec.position_id });
     }
     await flushTrail(sb, signal.id, trail);
     await sb.from("signals").update({
@@ -365,6 +425,16 @@ export async function dispatchSignal(
         action: "signal_execution_error", target: signal.id,
         after: { error: reason, kind: e.kind, diagnostics: d, fail_fast: true },
       });
+      // Transport-level failure on an exit signal — position likely still open.
+      if (signal.action && String(signal.action).startsWith("EXIT") && signal.symbol) {
+        const { data: openPos } = await sb.from("positions")
+          .select("id").eq("symbol", signal.symbol)
+          .in("execution_mode", ["live", "testnet"])
+          .is("closed_at", null).maybeSingle();
+        if (openPos?.id) {
+          await markExitRecoveryPending(sb, openPos.id, signal.id, reason);
+        }
+      }
       return { signalId: signal.id, status: "error", reason, gate: "execution" };
     }
 
