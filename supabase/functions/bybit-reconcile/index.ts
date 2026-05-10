@@ -58,7 +58,7 @@ function backoffElapsed(pos: PositionRow): boolean {
   return ageSec >= waitSec;
 }
 
-async function _unused() { /* placeholder removed */ }
+
 
 async function attemptRecovery(
   sb: SupabaseClient, pos: PositionRow, venueSize: number, venueSide: "long" | "short" | "none",
