@@ -288,6 +288,18 @@ export async function dispatchSignal(
           action: "signal_dispatched", target: signal.id,
           after: { gate: "live_gate", outcome: "block", reason: gateReason },
         });
+        // Risk-reducing exit blocked by a hard gate (e.g. emergency_stop) —
+        // the position stays open. Flag for the recovery worker so an operator
+        // sees it and so reconcile can retry once the gate clears.
+        if (exitMode) {
+          const { data: openPos } = await sb.from("positions")
+            .select("id").eq("symbol", signal.symbol)
+            .in("execution_mode", ["live", "testnet"])
+            .is("closed_at", null).maybeSingle();
+          if (openPos?.id) {
+            await markExitRecoveryPending(sb, openPos.id, signal.id, `live_gate:${gateReason}`);
+          }
+        }
         return { signalId: signal.id, status: "rejected", reason: gateReason, gate: "live_gate" };
       }
       trail.add("live_gate_passed", "pass");
