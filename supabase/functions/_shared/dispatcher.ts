@@ -220,7 +220,19 @@ export async function dispatchSignal(
         mode: resolved.mode,
         action,
       }));
-      const gateReason = await liveExecutionGate(sb, { symbol: signal.symbol, signalId: signal.id });
+      const rawGateReason = await liveExecutionGate(sb, { symbol: signal.symbol, signalId: signal.id });
+      // Exits MUST be allowed even when the live-risk breaker tripped or critical
+      // invariants are open — blocking exits traps open positions and amplifies risk.
+      // We still respect emergency_stop, live_disabled_globally, and bridge health,
+      // because those mean we cannot safely send orders at all.
+      const exitBypass = exitMode && (
+        rawGateReason === "live_risk_breaker_tripped" ||
+        rawGateReason === "critical_invariants_open"
+      );
+      if (exitBypass) {
+        trail.add("live_gate_bypassed_for_exit", "pass", rawGateReason);
+      }
+      const gateReason = exitBypass ? null : rawGateReason;
       if (gateReason) {
         trail.add("live_gate_blocked", "fail", gateReason);
         await flushTrail(sb, signal.id, trail);
