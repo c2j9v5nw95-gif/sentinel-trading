@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
 import { fmtNum, fmtSigned, pnlTone, fmtAge, fmtDuration } from "./format";
+import { rangeSinceISO, RANGE_LABEL, type RangeKey } from "./filters";
 
 interface Row {
   id: string;
@@ -17,18 +18,28 @@ interface Row {
   last_exit_signal_id: string | null;
 }
 
-export function RecentClosedTradesTable() {
+export function RecentClosedTradesTable({
+  range,
+  symbol,
+}: {
+  range: RangeKey;
+  symbol: string | null;
+}) {
   const { data } = useQuery({
-    queryKey: ["overview", "closed_trades"],
+    queryKey: ["overview", "closed_trades", range, symbol],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const since = rangeSinceISO(range);
+      let q = supabase
         .from("positions")
         .select(
           "id,symbol,side,entry_price,last_seen_price,realized_pnl,opened_at,closed_at,execution_mode,last_exit_signal_id",
         )
         .not("closed_at", "is", null)
+        .gte("closed_at", since)
         .order("closed_at", { ascending: false })
-        .limit(10);
+        .limit(50);
+      if (symbol) q = q.eq("symbol", symbol);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as Row[];
     },
@@ -52,10 +63,12 @@ export function RecentClosedTradesTable() {
     },
   });
 
+  const title = `Recent closed trades · ${RANGE_LABEL[range]}${symbol ? ` · ${symbol}` : ""}`;
+
   return (
-    <Card title="Recent closed trades">
+    <Card title={title}>
       {rows.length === 0 ? (
-        <EmptyState title="No closed trades yet" />
+        <EmptyState title="No closed trades in range" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs tabular">

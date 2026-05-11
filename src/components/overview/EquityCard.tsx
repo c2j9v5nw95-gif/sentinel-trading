@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { MetricCard } from "./MetricCard";
 import { Sparkline } from "./Sparkline";
 import { fmtNum, fmtAge } from "./format";
+import { RANGE_LABEL, rangeSinceISO, type RangeKey } from "./filters";
 
 interface Snapshot {
   captured_at: string;
@@ -10,19 +11,19 @@ interface Snapshot {
   source: string;
 }
 
-export function EquityCard({ live }: { live: boolean }) {
+export function EquityCard({ live, range }: { live: boolean; range: RangeKey }) {
   const source = live ? "live" : "paper";
   const { data, isLoading } = useQuery({
-    queryKey: ["overview", "equity_snapshots", source],
+    queryKey: ["overview", "equity_snapshots", source, range],
     queryFn: async () => {
-      const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const since = rangeSinceISO(range);
       const { data, error } = await supabase
         .from("balance_snapshots")
         .select("captured_at,total_equity,source")
         .eq("source", source)
         .gte("captured_at", since)
         .order("captured_at", { ascending: true })
-        .limit(500);
+        .limit(1000);
       if (error) throw error;
       return (data ?? []) as Snapshot[];
     },
@@ -55,10 +56,12 @@ export function EquityCard({ live }: { live: boolean }) {
                 {deltaPct.toFixed(2)}%)
               </span>
             )}
-            <span className="ml-2 text-muted-foreground">24h · {fmtAge(lastAt)}</span>
+            <span className="ml-2 text-muted-foreground">
+              {RANGE_LABEL[range]} · {fmtAge(lastAt)}
+            </span>
           </span>
         ) : (
-          <span className="text-muted-foreground">No snapshots in 24h</span>
+          <span className="text-muted-foreground">No snapshots in {RANGE_LABEL[range]}</span>
         )
       }
       right={<Sparkline values={points} width={110} height={32} />}

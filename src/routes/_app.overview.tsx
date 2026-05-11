@@ -4,6 +4,8 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/PageHeader";
 import { EquityCard } from "@/components/overview/EquityCard";
+import { OverviewFilterBar } from "@/components/overview/OverviewFilterBar";
+import type { RangeKey } from "@/components/overview/filters";
 import { UnrealizedPnLCard } from "@/components/overview/UnrealizedPnLCard";
 import { RealizedPnLTodayCard } from "@/components/overview/RealizedPnLTodayCard";
 import { BridgeHealthCard } from "@/components/overview/BridgeHealthCard";
@@ -33,6 +35,9 @@ function Overview() {
   const live = !!settings?.live_enabled;
   const source = live ? "live" : "paper";
 
+  const [range, setRange] = useState<RangeKey>("24h");
+  const [symbol, setSymbol] = useState<string | null>(null);
+
   const { data: latestEquity } = useQuery({
     queryKey: ["overview", "latest_equity", source],
     queryFn: async () => {
@@ -56,10 +61,19 @@ function Overview() {
         actions={<EmergencyStopButton />}
       />
 
+      <div className="mt-2">
+        <OverviewFilterBar
+          range={range}
+          symbol={symbol}
+          onRangeChange={setRange}
+          onSymbolChange={setSymbol}
+        />
+      </div>
+
       <RecoveryAlertBanner />
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <EquityCard live={live} />
+        <EquityCard live={live} range={range} />
         <UnrealizedPnLCard />
         <RealizedPnLTodayCard />
         <BridgeHealthCard />
@@ -75,8 +89,8 @@ function Overview() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <RecentClosedTradesTable />
-        <RecentExecutionEventsList />
+        <RecentClosedTradesTable range={range} symbol={symbol} />
+        <RecentExecutionEventsList range={range} symbol={symbol} />
       </div>
     </>
   );

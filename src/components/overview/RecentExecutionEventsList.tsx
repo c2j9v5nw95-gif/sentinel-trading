@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, EmptyState } from "@/components/PageHeader";
 import { fmtAge } from "./format";
+import { rangeSinceISO, RANGE_LABEL, type RangeKey } from "./filters";
 
 interface Signal {
   id: string;
@@ -30,16 +31,26 @@ interface Item {
   created_at: string;
 }
 
-export function RecentExecutionEventsList() {
+export function RecentExecutionEventsList({
+  range,
+  symbol,
+}: {
+  range: RangeKey;
+  symbol: string | null;
+}) {
   const { data: rejections } = useQuery({
-    queryKey: ["overview", "rejected_signals"],
+    queryKey: ["overview", "rejected_signals", range, symbol],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const since = rangeSinceISO(range);
+      let q = supabase
         .from("signals")
         .select("id,symbol,action,status,decision_reason,created_at")
         .in("status", ["rejected", "error", "dead_letter"])
+        .gte("created_at", since)
         .order("created_at", { ascending: false })
-        .limit(10);
+        .limit(30);
+      if (symbol) q = q.eq("symbol", symbol);
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as Signal[];
     },
@@ -47,14 +58,17 @@ export function RecentExecutionEventsList() {
   });
 
   const { data: alerts } = useQuery({
-    queryKey: ["overview", "exec_alerts"],
+    queryKey: ["overview", "exec_alerts", range, symbol],
+    enabled: !symbol,
     queryFn: async () => {
+      const since = rangeSinceISO(range);
       const { data, error } = await supabase
         .from("system_alerts")
         .select("id,severity,category,message,created_at,acknowledged_at")
         .in("severity", ["warning", "critical"])
+        .gte("created_at", since)
         .order("created_at", { ascending: false })
-        .limit(10);
+        .limit(30);
       if (error) throw error;
       return (data ?? []) as Alert[];
     },
@@ -83,12 +97,14 @@ export function RecentExecutionEventsList() {
     });
   }
   items.sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
-  const top = items.slice(0, 12);
+  const top = items.slice(0, 20);
+
+  const title = `Recent execution & rejection events · ${RANGE_LABEL[range]}${symbol ? ` · ${symbol}` : ""}`;
 
   return (
-    <Card title="Recent execution & rejection events">
+    <Card title={title}>
       {top.length === 0 ? (
-        <EmptyState title="Quiet" hint="No recent rejections or warnings." />
+        <EmptyState title="Quiet" hint="No rejections or warnings in range." />
       ) : (
         <ul className="divide-y divide-border">
           {top.map((it) => (
