@@ -1,54 +1,96 @@
-## Funn
+## Mål
 
-- Skjermbildet matcher en eldre `ZECUSDT` exit som ble stoppet av `live_gate:bridge_unhealthy:The signal has been aborted`.
-- Den nye koden har begynt å bypass’e `bridge_unhealthy` for exit-signaler, mens entry-gates fortsatt er uendret.
-- Den aktuelle ZECUSDT-posisjonen er nå lukket i databasen etter en senere exit, men jeg ser to safety-hull som bør tettes før vi stoler på patchen:
-  - Recovery-worker bruker `getClientAsync(..., { liveGatePassed: true })`, men lar fortsatt `useBridge` bli styrt av app settings. Kravet ditt sier: hvis bridge health er stale, skal vi fortsatt forsøke exit via bridge. Recovery bør derfor tvinge bridge når bridge er konfigurert.
-  - Idempotency er per attempt (`RECOV-<pos>-<attempt>`). Det er bra for retries etter kjent feil, men ved “unknown/duplicate” bør samme `orderLinkId` kunne reconciles før ny attempt øker risikoen for dobbelt-submit.
+Bygg om `/overview` til en mission-control som gir operatøren umiddelbar situasjonsforståelse. Strengt read-only — ingen endring i execution, dispatcher, bridge, reconcile, risk engine, signal processing eller order routing. Ingen skrivinger fra UI. Ingen schema-endringer.
 
-## Plan
+## Layout (above the fold, 1629px viewport)
 
-1. **Behold entry-adferd helt uendret**
-   - Ikke endre health gate, live gate, risk gate, sizing eller entry execution.
-   - Alle endringer begrenses til exit/recovery-kodebaner.
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  StatusBar (eksisterende, uendret)                               │
+├──────────────────────────────────────────────────────────────────┤
+│  [Equity]    [Unrealized PnL]   [Realized PnL today]   [Bridge]  │
+│   $X,XXX     +/- $X (n pos)     +/- $X (n trades)      ●healthy  │
+│   sparkline  paper vs live      since 00:00 UTC        age 4s    │
+├──────────────────────────────────────────────────────────────────┤
+│  Active Exposure      │  Recovery / Manual-Required (if any)     │
+│  total notional, %    │  red banner with positions needing op    │
+│  per-symbol breakdown │                                          │
+├──────────────────────────────────────────────────────────────────┤
+│  Active Positions (table, always visible)                        │
+│  symbol · side · qty · entry · last · uPnL · uPnL% · protection  │
+│  · TSL · age · mode (paper/live) · recovery state                │
+├──────────────────────────────────────────────────────────────────┤
+│  Recent Closed Trades (last 10)   │  Recent Execution Events     │
+│  symbol · side · entry/exit ·     │  rejections, recovery        │
+│  rPnL · hold time · exit reason   │  attempts, critical alerts   │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-2. **Gjør live exit-bypass eksplisitt safety-only**
-   - Behold bypass kun for risk-reduserende exits ved:
-     - `bridge_unhealthy:*`
-     - `live_risk_breaker_tripped`
-     - `critical_invariants_open`
-   - Fortsett å blokkere hard-stopp som `emergency_stop_active`, `live_disabled_globally`, `settings_missing`, manglende credentials.
-   - Legg audit-trail som tydelig viser `live_gate_bypassed_for_exit` med original årsak.
+Recovery/manual_required-blokken vises kun når det finnes rader, og er rød + sticky øverst i innholdsområdet når aktiv.
 
-3. **Tving recovery via bridge når mulig**
-   - I `bybit-reconcile` skal live recovery bruke `getClient("live", ..., { liveGatePassed: true, useBridge: true })` når bridge er konfigurert.
-   - Hvis bridge ikke er konfigurert, fall tilbake til direct live client kun dersom live API keys finnes.
-   - Dette påvirker bare recovery, ikke entries.
+## Datakilder (kun lesing)
 
-4. **Strammere idempotency og “unknown” håndtering**
-   - Før ny recovery attempt: sjekk venue-posisjon først.
-     - Hvis Bybit viser flat: kun reconcile local state.
-     - Hvis Bybit viser åpen: submit reduceOnly close.
-   - Ved `duplicate_order_link_id`/unknown: ikke anta suksess. Re-sjekk venue-posisjon:
-     - Flat: marker recovered.
-     - Fortsatt åpen: behold pending og retry med bounded backoff.
-   - Fortsett med deterministisk `orderLinkId` og symbol lock.
+Alt hentes via `supabase` client fra eksisterende tabeller — ingen nye edge functions, ingen mutations.
 
-5. **Full audit trail per recovery attempt**
-   - Logg `exit_recovery_attempted`, `exit_recovery_failed`, `exit_recovery_succeeded`, og `exit_recovery_manual_required` i `position_events` og `audit_log`.
-   - Inkluder `attempt`, `orderLinkId`, `venue_size`, `venue_side`, transportvalg (`bridge`/`direct`) og feiltekst.
+| Kort | Kilde | Spørring |
+|---|---|---|
+| Account equity + sparkline | `balance_snapshots` | siste 24t, ordered by `captured_at`, source-filter (live hvis `app_settings.live_enabled`, ellers paper) |
+| Unrealized PnL | `positions` der `closed_at is null` | sum `(last_seen_price - entry_price) * qty_open * sign(side)` på klient, eller fra `paper_wallet.unrealized_pnl` for paper |
+| Realized PnL today | `positions` der `closed_at >= today 00:00 UTC` | sum `realized_pnl` |
+| Bridge health | `bridge_health_checks` | siste rad, vis `ok`, `latency_ms`, `public_ip`, alder |
+| Active positions | `positions` der `closed_at is null` | alle felt allerede tilgjengelig |
+| Active exposure | derive fra `positions` open + `last_seen_price * qty_open` | gruppér per symbol |
+| Closed trades | `positions` der `closed_at is not null` | order by `closed_at desc` limit 10 |
+| Execution events | `position_events` (event_type ilike `%recover%`/`%reject%`) + `system_alerts` (severity in warning/critical, unack) | union via to separate queries, merge i UI |
+| Recovery / manual_required | `positions` der `exit_recovery_state in ('pending','manual_required')` | egen query |
 
-6. **Critical alert + manual intervention**
-   - Ved ukjent/rejected Bybit-respons: send warning/critical etter alvorlighetsgrad og retry bounded.
-   - Etter maks attempts: sett `exit_recovery_state = manual_required`, opprett critical system alert og Telegram alert.
-   - Ikke åpne ny eksponering under noen recovery path: alle recovery orders må ha `reduceOnly: true` og side motsatt av venue/local position.
+Refetch-intervaller: equity/snapshots 30s, positions/exposure 5s, bridge 5s, events 10s, sparkline 60s. Bruk `useQuery` med `refetchInterval`, ingen realtime-subscription i denne fasen.
 
-## Teknisk scope
+## Komponenter (nye, frontend-only)
 
-- Endre kun:
-  - `supabase/functions/_shared/dispatcher.ts`
-  - `supabase/functions/bybit-reconcile/index.ts`
-  - eventuelt `supabase/functions/_shared/bybit-client.ts` hvis vi trenger en trygg helper for bridge-forced live client.
-- Ingen endring i entry-gates eller entry execution.
-- Ingen ny database-migrasjon med mindre audit/event-feltene mangler nødvendig kapasitet; dagens JSON-felter ser tilstrekkelige ut.
-- Etter implementering deployes relevante backend functions og valideres mot logs/edge function testkall.
+Alle under `src/components/overview/`:
+
+- `MetricCard.tsx` — gjenbrukbar kortrad (label, value, delta, sparkline-slot, status pill)
+- `EquityCard.tsx` — equity + 24t sparkline (SVG, ingen ny dep — bygg en liten polyline fra balance_snapshots)
+- `UnrealizedPnLCard.tsx` — sum over åpne posisjoner, antall posisjoner, paper vs live splitt
+- `RealizedPnLTodayCard.tsx` — sum av `realized_pnl` for trades lukket i dag, antall
+- `BridgeHealthCard.tsx` — gjenbruk logikk fra `BridgeStatusPanel` men i kort-format
+- `ActiveExposurePanel.tsx` — total notional + per-symbol bar
+- `RecoveryAlertBanner.tsx` — rød banner når `exit_recovery_state in ('pending','manual_required')`
+- `ActivePositionsTable.tsx` — tett tabell, sortert etter `opened_at desc`
+- `RecentClosedTradesTable.tsx` — siste 10, med `exit_reason` chip og hold-time
+- `RecentExecutionEventsList.tsx` — kombinert liste av siste rejections, recovery-attempts, critical alerts
+
+Eksisterende `EmergencyStopButton` blir værende uendret i header.
+
+## Endringer i routing
+
+- `src/routes/_app.overview.tsx` — bytt ut innholdet i `Overview()` med ny komponentkomposisjon. Behold `createFileRoute("/_app/overview")` og `EmergencyStopButton` (uendret oppførsel — den skriver ikke i dag).
+
+Ingen nye routes, ingen sidebar-endringer.
+
+## Ikke-mål
+
+- Ingen nye tabeller, ingen migrasjoner.
+- Ingen nye edge functions.
+- Ingen endring i `dispatcher.ts`, `bybit-reconcile`, `execute-entry`, `execute-exit`, `risk-engine`, `executor.ts`, `bridge-rest`, `live-client`, `paper-client`, `sizing*`, `process-signal`, `protection-monitor`, `live-risk-monitor`.
+- Ingen mutations fra UI utover det `EmergencyStopButton` allerede gjør (i dag: ingenting, TODO i koden — vi rører den ikke).
+- Ingen nye charting-libs. Sparkline tegnes som inline SVG polyline.
+- Trade journal, /analytics-side og designsystem-refresh hører hjemme i senere faser (B/C/D).
+
+## Valideringssteg etter implementering
+
+1. Naviger til `/overview` — verifiser at active positions er synlige uten scroll på 1629x1089.
+2. Bekreft at ingen network calls går til execute-/recovery-endpoints.
+3. Bekreft at recovery-banner vises kun når det faktisk finnes `exit_recovery_state in ('pending','manual_required')`.
+4. Bekreft at bridge-badge oppdateres innen 5s når `bridge_health_checks` får ny rad.
+5. Sjekk at sparkline rendres uten 3rd-party deps og uten layout shift.
+
+## Tekniske detaljer
+
+- All datahenting via `useQuery` mot `@/integrations/supabase/client`.
+- Sparkline: `<svg viewBox="0 0 100 30">` + `<polyline>` normalisert fra balance_snapshots equity-array. Min/max scaling per kort.
+- Tidsformatering: lokal `Intl.DateTimeFormat`, alder vises som `Xs/Xm/Xh ago` (samme helper som i `StatusBar`).
+- PnL-farger: `text-success` for positiv, `text-danger` for negativ, eksisterende tokens i `src/styles.css`.
+- Tabell-rader klikkbare → `Link to="/positions"` med symbol-filter (hvis det allerede støttes; ellers bare lenke til /positions uten params).
+- Mode-chip per posisjon (paper/live/testnet) — gjenbruk `ModeChip` om signaturen passer, ellers inline.

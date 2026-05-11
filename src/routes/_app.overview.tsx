@@ -2,106 +2,81 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
+import { PageHeader } from "@/components/PageHeader";
+import { EquityCard } from "@/components/overview/EquityCard";
+import { UnrealizedPnLCard } from "@/components/overview/UnrealizedPnLCard";
+import { RealizedPnLTodayCard } from "@/components/overview/RealizedPnLTodayCard";
+import { BridgeHealthCard } from "@/components/overview/BridgeHealthCard";
+import { ActiveExposurePanel } from "@/components/overview/ActiveExposurePanel";
+import { RecoveryAlertBanner } from "@/components/overview/RecoveryAlertBanner";
+import { ActivePositionsTable } from "@/components/overview/ActivePositionsTable";
+import { RecentClosedTradesTable } from "@/components/overview/RecentClosedTradesTable";
+import { RecentExecutionEventsList } from "@/components/overview/RecentExecutionEventsList";
 
 export const Route = createFileRoute("/_app/overview")({
   component: Overview,
 });
 
 function Overview() {
-  const { data } = useQuery({
-    queryKey: ["overview"],
+  const { data: settings } = useQuery({
+    queryKey: ["overview", "app_settings_live"],
     queryFn: async () => {
-      const [pos, sigs, alerts] = await Promise.all([
-        supabase
-          .from("positions")
-          .select("id, symbol, side, protection_state, qty_open")
-          .is("closed_at", null),
-        supabase
-          .from("signals")
-          .select("id, symbol, action, status, created_at, strategy")
-          .order("created_at", { ascending: false })
-          .limit(10),
-        supabase
-          .from("system_alerts")
-          .select("id, severity, category, message, created_at")
-          .eq("severity", "critical")
-          .is("acknowledged_at", null)
-          .order("created_at", { ascending: false })
-          .limit(5),
-      ]);
-      return {
-        positions: pos.data ?? [],
-        signals: sigs.data ?? [],
-        alerts: alerts.data ?? [],
-      };
+      const { data } = await supabase
+        .from("app_settings")
+        .select("live_enabled")
+        .maybeSingle();
+      return data;
     },
-    refetchInterval: 5_000,
+    refetchInterval: 30_000,
   });
 
-  const positions = data?.positions ?? [];
-  const unprotected = positions.filter((p) => p.protection_state === "unprotected").length;
+  const live = !!settings?.live_enabled;
+  const source = live ? "live" : "paper";
+
+  const { data: latestEquity } = useQuery({
+    queryKey: ["overview", "latest_equity", source],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("balance_snapshots")
+        .select("total_equity")
+        .eq("source", source)
+        .order("captured_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data?.total_equity ? Number(data.total_equity) : null;
+    },
+    refetchInterval: 30_000,
+  });
 
   return (
     <>
       <PageHeader
         title="Overview"
-        description="Operational snapshot of all automated trading activity."
+        description="Mission control · read-only operator view."
         actions={<EmergencyStopButton />}
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card title="Open positions">
-          <div className="text-3xl font-semibold tabular">{positions.length}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {unprotected} unprotected
-          </div>
-        </Card>
-        <Card title="Critical alerts">
-          <div className="text-3xl font-semibold tabular text-danger">
-            {data?.alerts.length ?? 0}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">unacknowledged</div>
-        </Card>
-        <Card title="Recent signals">
-          <div className="text-3xl font-semibold tabular">
-            {data?.signals.length ?? 0}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">in last batch</div>
-        </Card>
+      <RecoveryAlertBanner />
+
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <EquityCard live={live} />
+        <UnrealizedPnLCard />
+        <RealizedPnLTodayCard />
+        <BridgeHealthCard />
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card title="Recent signals">
-          {(data?.signals.length ?? 0) === 0 ? (
-            <EmptyState title="No signals yet" hint="Awaiting TradingView webhook traffic." />
-          ) : (
-            <ul className="divide-y divide-border text-sm">
-              {data!.signals.map((s) => (
-                <li key={s.id} className="flex items-center justify-between py-2 tabular">
-                  <span className="font-medium">{s.symbol ?? "—"}</span>
-                  <span className="text-muted-foreground">{s.action ?? "—"}</span>
-                  <span className="text-xs text-muted-foreground">{s.strategy ?? ""}</span>
-                  <span className="text-xs uppercase text-muted-foreground">{s.status}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-        <Card title="Critical alerts">
-          {(data?.alerts.length ?? 0) === 0 ? (
-            <EmptyState title="All clear" hint="No critical alerts pending." />
-          ) : (
-            <ul className="divide-y divide-border text-sm">
-              {data!.alerts.map((a) => (
-                <li key={a.id} className="py-2">
-                  <div className="font-medium text-danger">{a.category}</div>
-                  <div className="text-xs text-muted-foreground">{a.message}</div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-1">
+          <ActiveExposurePanel equity={latestEquity ?? null} />
+        </div>
+        <div className="lg:col-span-2">
+          <ActivePositionsTable />
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <RecentClosedTradesTable />
+        <RecentExecutionEventsList />
       </div>
     </>
   );
@@ -144,7 +119,6 @@ function EmergencyStopButton() {
               <button
                 disabled={confirmText !== "STOP"}
                 onClick={async () => {
-                  // TODO: call op-emergency-stop edge function
                   setOpen(false);
                   setConfirmText("");
                 }}
