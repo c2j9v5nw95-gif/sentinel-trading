@@ -66,7 +66,7 @@ export function RecentExecutionEventsList() {
     items.push({
       id: `sig-${r.id}`,
       kind: "rejection",
-      severity: r.status === "failed" ? "critical" : "warning",
+      severity: r.status === "error" || r.status === "dead_letter" ? "critical" : "warning",
       title: `${r.status.toUpperCase()} · ${r.symbol ?? "—"} ${r.action ?? ""}`.trim(),
       detail: r.decision_reason ?? "no reason recorded",
       created_at: r.created_at,
