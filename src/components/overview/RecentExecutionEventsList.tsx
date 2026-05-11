@@ -37,7 +37,7 @@ export function RecentExecutionEventsList() {
       const { data, error } = await supabase
         .from("signals")
         .select("id,symbol,action,status,decision_reason,created_at")
-        .in("status", ["rejected", "failed"])
+        .in("status", ["rejected", "error", "dead_letter"])
         .order("created_at", { ascending: false })
         .limit(10);
       if (error) throw error;
