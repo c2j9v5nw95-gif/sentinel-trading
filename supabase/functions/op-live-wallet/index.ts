@@ -1,10 +1,15 @@
 // op-live-wallet — JWT-protected operator endpoint returning a live Bybit
-// wallet snapshot for the dashboard. Read-only, signed; uses the same
-// Bybit V5 endpoints as op-test-bybit-connection.
+// wallet snapshot for the dashboard. Read-only, signed.
+//
+// Routes through the execution bridge VPS when configured (fixed whitelisted
+// IP) — direct Edge egress lands on CloudFront POPs that Bybit rejects with
+// retCode 10010 ("Unmatched IP"). Falls back to direct only if bridge is
+// unconfigured.
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { BybitRest, BybitError } from "../_shared/bybit-rest.ts";
+import { BridgeBybitRest, bridgeConfigured } from "../_shared/bridge-rest.ts";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -37,12 +42,18 @@ Deno.serve(async (req) => {
     return json({ error: "live_keys_missing", message: "BYBIT_LIVE_API_KEY / SECRET not configured" }, 400);
   }
 
-  const rest = new BybitRest({ apiKey, apiSecret, baseUrl: "https://api.bybit.com", recvWindowMs: 5000 });
+  // Prefer the bridge — Edge egress IP isn't whitelisted on Bybit.
+  const rest = bridgeConfigured()
+    ? new BridgeBybitRest({
+        bridgeUrl: Deno.env.get("EXECUTION_BRIDGE_URL")!,
+        bridgeSecret: Deno.env.get("EXECUTION_BRIDGE_SECRET")!,
+        label: "op-live-wallet",
+      })
+    : new BybitRest({ apiKey, apiSecret, baseUrl: "https://api.bybit.com", recvWindowMs: 5000 });
 
   try {
     // Account info — for accountMode
-    const info = await rest.request({ endpoint: "/v5/account/info", method: "GET" })
-      .catch((e) => { throw e; });
+    const info = await rest.request({ endpoint: "/v5/account/info", method: "GET" });
     const infoR = (info as any).result ?? {};
     const accountMode = infoR.unifiedMarginStatus
       ? `unified:${infoR.unifiedMarginStatus}`
@@ -67,7 +78,6 @@ Deno.serve(async (req) => {
       return Number.isFinite(n) ? n : 0;
     };
 
-    // Aggregate USDT-denominated values from coins[] when account-level fields are blank.
     const coins: any[] = acct.coin ?? [];
     const usdt = coins.find((c) => c.coin === "USDT") ?? {};
 
@@ -88,7 +98,7 @@ Deno.serve(async (req) => {
       unrealized_pnl: unrealizedPnl,
       used_margin: usedMargin,
       synced_at: new Date().toISOString(),
-      raw: { account_type: acct.accountType ?? null },
+      raw: { account_type: acct.accountType ?? null, transport: bridgeConfigured() ? "bridge" : "direct" },
     });
   } catch (e) {
     if (e instanceof BybitError) {
