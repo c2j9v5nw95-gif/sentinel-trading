@@ -4,6 +4,8 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/PageHeader";
 import { EquityCard } from "@/components/overview/EquityCard";
+import { OverviewFilterBar } from "@/components/overview/OverviewFilterBar";
+import type { RangeKey } from "@/components/overview/filters";
 import { UnrealizedPnLCard } from "@/components/overview/UnrealizedPnLCard";
 import { RealizedPnLTodayCard } from "@/components/overview/RealizedPnLTodayCard";
 import { BridgeHealthCard } from "@/components/overview/BridgeHealthCard";
