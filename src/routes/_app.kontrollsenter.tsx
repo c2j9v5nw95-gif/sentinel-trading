@@ -353,6 +353,28 @@ function OverrideDrawer({ snap, symbol, override, onClose }: any) {
           </div>
         </div>
 
+        {(isHealthStrategy || entryMatchCount === 0) && (
+          <div className="mb-4 rounded border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
+            <div className="font-semibold text-warning">⚠ Denne overriden vil sannsynligvis ikke aktiveres</div>
+            <div className="mt-1 text-muted-foreground">
+              {isHealthStrategy ? (
+                <>
+                  <code>{snap.strategy}</code> er en helse-snapshot-strategi, ikke en entry-strategi.
+                  Sizing-resolveren matcher kun overrides på eksakt <code>(symbol, strategy, tag)</code>
+                  som faktisk kommer som ENTER-signaler. Sett heller symbol-defaulten i Symbols-tabellen,
+                  eller opprett en override på det reelle entry-strategi-tuple-et (f.eks. ES1/EL1/XS1 med tag STRAT2).
+                </>
+              ) : (
+                <>
+                  Ingen ENTER-signaler matcher <code>{snap.symbol} / {snap.strategy} / {snap.tag || "(tom)"}</code>{" "}
+                  siste 30 dager. Overriden lagres, men aktiveres først når et signal med eksakt denne tuple-en
+                  kommer inn.
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-3 text-sm">
           <Field label="Account balance %" value={form.account_balance_percent} onChange={(v: string) => setForm({ ...form, account_balance_percent: v })} placeholder="(bruk regel/default)" />
           <Field label="Leverage" value={form.leverage} onChange={(v: string) => setForm({ ...form, leverage: v })} placeholder="(bruk regel/default)" />
