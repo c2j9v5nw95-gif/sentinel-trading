@@ -282,8 +282,28 @@ function fmtNum(v: number | null | undefined, dec: number) {
 // Override drawer (per-tuple)
 // --------------------------------------------------------------------------
 
+const HEALTH_STRATEGIES = new Set(["HEALTH_ALL", "H_LONG", "H_SHORT"]);
+
 function OverrideDrawer({ snap, symbol, override, onClose }: any) {
   const qc = useQueryClient();
+
+  const isHealthStrategy = HEALTH_STRATEGIES.has(snap.strategy);
+  const { data: entryMatchCount } = useQuery({
+    queryKey: ["override-entry-match", snap.symbol, snap.strategy, snap.tag ?? ""],
+    queryFn: async () => {
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const { count } = await supabase
+        .from("signals")
+        .select("id", { count: "exact", head: true })
+        .eq("symbol", snap.symbol)
+        .eq("strategy", snap.strategy)
+        .eq("tag", snap.tag ?? "")
+        .in("action", ["ENTER-LONG", "ENTER-SHORT"])
+        .gte("created_at", since);
+      return count ?? 0;
+    },
+  });
+
   const [form, setForm] = useState({
     account_balance_percent: override?.account_balance_percent ?? "",
     leverage: override?.leverage ?? "",
