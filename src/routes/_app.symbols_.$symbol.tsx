@@ -307,7 +307,7 @@ function SymbolDetailPage() {
         <ActivePositionPanel position={activePosition} />
       </div>
 
-      <HealthHistoryChart health={health} />
+      <HealthHistoryChart health={health} closedPositions={closedPositions} />
 
       <ClosedTradesTable positions={closedPositions} events={events} />
 
