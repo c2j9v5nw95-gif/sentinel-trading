@@ -1,14 +1,21 @@
-// Health Gate — evaluates whether a trading signal's strategy is currently
-// "healthy" enough to act on, based on the latest health_snapshot for the
-// (symbol, strategy, tag) tuple compared to thresholds on the strategies row.
+// Health Gate — evaluates whether a trading signal should be allowed based on
+// the latest HEALTH_ALL snapshot for the *symbol*, compared to thresholds set
+// on the global HEALTH_ALL strategy row.
+//
+// Rationale: TradingView publishes per-symbol health as
+// (symbol, strategy='HEALTH_ALL', tag=''), but entry signals come in as
+// (symbol, strategy='ES1/EL1/XS1/XL1...', tag='STRAT2'). Looking up snapshot
+// or thresholds by the entry signal's own tuple never matches anything, so
+// the gate was effectively a no-op. We now always read the HEALTH_ALL row
+// for the symbol regardless of the signal's strategy/tag.
 //
 // Outcomes:
 //   pass=true  reason="ok"                     all configured thresholds met
-//   pass=true  reason="no_thresholds"          strategy has no thresholds set
-//   pass=true  reason="no_health_data"         no snapshot yet (don't block first
-//                                              alert; surfaced as warning)
+//   pass=true  reason="no_thresholds"          HEALTH_ALL has no thresholds
+//   pass=true  reason="no_health_data"         no snapshot yet (don't block
+//                                              first alert; surfaced as warning)
 //   pass=false reason="<metric>_below_threshold"
-//   pass=false reason="strategy_disabled"      strategy row exists but enabled=false
+//   pass=false reason="health_strategy_disabled"  HEALTH_ALL row disabled
 //
 // HEALTH-type signals never enter this gate (they ARE the data feeding it).
 
@@ -26,6 +33,9 @@ export interface HealthDecision {
   metrics: Record<string, unknown>;
 }
 
+const HEALTH_STRATEGY = "HEALTH_ALL";
+const HEALTH_TAG = "";
+
 export async function evaluateHealth(
   sb: SupabaseClient,
   inp: HealthInput,
@@ -33,12 +43,16 @@ export async function evaluateHealth(
   const { data: strat } = await sb
     .from("strategies")
     .select("enabled,health_min_winrate,health_min_profit_factor,health_min_net_profit")
-    .eq("name", inp.strategy)
-    .eq("tag", inp.tag ?? "")
+    .eq("name", HEALTH_STRATEGY)
+    .eq("tag", HEALTH_TAG)
     .maybeSingle();
 
   if (strat && strat.enabled === false) {
-    return { pass: false, reason: "strategy_disabled", metrics: { strategy: inp.strategy, tag: inp.tag } };
+    return {
+      pass: false,
+      reason: "health_strategy_disabled",
+      metrics: { symbol: inp.symbol, applied_strategy: HEALTH_STRATEGY },
+    };
   }
 
   const minWr = strat?.health_min_winrate != null ? Number(strat.health_min_winrate) : null;
@@ -46,15 +60,19 @@ export async function evaluateHealth(
   const minNp = strat?.health_min_net_profit != null ? Number(strat.health_min_net_profit) : null;
 
   if (minWr == null && minPf == null && minNp == null) {
-    return { pass: true, reason: "no_thresholds", metrics: {} };
+    return {
+      pass: true,
+      reason: "no_thresholds",
+      metrics: { symbol: inp.symbol, applied_strategy: HEALTH_STRATEGY },
+    };
   }
 
   const { data: snap } = await sb
     .from("health_snapshots")
     .select("net_profit,winrate,profit_factor,bar_time,created_at")
     .eq("symbol", inp.symbol)
-    .eq("strategy", inp.strategy)
-    .eq("tag", inp.tag ?? "")
+    .eq("strategy", HEALTH_STRATEGY)
+    .eq("tag", HEALTH_TAG)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -63,7 +81,13 @@ export async function evaluateHealth(
     return {
       pass: true,
       reason: "no_health_data",
-      metrics: { thresholds: { minWr, minPf, minNp } },
+      metrics: {
+        symbol: inp.symbol,
+        applied_strategy: HEALTH_STRATEGY,
+        signal_strategy: inp.strategy,
+        signal_tag: inp.tag,
+        thresholds: { minWr, minPf, minNp },
+      },
     };
   }
 
@@ -72,6 +96,10 @@ export async function evaluateHealth(
   const np = snap.net_profit != null ? Number(snap.net_profit) : null;
 
   const metrics = {
+    symbol: inp.symbol,
+    applied_strategy: HEALTH_STRATEGY,
+    signal_strategy: inp.strategy,
+    signal_tag: inp.tag,
     snapshot: { winrate: wr, profit_factor: pf, net_profit: np, bar_time: snap.bar_time },
     thresholds: { minWr, minPf, minNp },
   };
