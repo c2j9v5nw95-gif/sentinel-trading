@@ -219,6 +219,8 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
       const closes = bars.map((b) => b.close);
       const { rsi } = await import('./indicators');
       payload.rsi14 = rsi(closes, 14);
+      if (tfSource) (payload as any).tf_source = tfSource;
+    }
     }
     inserts.push({
       signal_id: sig.id, symbol: sig.symbol, strategy: sig.strategy, tag: sig.tag ?? '',
