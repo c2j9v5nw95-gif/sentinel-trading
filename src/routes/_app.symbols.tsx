@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { evaluateClient, type EvalRule, type EvalSnap } from "@/lib/sizing-eval";
+import { DualValue } from "@/components/DualValue";
 
 export const Route = createFileRoute("/_app/symbols")({
   component: SymbolsPage,
