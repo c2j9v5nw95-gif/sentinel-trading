@@ -199,7 +199,12 @@ function SymbolDetailPage() {
           .filter(
             (o) =>
               o.position_id === p.id &&
-              (o.purpose === "exit" || o.purpose === "tp" || o.purpose === "sl" || o.purpose === "manual_exit"),
+              (o.purpose === "exit_full" ||
+                o.purpose === "tp1" ||
+                o.purpose === "tp2_rest" ||
+                o.purpose === "sl" ||
+                o.purpose === "tsl" ||
+                o.purpose === "manual_close"),
           )
           .sort(
             (a, b) =>
