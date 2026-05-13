@@ -14,6 +14,72 @@ export type Database = {
   }
   public: {
     Tables: {
+      analytics_snapshot_runs: {
+        Row: {
+          api_calls: number
+          errors: Json
+          finished_at: string | null
+          id: string
+          ok: boolean
+          rows_written: number
+          started_at: string
+          symbols_processed: number
+          writer: string
+        }
+        Insert: {
+          api_calls?: number
+          errors?: Json
+          finished_at?: string | null
+          id?: string
+          ok?: boolean
+          rows_written?: number
+          started_at?: string
+          symbols_processed?: number
+          writer: string
+        }
+        Update: {
+          api_calls?: number
+          errors?: Json
+          finished_at?: string | null
+          id?: string
+          ok?: boolean
+          rows_written?: number
+          started_at?: string
+          symbols_processed?: number
+          writer?: string
+        }
+        Relationships: []
+      }
+      analytics_tf_context_map: {
+        Row: {
+          context_timeframe: string
+          created_at: string
+          enabled: boolean
+          id: string
+          priority: number
+          trade_timeframe: string
+          updated_at: string
+        }
+        Insert: {
+          context_timeframe: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          priority?: number
+          trade_timeframe: string
+          updated_at?: string
+        }
+        Update: {
+          context_timeframe?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          priority?: number
+          trade_timeframe?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       app_settings: {
         Row: {
           auto_pause_on_critical_invariant: boolean
@@ -1120,6 +1186,36 @@ export type Database = {
           },
         ]
       }
+      regime_snapshots: {
+        Row: {
+          bar_time: string | null
+          captured_at: string
+          id: string
+          payload: Json
+          regime_class: string | null
+          symbol: string
+          timeframe: string
+        }
+        Insert: {
+          bar_time?: string | null
+          captured_at?: string
+          id?: string
+          payload?: Json
+          regime_class?: string | null
+          symbol: string
+          timeframe: string
+        }
+        Update: {
+          bar_time?: string | null
+          captured_at?: string
+          id?: string
+          payload?: Json
+          regime_class?: string | null
+          symbol?: string
+          timeframe?: string
+        }
+        Relationships: []
+      }
       risk_decisions: {
         Row: {
           created_at: string
@@ -1190,6 +1286,56 @@ export type Database = {
           symbol?: string
         }
         Relationships: []
+      }
+      signal_context_snapshots: {
+        Row: {
+          bar_time: string | null
+          created_at: string
+          environment: string | null
+          id: string
+          payload: Json
+          signal_id: string | null
+          strategy: string | null
+          symbol: string
+          tag: string | null
+          tf_role: string
+          timeframe: string | null
+        }
+        Insert: {
+          bar_time?: string | null
+          created_at?: string
+          environment?: string | null
+          id?: string
+          payload?: Json
+          signal_id?: string | null
+          strategy?: string | null
+          symbol: string
+          tag?: string | null
+          tf_role: string
+          timeframe?: string | null
+        }
+        Update: {
+          bar_time?: string | null
+          created_at?: string
+          environment?: string | null
+          id?: string
+          payload?: Json
+          signal_id?: string | null
+          strategy?: string | null
+          symbol?: string
+          tag?: string | null
+          tf_role?: string
+          timeframe?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_context_snapshots_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       signals: {
         Row: {
