@@ -23,6 +23,14 @@ export function KpiGrid({
   const wrDelta = metrics.edge_winrate_delta;
   const pfDelta = metrics.edge_pf_delta;
 
+  const deltaClass = (d: number | null) =>
+    d == null ? "" : d >= 0 ? "text-success" : "text-danger";
+
+  const wrTone = (wr: number | null): "success" | "danger" | "default" =>
+    wr == null ? "default" : wr >= 50 ? "success" : "danger";
+  const pfTone = (pf: number | null): "success" | "danger" | "default" =>
+    pf == null ? "default" : pf >= 1 ? "success" : "danger";
+
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <MetricCard
