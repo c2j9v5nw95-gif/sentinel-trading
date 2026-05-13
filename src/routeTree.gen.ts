@@ -22,6 +22,7 @@ import { Route as AppOverviewRouteImport } from './routes/_app.overview'
 import { Route as AppKontrollsenterRouteImport } from './routes/_app.kontrollsenter'
 import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
+import { Route as AppAnalyticsDebugRouteImport } from './routes/_app.analytics-debug'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
 import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$symbol'
 import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './routes/api/public/hooks/snapshot-signal-context'
@@ -91,6 +92,11 @@ const AppAuditRoute = AppAuditRouteImport.update({
   path: '/audit',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAnalyticsDebugRoute = AppAnalyticsDebugRouteImport.update({
+  id: '/analytics-debug',
+  path: '/analytics-debug',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAlertsRoute = AppAlertsRouteImport.update({
   id: '/alerts',
   path: '/alerts',
@@ -118,6 +124,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/alerts': typeof AppAlertsRoute
+  '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
   '/invariants': typeof AppInvariantsRoute
   '/kontrollsenter': typeof AppKontrollsenterRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/alerts': typeof AppAlertsRoute
+  '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
   '/invariants': typeof AppInvariantsRoute
   '/kontrollsenter': typeof AppKontrollsenterRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/alerts': typeof AppAlertsRoute
+  '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
   '/_app/audit': typeof AppAuditRoute
   '/_app/invariants': typeof AppInvariantsRoute
   '/_app/kontrollsenter': typeof AppKontrollsenterRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/alerts'
+    | '/analytics-debug'
     | '/audit'
     | '/invariants'
     | '/kontrollsenter'
@@ -194,6 +204,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/alerts'
+    | '/analytics-debug'
     | '/audit'
     | '/invariants'
     | '/kontrollsenter'
@@ -213,6 +224,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/_app/alerts'
+    | '/_app/analytics-debug'
     | '/_app/audit'
     | '/_app/invariants'
     | '/_app/kontrollsenter'
@@ -329,6 +341,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAuditRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/analytics-debug': {
+      id: '/_app/analytics-debug'
+      path: '/analytics-debug'
+      fullPath: '/analytics-debug'
+      preLoaderRoute: typeof AppAnalyticsDebugRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/alerts': {
       id: '/_app/alerts'
       path: '/alerts'
@@ -362,6 +381,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAlertsRoute: typeof AppAlertsRoute
+  AppAnalyticsDebugRoute: typeof AppAnalyticsDebugRoute
   AppAuditRoute: typeof AppAuditRoute
   AppInvariantsRoute: typeof AppInvariantsRoute
   AppKontrollsenterRoute: typeof AppKontrollsenterRoute
@@ -377,6 +397,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAlertsRoute: AppAlertsRoute,
+  AppAnalyticsDebugRoute: AppAnalyticsDebugRoute,
   AppAuditRoute: AppAuditRoute,
   AppInvariantsRoute: AppInvariantsRoute,
   AppKontrollsenterRoute: AppKontrollsenterRoute,
@@ -403,3 +424,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

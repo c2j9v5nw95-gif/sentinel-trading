@@ -13,6 +13,7 @@ const NAV: { to: string; label: string }[] = [
   { to: "/invariants", label: "Invariants" },
   { to: "/audit", label: "Audit" },
   { to: "/simulator", label: "Simulator" },
+  { to: "/analytics-debug", label: "Analytics Debug" },
   { to: "/settings", label: "Settings" },
 ];
 
