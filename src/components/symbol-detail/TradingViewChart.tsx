@@ -76,15 +76,21 @@ function shapeForMarker(m: ChartMarker) {
 export function TradingViewChart({
   symbol,
   markers,
+  defaultInterval,
 }: {
   symbol: string;
   markers: ChartMarker[];
+  defaultInterval?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<any>(null);
   const containerId = `tv_${symbol}_${Math.random().toString(36).slice(2, 8)}`;
   const idRef = useRef(containerId);
-  const [interval, setInterval] = useState<string>("60");
+  const [interval, setInterval] = useState<string>(defaultInterval ?? "60");
+  // re-sync if defaultInterval arrives after initial mount (data is async)
+  useEffect(() => {
+    if (defaultInterval) setInterval(defaultInterval);
+  }, [defaultInterval]);
   const [enabled, setEnabled] = useState<Record<ChartMarker["kind"], boolean>>({
     entry_long: true,
     entry_short: true,

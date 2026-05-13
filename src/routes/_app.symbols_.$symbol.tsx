@@ -73,7 +73,7 @@ function SymbolDetailPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from("health_snapshots")
-        .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at")
+        .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at,payload")
         .eq("symbol", symbol)
         .order("created_at", { ascending: false })
         .limit(200);
@@ -285,7 +285,20 @@ function SymbolDetailPage() {
         unrealizedPnl={unrealizedPnl}
       />
 
-      <TradingViewChart symbol={symbol} markers={markers} />
+      <TradingViewChart
+        symbol={symbol}
+        markers={markers}
+        defaultInterval={(() => {
+          const tf = (health.find((h: any) => h.payload?.tf != null)?.payload as any)?.tf;
+          if (tf == null) return undefined;
+          const s = String(tf).toUpperCase();
+          if (s === "D" || s === "1D") return "D";
+          if (s === "W" || s === "1W") return "W";
+          // numeric minutes from Pine: 1,3,5,15,30,60,120,240 etc.
+          const n = Number(s);
+          return Number.isFinite(n) && n > 0 ? String(n) : undefined;
+        })()}
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
