@@ -1,70 +1,62 @@
-## Sannheten om hva vi setter hos Bybit
+## Mål
 
-- **SL** — armes alltid ved entry (`executor.ts` → `setTradingStop({slPrice})`)
-- **TSL** — armes av `protection-monitor` når posisjonen når aktiveringsterskel (`setTradingStop({trailingStop})`)
-- **Ingen TP-ordre** ligger noen gang hos Bybit
+Vis en kort liste i Overview over symboler som **har vært aktive** (har minst ett HEALTH_ALL-snapshot fra før) men som **ikke har sendt nytt helsealert på over 120 minutter**. Disse skal blokkeres for nye entries, og du skal kunne deaktivere dem direkte fra listen.
 
-Alle andre exits er reduce-only market orders **vi** sender, trigget av enten et TradingView-signal (XL1–XL5 / XS1–XS5) eller vår interne `protection-monitor`. Dagens "BYBIT TP1 hit"-merking er feil — TP1 er aldri en Bybit-ordre.
+## Hvordan stale defineres
 
-## Ny "Closed by"-klassifisering
+Et symbol er `stale` når:
+1. Det er `enabled=true` i `symbols`
+2. Det finnes minst ett snapshot i `health_snapshots` med `strategy='HEALTH_ALL', tag=''` for symbolet (har vært aktivt)
+3. Nyeste snapshot for symbolet er > **120 minutter** gammelt (hardkodet konstant `HEALTH_STALE_MINUTES = 120`)
 
-Tre mulige *triggere* som faktisk kan lukke en posisjon, mappet til prefiks og farge:
+Symboler som aldri har sendt et HEALTH_ALL-snapshot beholder dagens "no data"-oppførsel — de er ikke stale, bare ikke-aktivert ennå.
 
-| Prefiks | Tone | Hvem trigget | Hvordan vi kjenner igjen |
-|---|---|---|---|
-| `[BYBIT]` | warning | Bybits native SL eller TSL fylte (vi sendte ingen ordre) | Posisjonen lukket via `bybit-reconcile` (`event_type='reconciliation_drift'` med `closed=true` i detail), og det finnes ingen `exit_*`/`sl_triggered`/`tsl_triggered` på posisjonen |
-| `[MONITOR]` | danger | Vår `protection-monitor` så at intern SL/TSL ble brutt og sendte reduce-only exit | `event_type='sl_triggered'` eller `'tsl_triggered'` |
-| `[TV]` | success / warning | TradingView-signal trigget reduce-only exit | Det finnes `exit_*`-event for posisjonen, og `signals.strategy_code` på `last_exit_signal_id` (eller siste exit-signal koblet til posisjonen) er XL1–XL5 / XS1–XS5 |
-| `[RECOVERY]` | danger | `bybit-reconcile` tvangslukket | `event_type='exit_recovery_succeeded'` |
-| `[MANUAL]` | muted | Operator stengte | `event_type='manual_close'` |
+## Backend — `supabase/functions/_shared/health-gate.ts`
 
-### Etikett (det som vises etter prefikset) — bruker strategikoden direkte
+Legg til staleness-sjekk **før** thresholds evalueres. Etter at snapshot er hentet:
 
-For `[TV]` viser vi den faktiske TradingView-koden så det matcher Pine-strategien 1:1:
+```ts
+const STALE_MS = 120 * 60 * 1000;
+const ageMs = Date.now() - new Date(snap.created_at).getTime();
+if (ageMs > STALE_MS) {
+  return {
+    pass: false,
+    reason: "health_stale",
+    metrics: { symbol, applied_strategy: HEALTH_STRATEGY, snapshot_age_minutes: Math.round(ageMs / 60000), stale_threshold_minutes: 120 },
+  };
+}
+```
 
-| strategy_code | Etikett | Tone |
-|---|---|---|
-| XL1 | `[TV] XL1 · TP1` | success |
-| XL2 | `[TV] XL2 · SL/Failsafe` | warning |
-| XL3 | `[TV] XL3 · Opposite` | success |
-| XL4 | `[TV] XL4 · TP2 (REST)` | success |
-| XL5 | `[TV] XL5 · Trend fail` | warning |
-| XS1 | `[TV] XS1 · TP1` | success |
-| XS2 | `[TV] XS2 · SL/Failsafe` | warning |
-| XS3 | `[TV] XS3 · Opposite` | success |
-| XS4 | `[TV] XS4 · TP2 (REST)` | success |
-| XS5 | `[TV] XS5 · Trend fail` | warning |
+Plassering: rett etter `if (!snap)`-blokken, før wr/pf/np-sammenligningene. Exit-signaler treffer aldri denne gaten (eksisterende logikk i kallerne — uendret).
 
-For `[BYBIT]`: `SL fill` hvis `tsl_active=false` på posisjonen, `TSL fill` hvis `tsl_active=true`.
-For `[MONITOR]`: `SL` for `sl_triggered`, `TSL` for `tsl_triggered`.
+## Frontend — `src/components/overview/SymbolHealthPanel.tsx`
 
-Beskrivelsen (`description` fra `strategy_codes`) vises i tooltip sammen med rå `event_type` og evt. `signals.exit_reason`.
+1. **Ny status `stale`** i tillegg til `open` / `blocked` / `no_data`. Klassifisering basert på `created_at` på siste snapshot:
+   - alder > 120 min → `stale` (uavhengig av PF/Net)
+   - ellers eksisterende logikk
 
-## Implementasjon
+2. **Layout**: behold to-kolonners grid for Open / Blocked, og legg til en **tredje seksjon under** med tittel "Stale (no health alert > 120m)" som bare vises når listen ikke er tom. Hver rad viser:
+   - Symbol
+   - Alder på siste snapshot (`fmtAge`)
+   - PF/Net fra siste (gamle) snapshot, dempet
+   - **"Disable"-knapp** (rød outline)
 
-**Endrede filer (kun frontend):**
+3. **Disable-knapp**: kaller direkte fra browser-klient
+   ```ts
+   await supabase.from("symbols").update({ enabled: false }).eq("symbol", sym);
+   ```
+   RLS-policyen `operator manages symbols` håndterer autorisasjon. Etter suksess: `queryClient.invalidateQueries({ queryKey: ["overview", "symbol_health"] })` så raden forsvinner umiddelbart. Confirm-dialog (`window.confirm`) før kall.
 
-`src/components/overview/RecentClosedTradesTable.tsx`:
-- Utvid query til å hente:
-  - `position_events` med alle relevante `event_type`-verdier (inkludert `reconciliation_drift`)
-  - `positions.tsl_active` og `positions.last_exit_signal_id` (legges til i select hvis ikke allerede der)
-  - `signals.strategy_code` for `last_exit_signal_id`
-- Ny `classifyExit({ events, position, exitSignal })`-funksjon med prioritet:
-  1. `manual_close` → `[MANUAL]`
-  2. `exit_recovery_succeeded` → `[RECOVERY]`
-  3. `sl_triggered` → `[MONITOR] SL`
-  4. `tsl_triggered` → `[MONITOR] TSL`
-  5. `exit_*` (TV-trigget) → `[TV] {strategy_code} · {label}` basert på lookup-tabell over
-  6. `reconciliation_drift` uten øvrige exit-events → `[BYBIT] SL fill` eller `[BYBIT] TSL fill` basert på `position.tsl_active`
-  7. Ingen match → `—`
-- Tre nye prefikstoner (success/warning/danger/muted)
-- Tooltip: `event_type` + `strategy_code` + `description` + `exit_reason`
-
-**Ingen backend- eller schema-endringer.** Alle data finnes allerede.
+4. **Tittel-oppdatering**: `Symbol health · X open · Y blocked · Z stale` (skip stale-segmentet hvis 0).
 
 ## Verifisering
 
-- BSBUSDT-rad med `XL2/XS2` → `[TV] XL2 · SL/Failsafe` (warning)
-- ZECUSDT-rad med `XS1` → `[TV] XS1 · TP1` (success) — ikke lenger `[BYBIT] TP1 hit`
-- BSBUSDT-rad med `XL5/XS5` → `[TV] XL5 · Trend fail` (warning)
-- Hypotetisk rad der Bybits native SL fylte → `[BYBIT] SL fill` (warning)
+- BSBUSDT/LABUSDT/PENGUUSDT (currently `Blocked` med ferske snapshots) skal forbli i `Blocked`-kolonnen, ikke flyttes til Stale.
+- Hvis en TV-alert stopper å sende, vises symbolet som Stale etter 120 min, og en ny entry-signal får `pass=false reason="health_stale"` i `risk_decisions`.
+- Klikk "Disable" → `symbols.enabled = false` → raden forsvinner fra alle tre seksjonene neste refetch (siden listen filtrerer på `enabled=true`).
+
+## Ikke i scope
+
+- Ingen schema-endring (ingen nye kolonner/tabeller)
+- Ingen endring i andre overview-komponenter
+- Ingen automatisk re-aktivering når alerts kommer tilbake (bruker må gjøre det manuelt fra Symbols-siden)

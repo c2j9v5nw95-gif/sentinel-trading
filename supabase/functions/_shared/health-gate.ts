@@ -91,6 +91,27 @@ export async function evaluateHealth(
     };
   }
 
+  // Staleness gate: if the latest HEALTH_ALL snapshot is older than 120 min,
+  // block new entries. The TV alert may have been disabled or is failing —
+  // we should not trade on stale health data.
+  const STALE_MINUTES = 120;
+  const ageMs = Date.now() - new Date(snap.created_at).getTime();
+  if (ageMs > STALE_MINUTES * 60 * 1000) {
+    return {
+      pass: false,
+      reason: "health_stale",
+      metrics: {
+        symbol: inp.symbol,
+        applied_strategy: HEALTH_STRATEGY,
+        signal_strategy: inp.strategy,
+        signal_tag: inp.tag,
+        snapshot_age_minutes: Math.round(ageMs / 60000),
+        stale_threshold_minutes: STALE_MINUTES,
+        last_snapshot_at: snap.created_at,
+      },
+    };
+  }
+
   const wr = snap.winrate != null ? Number(snap.winrate) : null;
   const pf = snap.profit_factor != null ? Number(snap.profit_factor) : null;
   const np = snap.net_profit != null ? Number(snap.net_profit) : null;
