@@ -101,16 +101,16 @@ export function EdgeComparisonChart({
             </div>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={series}>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                <XAxis dataKey="t" tickFormatter={fmtTick} tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-                <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" domain={[0, 100]} />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                <XAxis dataKey="t" tickFormatter={fmtTick} tick={{ fontSize: 10 }} stroke="var(--muted-foreground)" />
+                <YAxis tick={{ fontSize: 10 }} stroke="var(--muted-foreground)" domain={[0, 100]} />
                 <Tooltip
-                  contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 11 }}
+                  contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", fontSize: 11 }}
                   labelFormatter={(l) => new Date(Number(l)).toLocaleString()}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="bt_winrate" name="Backtest" stroke="hsl(var(--accent))" dot={false} strokeWidth={1.5} />
-                <Line type="monotone" dataKey="live_winrate" name="Live" stroke="hsl(var(--success))" dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="bt_winrate" name="Backtest" stroke="var(--primary)" dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="live_winrate" name="Live" stroke="var(--success)" dot={false} strokeWidth={1.5} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -120,16 +120,16 @@ export function EdgeComparisonChart({
             </div>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={series}>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                <XAxis dataKey="t" tickFormatter={fmtTick} tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-                <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                <XAxis dataKey="t" tickFormatter={fmtTick} tick={{ fontSize: 10 }} stroke="var(--muted-foreground)" />
+                <YAxis tick={{ fontSize: 10 }} stroke="var(--muted-foreground)" />
                 <Tooltip
-                  contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 11 }}
+                  contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", fontSize: 11 }}
                   labelFormatter={(l) => new Date(Number(l)).toLocaleString()}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="bt_pf" name="Backtest" stroke="hsl(var(--accent))" dot={false} strokeWidth={1.5} />
-                <Line type="monotone" dataKey="live_pf" name="Live" stroke="hsl(var(--success))" dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="bt_pf" name="Backtest" stroke="var(--primary)" dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="live_pf" name="Live" stroke="var(--success)" dot={false} strokeWidth={1.5} />
               </LineChart>
             </ResponsiveContainer>
           </div>

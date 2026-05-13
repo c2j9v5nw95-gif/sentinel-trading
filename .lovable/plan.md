@@ -1,147 +1,44 @@
-## Vision
+## Problem
 
-Symbol Detail blir det langsiktige etterretningsdossieret per coin og fundamentet for et fremtidig Screener-system. Tre datadomener samles på én side:
+Linjene i `EdgeComparisonChart` (Backtest vs Live edge — winrate og PF) og arealet i `HealthHistoryChart` (Net profit history) tegnes ikke fordi fargene wrappes feil:
 
-1. **TradingView backtest-helse** (`health_snapshots`)
-2. **Live app-execution** (`positions`, `orders`, `signals`, `position_events`, `risk_decisions`)
-3. **Bybit marked** (TradingView-widget for live chart; lokal `positions`/`balance_snapshots` for eksponering)
+- `src/styles.css` definerer tokens som `oklch(...)`
+- chart-komponentene bruker `stroke="hsl(var(--accent))"` → CSS blir `hsl(oklch(...))` → ugyldig → Recharts tegner ingenting
 
-**Strikt read-only analytics-fase.** Ingen endringer i execution, dispatcher, bridge, reconcile, risk engine, signal processing, sizing eller order routing. Ingen DB-migrasjoner. Ingen server-functions. Ingen replay eller andre execution-adjacent handlinger på denne siden — replay forblir kun på `/signals`.
+I tillegg er `--accent` for mørk til å fungere som linjefarge på den mørke kortbakgrunnen.
 
-## Rute & navigasjon
+## Fix (kun frontend, kun farge-strenger)
 
-- Ny rute: `src/routes/_app.symbols.$symbol.tsx` → `/symbols/:symbol`
-- Symbol-cellen i `_app.symbols.tsx` blir `<Link to="/symbols/$symbol" params={{ symbol }}>`
-- Detaljsiden får "← Symbols"-tilbake-lenke i `PageHeader`
+### 1. `src/components/symbol-detail/EdgeComparisonChart.tsx`
 
-## Sideoppbygging
+Bytt alle `stroke="hsl(var(--X))"` til `stroke="var(--X)"`. Bytt BT-serien fra `--accent` til `--primary` så den faktisk kontrasterer mot bakgrunnen.
 
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│ [← Symbols]  RAVEUSDT  ·  enabled-chip  ·  exec-mode             │
-│ Sub: leverage · margin-mode · transport · last health snapshot   │
-├──────────────────────────────────────────────────────────────────┤
-│ KPI-rad (8 kort, 2 x 4):                                         │
-│  Eff equity% | Eff lev | Live winrate | Backtest winrate         │
-│  Live PF     | BT PF   | Realized PnL | Unrealized PnL           │
-│  (DualValue: cfg under eff der relevant)                         │
-├──────────────────────────────────────────────────────────────────┤
-│ ┌─ Live TradingView-chart (full bredde) ───────────────────────┐ │
-│ │  Toolbar: 1m | 5m | 15m | 1h | 4h | 1d                       │ │
-│ │  Marker-toggles: Entries · Exits · TP · SL · Rejections ·    │ │
-│ │                  Recovery · Manual                            │ │
-│ │  TradingView Advanced Chart widget (BYBIT:{symbol}.P)         │ │
-│ │  Overlay shapes via widget API                                │ │
-│ └───────────────────────────────────────────────────────────────┘ │
-├──────────────────────────────────────────────────────────────────┤
-│ ┌─ Backtest vs Live edge ─────────────┐ ┌─ Active position ───┐ │
-│ │  Dual-line: BT winrate vs live wr   │ │  side, qty, entry,  │ │
-│ │  Dual-line: BT PF vs live PF        │ │  unreal PnL, sl/tsl │ │
-│ │  Net profit / drawdown history      │ │  protection-state   │ │
-│ └─────────────────────────────────────┘ └──────────────────────┘ │
-├──────────────────────────────────────────────────────────────────┤
-│ Closed trades (siste 50)                                         │
-├──────────────────────────────────────────────────────────────────┤
-│ Signal-historikk (siste 50) — read-only                          │
-│   tid · type · action · status · decision_reason · entry/exit    │
-│   reason · "Replay eligible"-chip (ingen knapp her)              │
-├──────────────────────────────────────────────────────────────────┤
-│ Sizing-resolution: matchende regel + override + final eff verdi  │
-├──────────────────────────────────────────────────────────────────┤
-│ Execution-reliability: rejections, recovery-events, dead-letters │
-└──────────────────────────────────────────────────────────────────┘
-```
+| Element | Før | Etter |
+|---|---|---|
+| Grid stroke | `hsl(var(--border))` | `var(--border)` |
+| Axis stroke | `hsl(var(--muted-foreground))` | `var(--muted-foreground))` |
+| Tooltip bg/border | `hsl(var(--card))` / `hsl(var(--border))` | `var(--card)` / `var(--border)` |
+| BT line stroke | `hsl(var(--accent))` | `var(--primary)` |
+| Live line stroke | `hsl(var(--success))` | `var(--success)` |
 
-## Datalag — bygd for fremtidig Screener
+Behold `strokeWidth={1.5}`, `dot={false}`, `type="monotone"`. Gjelder begge LineChart-blokkene (winrate + PF).
 
-Pure metrics-aggregat i `src/lib/symbol-metrics.ts` — gjenbrukes av Screener senere uten endringer.
+### 2. `src/components/symbol-detail/HealthHistoryChart.tsx`
 
-```ts
-export interface SymbolMetrics {
-  symbol: string;
-  // Backtest (siste health_snapshot)
-  bt_winrate: number | null;
-  bt_profit_factor: number | null;
-  bt_net_profit: number | null;
-  bt_last_at: string | null;
-  // Live execution (closed positions)
-  live_trades: number;
-  live_winrate: number | null;
-  live_profit_factor: number | null;
-  live_realized_pnl: number;
-  live_avg_pnl_pct: number | null;
-  live_max_drawdown_pct: number | null;
-  live_avg_time_in_trade_sec: number | null;
-  // Edge-delta
-  edge_winrate_delta: number | null;
-  edge_pf_delta: number | null;
-  // Reliability
-  signals_total: number;
-  signals_rejected: number;
-  signals_error: number;
-  rejection_rate: number;
-  recovery_events: number;
-  // Composite scores (0-100, vekter justeres senere)
-  profitability_score: number | null;
-  signal_quality_score: number | null;
-  reliability_score: number | null;
-}
+Samme fix:
+- gradient `stop` farger: `hsl(var(--success))` → `var(--success)`
+- grid/axis/tooltip strenger: fjern `hsl(...)`-wrapper
+- `Area` stroke: `hsl(var(--success))` → `var(--success)`
 
-export function computeSymbolMetrics(input: {
-  symbol: string;
-  health: HealthSnapshot[];
-  closedPositions: Position[];
-  signals: Signal[];
-  positionEvents: PositionEvent[];
-}): SymbolMetrics;
-```
+## Utenfor scope
 
-## Markør-pipeline (chart-overlay)
+- Ingen endringer i `src/styles.css`, ingen nye tokens
+- Ingen endringer i datalag, queries, eller `symbol-metrics.ts`
+- Ingen endringer i KPI-grid, TradingView-chart, tabeller eller andre paneler
+- Ingen endringer i execution/risk/dispatcher/bridge
 
-| Kilde | Tabell | Filter | Markør |
-|---|---|---|---|
-| Entry | `positions` | `opened_at`, `entry_price`, `side` | grønn ▲ long / rød ▼ short |
-| Exit | `positions` | `closed_at` + siste exit-order pris | hvit ◆ |
-| TP-hit | `position_events` | `tp1_hit`/`tp2_hit` | gul ★ |
-| SL-hit | `position_events` | `sl_hit` | rød ✕ |
-| Manual | `position_events` | `manual_close` | lilla ◯ |
-| Rejected signal | `signals` | `status IN ('rejected','error')` | grå ! |
-| Recovery | `position_events` | `recovery_*` | oransje ↻ |
+## Verifisering
 
-Pris fra `orders.price` / `orders.response_payload`; fallback `position.entry_price` / `last_seen_price`. Tid i UTC-ms til widget'en.
-
-## Komponentstruktur
-
-**Nye:**
-- `src/routes/_app.symbols.$symbol.tsx`
-- `src/lib/symbol-metrics.ts`
-- `src/components/symbol-detail/SymbolHeader.tsx`
-- `src/components/symbol-detail/KpiGrid.tsx`
-- `src/components/symbol-detail/TradingViewChart.tsx` — laster `s3.tradingview.com/tv.js`, init i useEffect, shapes via `widget.activeChart().createShape()`, fallback hvis script-load feiler
-- `src/components/symbol-detail/EdgeComparisonChart.tsx`
-- `src/components/symbol-detail/HealthHistoryChart.tsx`
-- `src/components/symbol-detail/ActivePositionPanel.tsx`
-- `src/components/symbol-detail/ClosedTradesTable.tsx`
-- `src/components/symbol-detail/SignalHistoryTable.tsx` — **read-only**, ingen replay-knapp
-- `src/components/symbol-detail/SizingResolutionCard.tsx` — bruker eksisterende `evaluateClient` fra `sizing-eval`
-- `src/components/symbol-detail/ExecutionReliabilityPanel.tsx`
-
-**Endret:**
-- `src/routes/_app.symbols.tsx` — symbol-cellen → `<Link>` (kun cellen)
-
-**Auto-generert:** `src/routeTree.gen.ts`
-
-## Queries (alle via browser supabase + useQuery, refresh 15s)
-
-`symbols`, `symbol_strategy_overrides`, `sizing_rules`, `health_snapshots` (limit 200), `positions` (limit 100), `position_events` (limit 500), `orders` (limit 200), `signals` (limit 100), `risk_decisions` for siste rejections. RLS-policies dekker alt for operator-rolle.
-
-## Designspråk
-
-Mørk mission-control. Semantiske tokens fra `src/styles.css` (ingen hardcoded farger). `tabular-nums`. Eksisterende `MetricCard`. Markør-fargepalett bundet til `--success`/`--danger`/`--warning`/`--accent`/`--muted-foreground`.
-
-## Eksplisitt utenfor scope
-
-- Ingen replay/dispatch/execution-handlinger på Symbol Detail (replay forblir på `/signals`)
-- Ingen Screener-side ennå — men `computeSymbolMetrics` er klar for det
-- Ingen DB-migrasjoner, server-functions, edge functions, secrets
-- Ingen endringer i execution/risk/dispatcher/bridge/reconcile/sizing-logikk
+Etter fix: refresh `/symbols/ZECUSDT` og bekreft at:
+- to fargede linjer (lys blå = Backtest, grønn = Live) vises i begge edge-charts
+- Net profit history viser grønt areal med toppstrøk
