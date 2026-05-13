@@ -23,14 +23,7 @@ type Snap = {
 type SymbolRow = Record<string, any>;
 type Override = Record<string, any>;
 
-type Rule = {
-  id: string;
-  priority: number;
-  enabled: boolean;
-  label: string;
-  condition: { all?: Array<{ metric: string; op: string; value: number }> };
-  action: { block?: boolean; set?: Record<string, number> };
-};
+type Rule = EvalRule;
 
 function PerformancePage() {
   const [tab, setTab] = useState<"symbols" | "rules">("symbols");
