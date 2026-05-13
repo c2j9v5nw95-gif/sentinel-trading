@@ -109,6 +109,35 @@ async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
       last_health_at: new Date().toISOString(),
     });
   }
+
+  // Auto-register / auto-reactivate symbol on every HEALTH_ALL receipt.
+  // Rule: if TradingView is publishing health for a symbol, the operator
+  // wants it tradeable. Manual disable only sticks until the next alert.
+  // Only triggers for the global HEALTH_ALL feed, not per-strategy health.
+  if (signal.symbol && signal.strategy === "HEALTH_ALL" && (signal.tag ?? "") === "") {
+    try {
+      const { data: sym } = await sb.from("symbols")
+        .select("symbol, enabled").eq("symbol", signal.symbol).maybeSingle();
+      if (!sym) {
+        await sb.from("symbols").insert({ symbol: signal.symbol, enabled: true });
+        await sb.from("audit_log").insert({
+          action: "symbol_auto_registered", target: signal.symbol,
+          after: { source: "health_all_received", signal_id: signal.id },
+        });
+      } else if (sym.enabled === false) {
+        await sb.from("symbols").update({
+          enabled: true, updated_at: new Date().toISOString(),
+        }).eq("symbol", signal.symbol);
+        await sb.from("audit_log").insert({
+          action: "symbol_auto_reenabled", target: signal.symbol,
+          before: { enabled: false },
+          after: { enabled: true, source: "health_all_received", signal_id: signal.id },
+        });
+      }
+    } catch (e) {
+      console.error("[recordHealth] symbol auto-register failed", signal.symbol, e);
+    }
+  }
 }
 
 export async function dispatchSignal(

@@ -149,7 +149,7 @@ export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
     : "";
 
   async function handleDisable(sym: string) {
-    if (!window.confirm(`Disable ${sym}? It will no longer be eligible for trades until re-enabled from the Symbols page.`)) {
+    if (!window.confirm(`Disable ${sym}? It will auto-reactivate if a HEALTH_ALL alert arrives again.`)) {
       return;
     }
     setBusy(sym);
@@ -256,6 +256,7 @@ function StaleSection({
                 type="button"
                 onClick={() => onDisable(r.symbol)}
                 disabled={busy === r.symbol}
+                title="Disables symbol. Will auto-reactivate if a HEALTH_ALL alert arrives again."
                 className="rounded border border-danger/50 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-danger transition hover:bg-danger/20 disabled:opacity-50"
               >
                 {busy === r.symbol ? "…" : "Disable"}
