@@ -23,6 +23,14 @@ export function KpiGrid({
   const wrDelta = metrics.edge_winrate_delta;
   const pfDelta = metrics.edge_pf_delta;
 
+  const deltaClass = (d: number | null) =>
+    d == null ? "" : d >= 0 ? "text-success" : "text-danger";
+
+  const wrTone = (wr: number | null): "success" | "danger" | "default" =>
+    wr == null ? "default" : wr >= 50 ? "success" : "danger";
+  const pfTone = (pf: number | null): "success" | "danger" | "default" =>
+    pf == null ? "default" : pf >= 1 ? "success" : "danger";
+
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <MetricCard
@@ -39,27 +47,39 @@ export function KpiGrid({
         label="Live winrate"
         value={metrics.live_winrate != null ? `${fmtNum(metrics.live_winrate, 1)}%` : "—"}
         sub={`${metrics.live_trades} trades · ${metrics.live_wins}W / ${metrics.live_losses}L`}
+        tone={wrTone(metrics.live_winrate)}
       />
       <MetricCard
         label="Backtest winrate"
         value={metrics.bt_winrate != null ? `${fmtNum(metrics.bt_winrate, 1)}%` : "—"}
         sub={
-          wrDelta != null
-            ? `live Δ ${fmtSigned(wrDelta, 1)}pp`
-            : "ingen sammenligning"
+          wrDelta != null ? (
+            <>
+              live Δ <span className={deltaClass(wrDelta)}>{fmtSigned(wrDelta, 1)}pp</span>
+            </>
+          ) : (
+            "ingen sammenligning"
+          )
         }
-        tone={wrDelta != null ? (wrDelta >= 0 ? "success" : "danger") : "default"}
+        tone={wrTone(metrics.bt_winrate)}
       />
       <MetricCard
         label="Live PF"
         value={metrics.live_profit_factor != null ? fmtNum(metrics.live_profit_factor, 2) : "—"}
         sub={metrics.live_trades < 3 ? "trenger ≥3 trades" : null}
+        tone={pfTone(metrics.live_profit_factor)}
       />
       <MetricCard
         label="Backtest PF"
         value={metrics.bt_profit_factor != null ? fmtNum(metrics.bt_profit_factor, 2) : "—"}
-        sub={pfDelta != null ? `live Δ ${fmtSigned(pfDelta, 2)}` : null}
-        tone={pfDelta != null ? (pfDelta >= 0 ? "success" : "danger") : "default"}
+        sub={
+          pfDelta != null ? (
+            <>
+              live Δ <span className={deltaClass(pfDelta)}>{fmtSigned(pfDelta, 2)}</span>
+            </>
+          ) : null
+        }
+        tone={pfTone(metrics.bt_profit_factor)}
       />
       <MetricCard
         label="Realized PnL"

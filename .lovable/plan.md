@@ -1,52 +1,39 @@
 ## Mål
+Backtest winrate (86,7%) og Backtest PF (2,69) skal ikke vises røde bare fordi live underpresterer. Positive backtest-tall skal være grønne, samtidig som live-vs-bt-forskjellen fortsatt er tydelig synlig.
 
-Legge til en ekstra linje for **live cumulative realized PnL** i `Net profit history`-kortet, slik at backtest net profit og faktiske trades vises side om side på samme tidsakse.
+## Endringer (kun `src/components/symbol-detail/KpiGrid.tsx`)
 
-## Endringer
+### 1. Backtest winrate
+- **Tone på hovedverdi**: basert på selve winraten, ikke deltaen.
+  - `bt_winrate >= 50` → `success` (grønn)
+  - `bt_winrate < 50` → `danger` (rød)
+  - `null` → `default`
+- **Sub-tekst**: behold `live Δ −36,7pp`, men fargelegg kun den lille delta-teksten (grønn hvis ≥0, rød hvis <0) via en liten inline span med `text-success` / `text-danger`. Hovedverdien forblir grønn.
 
-### `src/components/symbol-detail/HealthHistoryChart.tsx`
+### 2. Backtest PF
+- **Tone på hovedverdi**: basert på selve PF-verdien.
+  - `bt_profit_factor >= 1` → `success`
+  - `bt_profit_factor < 1` → `danger`
+  - `null` → `default`
+- **Sub-tekst**: samme behandling — `live Δ −1,00` farges inline (rød her), hovedverdi forblir grønn.
 
-1. Utvid prop-signaturen:
-   ```ts
-   { health: HealthSnapshotLite[]; closedPositions: PositionLite[] }
-   ```
-2. Bygg en flettet tidsserie (`t` sortert ascending) hvor hvert punkt har:
-   - `bt_net_profit` — siste sett-verdi fra `health_snapshots` (forward-fill mellom snapshots)
-   - `live_net_profit` — løpende sum av `realized_pnl` for closed positions opp til `t` (forward-fill)
-3. Bytt `AreaChart` → `ComposedChart` (eller behold `AreaChart` med to `Area`/`Line`):
-   - Backtest: eksisterende grønt areal + linje (`var(--success)`)
-   - Live: ny linje i `var(--primary)` (lys blå) — `dot={false}`, `strokeWidth={1.5}`, `type="monotone"`. Ingen fill for å holde det rolig.
-4. Legg til `<Legend />` med liten font så de to seriene er tydelig merket.
-5. Tooltip viser begge verdiene formatert med fortegn (`+12.34` / `−5.10`).
-6. Tom-tilstand: vis kortet hvis enten BT- eller live-data finnes (≥ 2 punkter totalt).
+### 3. Live winrate (for konsistens)
+- Legg på samme tone-regel: `>= 50` grønn, `< 50` rød. (I dag er den uten tone.)
 
-### `src/routes/_app.symbols_.$symbol.tsx`
+### 4. Live PF (for konsistens)
+- `>= 1` grønn, `< 1` rød.
 
-Send `closedPositions` ned til `<HealthHistoryChart>` (samme array som allerede sendes til `EdgeComparisonChart` og `ClosedTradesTable`).
-
-## Designvalg
-
-- BT = grønn (eksisterende konsistens med "profitt-areal")
-- Live = lys blå (`--primary`) — samme som BT-linjen i `EdgeComparisonChart`, så fargesemantikken forblir: **grønn = backtest, blå = live** ... 
-
-Vent — det matcher ikke `EdgeComparisonChart` der jeg satte BT=blå/`--primary` og Live=grønn/`--success`. For å holde fargesemantikken konsekvent på tvers av siden:
-
-- **Backtest = `--primary` (lys blå)**
-- **Live = `--success` (grønn)**
-
-Da må `HealthHistoryChart` også oppdateres så BT-arealet/linjen blir blå, og den nye live-linjen blir grønn. Dette gjør hele Symbol Detail-siden konsistent.
+## Hvordan delta-forskjellen synliggjøres
+Sub-linjen får et lite fargemerke, f.eks.:
+```
+live Δ <span class="text-danger">−36,7pp</span>
+```
+Slik at brukeren umiddelbart ser at live ligger under backtest, uten at hele backtest-tallet feilaktig signaliserer "dårlig".
 
 ## Utenfor scope
+- Ingen endringer i `symbol-metrics.ts` (deltaberegningen er korrekt).
+- Ingen endringer i `EdgeComparisonChart`, `HealthHistoryChart`, TradingView, execution, dispatcher, risk, sizing eller routing.
+- Ingen DB- eller backend-endringer.
 
-- Ingen DB-endringer, ingen nye queries (data finnes allerede på siden)
-- Ingen endringer i `symbol-metrics.ts`
-- Ingen endringer i KPI-grid, TradingView-chart, eller andre paneler
-- Ingen execution/risk/dispatcher-endringer
-- Ingen ekvitytidserie utenfor closed positions (åpne PnL er ikke en del av "history")
-
-## Verifisering
-
-På `/symbols/ZECUSDT`:
-- to linjer: blå (BT net profit fra health_snapshots) og grønn (live cumulative realized PnL fra closed positions)
-- Legend viser begge
-- Tooltip viser begge verdier ved hover
+## Filer berørt
+- `src/components/symbol-detail/KpiGrid.tsx` (eneste fil)
