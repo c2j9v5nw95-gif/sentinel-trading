@@ -221,7 +221,6 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
       payload.rsi14 = rsi(closes, 14);
       if (tfSource) (payload as any).tf_source = tfSource;
     }
-    }
     inserts.push({
       signal_id: sig.id, symbol: sig.symbol, strategy: sig.strategy, tag: sig.tag ?? '',
       environment, timeframe: t.tf, tf_role: t.role,
