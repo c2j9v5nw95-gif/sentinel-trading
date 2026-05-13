@@ -1,64 +1,69 @@
+## Hva som bygges
 
-## Mål
+To frontend-tillegg på `/overview` — ren presentasjon, ingen endringer i dispatcher, executor, health-gate eller schema.
 
-Gjøre helse-gaten faktisk operativ slik at entry-signaler for ZECUSDT og BSBUSDT blokkeres når deres siste `HEALTH_ALL`-snapshot er under terskel (PF, winrate, net profit). Andre symboler påvirkes bare hvis deres egen helse er dårlig.
+### 1. Nytt panel: "Symbol health" (blokkert vs åpen)
 
-## Bakgrunn (kort)
+Et kort under `BridgeHealthCard`-raden som lister alle aktiverte symboler (`symbols.enabled = true`) gruppert i to kolonner:
 
-- TradingView sender helse som `(symbol, HEALTH_ALL, '')` til `health_snapshots`.
-- Entry-signaler kommer som `(symbol, ES1/EL1/XS1/XL1, STRAT2)`.
-- Nåværende `evaluateHealth` matcher snapshot og terskel på signalets eget `(strategy, tag)` — som aldri finnes for entries → alltid `no_thresholds` → alltid pass.
-- Konsekvens: helse-gaten har vært en no-op i produksjon.
-
-## Endringer
-
-### 1. Endre helse-gaten til å bruke HEALTH_ALL per symbol
-
-Fil: `supabase/functions/_shared/health-gate.ts`
-
-- Slå opp `strategies`-rad for `(name='HEALTH_ALL', tag='')` for å hente terskler (`health_min_winrate`, `health_min_profit_factor`, `health_min_net_profit`).
-- Slå opp siste `health_snapshots`-rad for `(symbol, strategy='HEALTH_ALL', tag='')` (uavhengig av signalets strategi).
-- Behold dagens semantikk:
-  - Ingen terskler satt → `pass`, `reason='no_thresholds'`.
-  - Ingen snapshot → `pass`, `reason='no_health_data'` (advar, ikke blokker første gang).
-  - Brutt terskel → `fail` med konkret reason (`winrate_below_threshold` osv.).
-- Behold `strategy_disabled`-sjekken, men flytt den til å se på `HEALTH_ALL`-raden (eller fjern hvis det ikke gir mening — `HEALTH_ALL` skal nok alltid være enabled).
-- Inkluder `symbol`, `applied_strategy='HEALTH_ALL'`, snapshot-tuple og terskler i `metrics` slik at decision_trail blir lesbar.
-
-Ingen endring i `dispatcher.ts` er nødvendig — den kaller fortsatt `evaluateHealth({ symbol, strategy, tag })`, gaten ignorerer bare strategy/tag internt.
-
-### 2. Sett terskler på HEALTH_ALL-strategien
-
-Data-fix via insert-tool (UPDATE):
-
-```
-UPDATE strategies
-   SET health_min_profit_factor = 1.0,
-       health_min_net_profit    = 0,
-       updated_at = now()
- WHERE name = 'HEALTH_ALL' AND tag = '';
+```text
+┌─ Symbol health ────────────────────────────────────────────┐
+│  OPEN FOR TRADES (12)        BLOCKED BY HEALTH (2)         │
+│  ─────────────────           ────────────────────          │
+│  BTCUSDT   PF 1.84  +124     ZECUSDT   PF 0.36  −11   ⛔   │
+│  ETHUSDT   PF 1.42  +88      BSBUSDT   PF 0.34  −56   ⛔   │
+│  SOLUSDT   PF 1.21  +14                                     │
+│  XRPUSDT   PF —     —   ⓘ no health data                   │
+│  ...                                                        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Begrunnelse: PF ≥ 1.0 og net_profit ≥ 0 er en minimal "ikke tap penger systematisk"-grense. Winrate står åpen siden lav winrate kan være OK ved høy PF. Terskler kan justeres etterpå i Strategies-UI.
+Per symbol viser vi: ticker, siste PF, siste net_profit, og en status-pill (`OPEN` / `BLOCKED` / `NO DATA`). Hover/tooltip viser hvilken terskel som ble brutt (f.eks. `PF 0.36 < 1.0`) og snapshot-alder.
 
-Effekt umiddelbart:
-- ZECUSDT (PF 0.36, net −11) → blokkert med `profit_factor_below_threshold`.
-- BSBUSDT (PF 0.34, net −56) → blokkert.
-- Andre symboler: hvis deres `HEALTH_ALL`-snapshot har PF ≥ 1 og net ≥ 0 → trader som før. Hvis de har dårlig helse, blir de også blokkert (det er hele poenget).
+**Datakilder (alle read-only, eksisterer fra før):**
+- `symbols` — liste over aktiverte symboler.
+- `health_snapshots` — siste rad per `(symbol, strategy='HEALTH_ALL', tag='')`. Henter via `select(...).eq('strategy','HEALTH_ALL').eq('tag','').order('created_at', desc).limit(1)` per symbol, eller en samlespørring + group i frontend.
+- `strategies` — én rad `(name='HEALTH_ALL', tag='')` for terskler (`health_min_profit_factor`, `health_min_net_profit`, `health_min_winrate`).
 
-### 3. (Valgfritt, ikke i denne planen)
+**Klassifisering (samme regler som `health-gate.ts`):**
+- Ingen snapshot → `NO DATA` (advisory, ikke blokkert).
+- Snapshot finnes og en eller flere terskler brytes → `BLOCKED`, vis hvilken.
+- Ellers → `OPEN`.
 
-Per-symbol override av terskler via `symbol_strategy_overrides` ville krevet nye kolonner — utelater. Dagens UI på `/strategies` lar oss allerede sette HEALTH_ALL-terskler globalt, og det er nok som første steg.
+Refetch hver 30s. Symbolfilteret i `OverviewFilterBar` filtrerer panelet hvis satt.
 
-## Verifisering
+### 2. Tydelig exit-kilde i "Recent closed trades"
 
-- Etter endring: send et test-entry på ZEC eller BSB (eller vent på neste live). I `signals.decision_trail` skal `health_gate` ha `outcome='fail'` og `reason='profit_factor_below_threshold'` (eller `net_profit_below_threshold`), og signalet skal være `status='rejected'` med `decision_reason='health:profit_factor_below_threshold'`.
-- Sjekk at minst ett annet symbol (f.eks. PENGUUSDT) fortsatt får `health_gate=pass` hvis dens snapshot er sunn.
-- Visuelt i Signals-tabellen: ZEC/BSB-entries skal nå gå til "rejected (health)".
+Dagens `Reason`-kolonne viser bare `signals.exit_reason` for TradingView-baserte exits og `—` for SL/TSL/recovery. Vi utvider den til å vise opphav + grunn med farget pill:
 
-## Det jeg IKKE gjør
+```text
+Reason
+──────────────────────────────────
+[TV] EXIT-SHORT          ← TradingView signal
+[BYBIT] SL hit           ← Stop loss fra protection-monitor
+[BYBIT] TSL hit          ← Trailing stop fra protection-monitor
+[BYBIT] TP1 hit          ← Take profit
+[RECOVERY] forced close  ← bybit-reconcile reduce-only
+```
 
-- Ingen endring i `executor.ts`, `sizing.ts`, `dispatcher.ts`, risk-engine, bridge.
-- Ingen schemaendring.
-- Ingen endring av `HEALTH_ALL`-snapshot-flyt (TradingView fortsetter uendret).
-- Andre symbolers oppførsel endres bare hvis deres egen helse faktisk er under terskel — som er ønsket.
+**Klassifiseringskilder per closed position (read-only):**
+1. `signals.exit_reason` via `last_exit_signal_id` → `[TV] <reason>` hvis ikke null.
+2. `position_events` for `position_id` filtrert på `event_type IN ('sl_hit','tsl_hit','tp_hit','tsl_moved','exit_recovery_succeeded')` — siste event før `closed_at` bestemmer `[BYBIT]`/`[RECOVERY]`-kategori.
+3. Hvis ingen av delene matcher: behold `—` med `unknown` tooltip.
+
+Vi henter `position_events` for de viste rows i én batch (`.in('position_id', ids).in('event_type', [...])`), grupperer i klient, og kombinerer med signal-mappen som allerede finnes. Pill-fargene bruker eksisterende design tokens (`bg-muted`/`bg-warning/15`/`bg-danger/15`).
+
+Tooltip på pillen viser rå `event_type` + `detail.reason` for forensikk.
+
+## Tekniske detaljer
+
+**Nye filer**
+- `src/components/overview/SymbolHealthPanel.tsx` — komponent + queries for panel 1.
+
+**Endrede filer**
+- `src/routes/_app.overview.tsx` — render `<SymbolHealthPanel />` etter metric-grid (full bredde, før exposure-raden).
+- `src/components/overview/RecentClosedTradesTable.tsx` — utvid exit-reason query til å inkludere `position_events` og rendre kombinert pill.
+
+**Ingen endringer i:** dispatcher, executor, health-gate, protection-monitor, risk-engine, schema, RLS, edge functions.
+
+**Verifisering:** Etter deploy skal panelet vise ZECUSDT og BSBUSDT som `BLOCKED` (PF < 1.0) og resten som `OPEN`/`NO DATA`. Closed trades-tabellen skal vise `[TV]` for trades stengt av TradingView-signal og `[BYBIT] SL hit` / `[BYBIT] TSL hit` for de som ble stengt av protection-monitor.
