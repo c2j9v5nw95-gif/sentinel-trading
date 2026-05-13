@@ -188,8 +188,8 @@ function SymbolsPage() {
                   <th>On</th>
                   <th>Mode</th>
                   <th>Transport</th>
-                  <th title="Account balance %">Bal %</th>
-                  <th>Lev</th>
+                  <th title="Effective account balance % (configured shown below if rules/overrides change it)">Bal %</th>
+                  <th title="Effective leverage (configured shown below if rules/overrides change it)">Lev</th>
                   <th title="Position size multiplier">Mult</th>
                   <th>Margin</th>
                   <th>SL %</th>
