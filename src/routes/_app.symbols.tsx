@@ -371,9 +371,10 @@ function validateDraft(d: Draft): { ok: boolean; patch?: Record<string, unknown>
 }
 
 function SymbolRowView({
-  s, editing, busy, onEdit, onCancel, onModeChange, onSave,
+  s, eff, editing, busy, onEdit, onCancel, onModeChange, onSave,
 }: {
   s: SymbolRow;
+  eff?: { balance_pct: number | null; leverage: number | null; source: string; blocked: boolean };
   editing: boolean;
   busy: boolean;
   onEdit: () => void;
