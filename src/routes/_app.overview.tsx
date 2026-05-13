@@ -14,6 +14,7 @@ import { RecoveryAlertBanner } from "@/components/overview/RecoveryAlertBanner";
 import { ActivePositionsTable } from "@/components/overview/ActivePositionsTable";
 import { RecentClosedTradesTable } from "@/components/overview/RecentClosedTradesTable";
 import { RecentExecutionEventsList } from "@/components/overview/RecentExecutionEventsList";
+import { SymbolHealthPanel } from "@/components/overview/SymbolHealthPanel";
 
 export const Route = createFileRoute("/_app/overview")({
   component: Overview,
@@ -77,6 +78,10 @@ function Overview() {
         <UnrealizedPnLCard />
         <RealizedPnLTodayCard />
         <BridgeHealthCard />
+      </div>
+
+      <div className="mt-4">
+        <SymbolHealthPanel symbol={symbol} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
