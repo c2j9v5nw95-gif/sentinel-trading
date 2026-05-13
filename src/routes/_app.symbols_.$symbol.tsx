@@ -73,7 +73,7 @@ function SymbolDetailPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from("health_snapshots")
-        .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at")
+        .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at,payload")
         .eq("symbol", symbol)
         .order("created_at", { ascending: false })
         .limit(200);
