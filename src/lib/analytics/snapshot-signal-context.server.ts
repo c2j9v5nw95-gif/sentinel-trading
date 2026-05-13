@@ -85,7 +85,7 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
 
   const { data: signal, error: sigErr } = await supabaseAdmin
     .from('signals')
-    .select('id, symbol, strategy, tag, type, payload')
+    .select('id, symbol, strategy, tag, type, payload, received_at, bar_time')
     .eq('id', signalId)
     .maybeSingle();
   if (sigErr || !signal) {
@@ -105,7 +105,19 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
   const run = await openRun('signal_context');
 
   const rawTf = (sig.payload?.timeframe ?? sig.payload?.interval ?? null) as unknown;
-  const tradeTf = resolveTimeframe(rawTf);
+  let tradeTf = resolveTimeframe(rawTf);
+  let tfSource: 'payload' | 'health_snapshot' | null = tradeTf ? 'payload' : null;
+  if (!tradeTf) {
+    const fallback = await resolveTimeframeFromHealth(
+      sig.symbol,
+      sig.received_at ?? sig.bar_time ?? null,
+    );
+    if (fallback.tf) {
+      tradeTf = fallback.tf;
+      tfSource = 'health_snapshot';
+    }
+    result.api_calls += 0; // DB lookup, not bridge call
+  }
   result.trade_timeframe = tradeTf;
   const environment = await resolveEnvironment(sig.id);
   result.environment = environment;
