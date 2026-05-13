@@ -1,69 +1,70 @@
-## Hva som bygges
+## Sannheten om hva vi setter hos Bybit
 
-To frontend-tillegg på `/overview` — ren presentasjon, ingen endringer i dispatcher, executor, health-gate eller schema.
+- **SL** — armes alltid ved entry (`executor.ts` → `setTradingStop({slPrice})`)
+- **TSL** — armes av `protection-monitor` når posisjonen når aktiveringsterskel (`setTradingStop({trailingStop})`)
+- **Ingen TP-ordre** ligger noen gang hos Bybit
 
-### 1. Nytt panel: "Symbol health" (blokkert vs åpen)
+Alle andre exits er reduce-only market orders **vi** sender, trigget av enten et TradingView-signal (XL1–XL5 / XS1–XS5) eller vår interne `protection-monitor`. Dagens "BYBIT TP1 hit"-merking er feil — TP1 er aldri en Bybit-ordre.
 
-Et kort under `BridgeHealthCard`-raden som lister alle aktiverte symboler (`symbols.enabled = true`) gruppert i to kolonner:
+## Ny "Closed by"-klassifisering
 
-```text
-┌─ Symbol health ────────────────────────────────────────────┐
-│  OPEN FOR TRADES (12)        BLOCKED BY HEALTH (2)         │
-│  ─────────────────           ────────────────────          │
-│  BTCUSDT   PF 1.84  +124     ZECUSDT   PF 0.36  −11   ⛔   │
-│  ETHUSDT   PF 1.42  +88      BSBUSDT   PF 0.34  −56   ⛔   │
-│  SOLUSDT   PF 1.21  +14                                     │
-│  XRPUSDT   PF —     —   ⓘ no health data                   │
-│  ...                                                        │
-└─────────────────────────────────────────────────────────────┘
-```
+Tre mulige *triggere* som faktisk kan lukke en posisjon, mappet til prefiks og farge:
 
-Per symbol viser vi: ticker, siste PF, siste net_profit, og en status-pill (`OPEN` / `BLOCKED` / `NO DATA`). Hover/tooltip viser hvilken terskel som ble brutt (f.eks. `PF 0.36 < 1.0`) og snapshot-alder.
+| Prefiks | Tone | Hvem trigget | Hvordan vi kjenner igjen |
+|---|---|---|---|
+| `[BYBIT]` | warning | Bybits native SL eller TSL fylte (vi sendte ingen ordre) | Posisjonen lukket via `bybit-reconcile` (`event_type='reconciliation_drift'` med `closed=true` i detail), og det finnes ingen `exit_*`/`sl_triggered`/`tsl_triggered` på posisjonen |
+| `[MONITOR]` | danger | Vår `protection-monitor` så at intern SL/TSL ble brutt og sendte reduce-only exit | `event_type='sl_triggered'` eller `'tsl_triggered'` |
+| `[TV]` | success / warning | TradingView-signal trigget reduce-only exit | Det finnes `exit_*`-event for posisjonen, og `signals.strategy_code` på `last_exit_signal_id` (eller siste exit-signal koblet til posisjonen) er XL1–XL5 / XS1–XS5 |
+| `[RECOVERY]` | danger | `bybit-reconcile` tvangslukket | `event_type='exit_recovery_succeeded'` |
+| `[MANUAL]` | muted | Operator stengte | `event_type='manual_close'` |
 
-**Datakilder (alle read-only, eksisterer fra før):**
-- `symbols` — liste over aktiverte symboler.
-- `health_snapshots` — siste rad per `(symbol, strategy='HEALTH_ALL', tag='')`. Henter via `select(...).eq('strategy','HEALTH_ALL').eq('tag','').order('created_at', desc).limit(1)` per symbol, eller en samlespørring + group i frontend.
-- `strategies` — én rad `(name='HEALTH_ALL', tag='')` for terskler (`health_min_profit_factor`, `health_min_net_profit`, `health_min_winrate`).
+### Etikett (det som vises etter prefikset) — bruker strategikoden direkte
 
-**Klassifisering (samme regler som `health-gate.ts`):**
-- Ingen snapshot → `NO DATA` (advisory, ikke blokkert).
-- Snapshot finnes og en eller flere terskler brytes → `BLOCKED`, vis hvilken.
-- Ellers → `OPEN`.
+For `[TV]` viser vi den faktiske TradingView-koden så det matcher Pine-strategien 1:1:
 
-Refetch hver 30s. Symbolfilteret i `OverviewFilterBar` filtrerer panelet hvis satt.
+| strategy_code | Etikett | Tone |
+|---|---|---|
+| XL1 | `[TV] XL1 · TP1` | success |
+| XL2 | `[TV] XL2 · SL/Failsafe` | warning |
+| XL3 | `[TV] XL3 · Opposite` | success |
+| XL4 | `[TV] XL4 · TP2 (REST)` | success |
+| XL5 | `[TV] XL5 · Trend fail` | warning |
+| XS1 | `[TV] XS1 · TP1` | success |
+| XS2 | `[TV] XS2 · SL/Failsafe` | warning |
+| XS3 | `[TV] XS3 · Opposite` | success |
+| XS4 | `[TV] XS4 · TP2 (REST)` | success |
+| XS5 | `[TV] XS5 · Trend fail` | warning |
 
-### 2. Tydelig exit-kilde i "Recent closed trades"
+For `[BYBIT]`: `SL fill` hvis `tsl_active=false` på posisjonen, `TSL fill` hvis `tsl_active=true`.
+For `[MONITOR]`: `SL` for `sl_triggered`, `TSL` for `tsl_triggered`.
 
-Dagens `Reason`-kolonne viser bare `signals.exit_reason` for TradingView-baserte exits og `—` for SL/TSL/recovery. Vi utvider den til å vise opphav + grunn med farget pill:
+Beskrivelsen (`description` fra `strategy_codes`) vises i tooltip sammen med rå `event_type` og evt. `signals.exit_reason`.
 
-```text
-Reason
-──────────────────────────────────
-[TV] EXIT-SHORT          ← TradingView signal
-[BYBIT] SL hit           ← Stop loss fra protection-monitor
-[BYBIT] TSL hit          ← Trailing stop fra protection-monitor
-[BYBIT] TP1 hit          ← Take profit
-[RECOVERY] forced close  ← bybit-reconcile reduce-only
-```
+## Implementasjon
 
-**Klassifiseringskilder per closed position (read-only):**
-1. `signals.exit_reason` via `last_exit_signal_id` → `[TV] <reason>` hvis ikke null.
-2. `position_events` for `position_id` filtrert på `event_type IN ('sl_hit','tsl_hit','tp_hit','tsl_moved','exit_recovery_succeeded')` — siste event før `closed_at` bestemmer `[BYBIT]`/`[RECOVERY]`-kategori.
-3. Hvis ingen av delene matcher: behold `—` med `unknown` tooltip.
+**Endrede filer (kun frontend):**
 
-Vi henter `position_events` for de viste rows i én batch (`.in('position_id', ids).in('event_type', [...])`), grupperer i klient, og kombinerer med signal-mappen som allerede finnes. Pill-fargene bruker eksisterende design tokens (`bg-muted`/`bg-warning/15`/`bg-danger/15`).
+`src/components/overview/RecentClosedTradesTable.tsx`:
+- Utvid query til å hente:
+  - `position_events` med alle relevante `event_type`-verdier (inkludert `reconciliation_drift`)
+  - `positions.tsl_active` og `positions.last_exit_signal_id` (legges til i select hvis ikke allerede der)
+  - `signals.strategy_code` for `last_exit_signal_id`
+- Ny `classifyExit({ events, position, exitSignal })`-funksjon med prioritet:
+  1. `manual_close` → `[MANUAL]`
+  2. `exit_recovery_succeeded` → `[RECOVERY]`
+  3. `sl_triggered` → `[MONITOR] SL`
+  4. `tsl_triggered` → `[MONITOR] TSL`
+  5. `exit_*` (TV-trigget) → `[TV] {strategy_code} · {label}` basert på lookup-tabell over
+  6. `reconciliation_drift` uten øvrige exit-events → `[BYBIT] SL fill` eller `[BYBIT] TSL fill` basert på `position.tsl_active`
+  7. Ingen match → `—`
+- Tre nye prefikstoner (success/warning/danger/muted)
+- Tooltip: `event_type` + `strategy_code` + `description` + `exit_reason`
 
-Tooltip på pillen viser rå `event_type` + `detail.reason` for forensikk.
+**Ingen backend- eller schema-endringer.** Alle data finnes allerede.
 
-## Tekniske detaljer
+## Verifisering
 
-**Nye filer**
-- `src/components/overview/SymbolHealthPanel.tsx` — komponent + queries for panel 1.
-
-**Endrede filer**
-- `src/routes/_app.overview.tsx` — render `<SymbolHealthPanel />` etter metric-grid (full bredde, før exposure-raden).
-- `src/components/overview/RecentClosedTradesTable.tsx` — utvid exit-reason query til å inkludere `position_events` og rendre kombinert pill.
-
-**Ingen endringer i:** dispatcher, executor, health-gate, protection-monitor, risk-engine, schema, RLS, edge functions.
-
-**Verifisering:** Etter deploy skal panelet vise ZECUSDT og BSBUSDT som `BLOCKED` (PF < 1.0) og resten som `OPEN`/`NO DATA`. Closed trades-tabellen skal vise `[TV]` for trades stengt av TradingView-signal og `[BYBIT] SL hit` / `[BYBIT] TSL hit` for de som ble stengt av protection-monitor.
+- BSBUSDT-rad med `XL2/XS2` → `[TV] XL2 · SL/Failsafe` (warning)
+- ZECUSDT-rad med `XS1` → `[TV] XS1 · TP1` (success) — ikke lenger `[BYBIT] TP1 hit`
+- BSBUSDT-rad med `XL5/XS5` → `[TV] XL5 · Trend fail` (warning)
+- Hypotetisk rad der Bybits native SL fylte → `[BYBIT] SL fill` (warning)
