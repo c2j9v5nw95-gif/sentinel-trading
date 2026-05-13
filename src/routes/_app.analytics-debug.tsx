@@ -124,7 +124,7 @@ function AnalyticsDebugPage() {
       const { data } = await supabase
         .from("signals")
         .select("id, created_at, symbol, strategy, type, action, payload")
-        .in("type", ["entry", "exit"])
+        .eq("type", "trade")
         .order("created_at", { ascending: false })
         .limit(50);
       return data ?? [];

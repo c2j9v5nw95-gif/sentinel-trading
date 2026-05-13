@@ -65,7 +65,7 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
     return result;
   }
   const sig = signal as unknown as SignalRow;
-  if (sig.type !== 'entry' && sig.type !== 'exit') {
+  if (sig.type !== 'trade') {
     result.ok = true; result.skipped = 'meta_signal';
     return result;
   }
