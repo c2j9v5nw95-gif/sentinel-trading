@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
@@ -412,7 +412,13 @@ function SymbolRowView({
         }
       >
         <td className={`py-2 font-medium ${!s.enabled ? "text-muted-foreground line-through" : ""}`}>
-          {s.symbol}
+          <Link
+            to="/symbols/$symbol"
+            params={{ symbol: s.symbol }}
+            className="hover:text-primary hover:underline"
+          >
+            {s.symbol}
+          </Link>
         </td>
         <td>
           {s.enabled ? (
