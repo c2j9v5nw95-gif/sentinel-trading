@@ -161,21 +161,28 @@ function SymbolsTab() {
           <tbody className="divide-y divide-border">
             {rows.map((r) => {
               const noSymbol = !r.sym;
+              const isDisabled = !!r.sym && r.sym.enabled === false;
               const sourceLabel = r.snap.strategy === "HEALTH_ALL" ? "heartbeat" : `via ${r.snap.strategy}`;
               return (
-                <tr key={r.snap.symbol}>
-                  <td className="py-2 font-medium">{r.snap.symbol}</td>
+                <tr key={r.snap.symbol} className={isDisabled ? "opacity-50 grayscale" : ""}>
+                  <td className={`py-2 font-medium ${isDisabled ? "text-muted-foreground line-through" : ""}`}>
+                    {r.snap.symbol}
+                  </td>
                   <td className="text-xs text-muted-foreground">{sourceLabel}</td>
                   <td className="text-right">{fmtNum(r.snap.winrate, 1)}{r.snap.winrate != null ? "%" : ""}</td>
                   <td className="text-right">{fmtNum(r.snap.profit_factor, 2)}</td>
                   <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
                     {fmtNum(r.snap.net_profit, 2)}
                   </td>
-                  <td className="text-right">{noSymbol ? "—" : fmtNum(r.eval.balance_pct, 1)}</td>
-                  <td className="text-right">{noSymbol ? "—" : `${fmtNum(r.eval.leverage, 0)}x`}</td>
+                  <td className="text-right">{noSymbol || isDisabled ? "—" : fmtNum(r.eval.balance_pct, 1)}</td>
+                  <td className="text-right">{noSymbol || isDisabled ? "—" : `${fmtNum(r.eval.leverage, 0)}x`}</td>
                   <td>
                     {noSymbol ? (
                       <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">unregistered</span>
+                    ) : isDisabled ? (
+                      <span className="rounded border border-border bg-muted px-2 py-0.5 text-xs font-semibold uppercase text-muted-foreground">
+                        Disabled
+                      </span>
                     ) : r.eval.blocked ? (
                       <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">BLOCKED</span>
                     ) : (
