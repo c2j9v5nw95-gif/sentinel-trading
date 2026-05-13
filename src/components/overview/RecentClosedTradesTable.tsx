@@ -44,7 +44,7 @@ function classifyEvent(eventType: string): ExitClassification | null {
 function originStyle(origin: Origin): string {
   switch (origin) {
     case "tv":
-      return "border-info/40 bg-info/10 text-info";
+      return "border-success/40 bg-success/10 text-success";
     case "bybit":
       return "border-warning/40 bg-warning/10 text-warning";
     case "recovery":
