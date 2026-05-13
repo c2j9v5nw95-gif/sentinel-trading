@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { useMemo, useState } from "react";
+import { evaluateClient, type EvalRule } from "@/lib/sizing-eval";
 
 export const Route = createFileRoute("/_app/kontrollsenter")({
   component: PerformancePage,
