@@ -206,6 +206,7 @@ function SymbolsPage() {
                   <SymbolRowView
                     key={s.id}
                     s={s}
+                    eff={effBySymbol.get(s.symbol)}
                     editing={editingId === s.id}
                     busy={updateSymbol.isPending}
                     onEdit={() => setEditingId(s.id)}
