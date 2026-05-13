@@ -27,6 +27,34 @@ interface SignalRow {
   tag: string | null;
   type: string;
   payload: Record<string, unknown> | null;
+  received_at: string | null;
+  bar_time: string | null;
+}
+
+/**
+ * Resolve trade timeframe from the latest HEALTH/stats snapshot for the
+ * same symbol at or before the trade signal time. Health alerts carry the
+ * strategy timeframe in payload.tf (TradingView interval string). Strategy/tag
+ * match is best-effort: trade signals use e.g. (ES1, STRAT2) while health
+ * publishes as (HEALTH_ALL, ''), so we match by symbol only and order by
+ * recency. Never compares across symbols.
+ */
+async function resolveTimeframeFromHealth(
+  symbol: string,
+  beforeIso: string | null,
+): Promise<{ tf: Timeframe | null; source: string | null; bar_time: string | null }> {
+  let q = supabaseAdmin
+    .from('health_snapshots')
+    .select('payload, bar_time, created_at, strategy, tag')
+    .eq('symbol', symbol)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (beforeIso) q = q.lte('created_at', beforeIso);
+  const { data } = await q.maybeSingle();
+  if (!data) return { tf: null, source: null, bar_time: null };
+  const raw = (data.payload as any)?.tf ?? (data.payload as any)?.timeframe ?? (data.payload as any)?.interval;
+  const tf = resolveTimeframe(raw);
+  return { tf, source: 'health_snapshot', bar_time: data.bar_time ?? null };
 }
 
 async function resolveEnvironment(signalId: string): Promise<string> {
@@ -57,7 +85,7 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
 
   const { data: signal, error: sigErr } = await supabaseAdmin
     .from('signals')
-    .select('id, symbol, strategy, tag, type, payload')
+    .select('id, symbol, strategy, tag, type, payload, received_at, bar_time')
     .eq('id', signalId)
     .maybeSingle();
   if (sigErr || !signal) {
@@ -77,7 +105,19 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
   const run = await openRun('signal_context');
 
   const rawTf = (sig.payload?.timeframe ?? sig.payload?.interval ?? null) as unknown;
-  const tradeTf = resolveTimeframe(rawTf);
+  let tradeTf = resolveTimeframe(rawTf);
+  let tfSource: 'payload' | 'health_snapshot' | null = tradeTf ? 'payload' : null;
+  if (!tradeTf) {
+    const fallback = await resolveTimeframeFromHealth(
+      sig.symbol,
+      sig.received_at ?? sig.bar_time ?? null,
+    );
+    if (fallback.tf) {
+      tradeTf = fallback.tf;
+      tfSource = 'health_snapshot';
+    }
+    result.api_calls += 0; // DB lookup, not bridge call
+  }
   result.trade_timeframe = tradeTf;
   const environment = await resolveEnvironment(sig.id);
   result.environment = environment;
@@ -179,6 +219,7 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
       const closes = bars.map((b) => b.close);
       const { rsi } = await import('./indicators');
       payload.rsi14 = rsi(closes, 14);
+      if (tfSource) (payload as any).tf_source = tfSource;
     }
     inserts.push({
       signal_id: sig.id, symbol: sig.symbol, strategy: sig.strategy, tag: sig.tag ?? '',
