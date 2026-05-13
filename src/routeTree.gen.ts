@@ -24,6 +24,8 @@ import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
 import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$symbol'
+import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './routes/api/public/hooks/snapshot-signal-context'
+import { Route as ApiPublicHooksSnapshotRegimeTickRouteImport } from './routes/api/public/hooks/snapshot-regime-tick'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -99,6 +101,18 @@ const AppSymbolsSymbolRoute = AppSymbolsSymbolRouteImport.update({
   path: '/symbols/$symbol',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiPublicHooksSnapshotSignalContextRoute =
+  ApiPublicHooksSnapshotSignalContextRouteImport.update({
+    id: '/api/public/hooks/snapshot-signal-context',
+    path: '/api/public/hooks/snapshot-signal-context',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicHooksSnapshotRegimeTickRoute =
+  ApiPublicHooksSnapshotRegimeTickRouteImport.update({
+    id: '/api/public/hooks/snapshot-regime-tick',
+    path: '/api/public/hooks/snapshot-regime-tick',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -115,6 +129,8 @@ export interface FileRoutesByFullPath {
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
+  '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -131,6 +147,8 @@ export interface FileRoutesByTo {
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
+  '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -149,6 +167,8 @@ export interface FileRoutesById {
   '/_app/strategies': typeof AppStrategiesRoute
   '/_app/symbols': typeof AppSymbolsRoute
   '/_app/symbols_/$symbol': typeof AppSymbolsSymbolRoute
+  '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
+  '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -167,6 +187,8 @@ export interface FileRouteTypes {
     | '/strategies'
     | '/symbols'
     | '/symbols/$symbol'
+    | '/api/public/hooks/snapshot-regime-tick'
+    | '/api/public/hooks/snapshot-signal-context'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -183,6 +205,8 @@ export interface FileRouteTypes {
     | '/strategies'
     | '/symbols'
     | '/symbols/$symbol'
+    | '/api/public/hooks/snapshot-regime-tick'
+    | '/api/public/hooks/snapshot-signal-context'
   id:
     | '__root__'
     | '/'
@@ -200,12 +224,16 @@ export interface FileRouteTypes {
     | '/_app/strategies'
     | '/_app/symbols'
     | '/_app/symbols_/$symbol'
+    | '/api/public/hooks/snapshot-regime-tick'
+    | '/api/public/hooks/snapshot-signal-context'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  ApiPublicHooksSnapshotRegimeTickRoute: typeof ApiPublicHooksSnapshotRegimeTickRoute
+  ApiPublicHooksSnapshotSignalContextRoute: typeof ApiPublicHooksSnapshotSignalContextRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -315,6 +343,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSymbolsSymbolRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/public/hooks/snapshot-signal-context': {
+      id: '/api/public/hooks/snapshot-signal-context'
+      path: '/api/public/hooks/snapshot-signal-context'
+      fullPath: '/api/public/hooks/snapshot-signal-context'
+      preLoaderRoute: typeof ApiPublicHooksSnapshotSignalContextRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/hooks/snapshot-regime-tick': {
+      id: '/api/public/hooks/snapshot-regime-tick'
+      path: '/api/public/hooks/snapshot-regime-tick'
+      fullPath: '/api/public/hooks/snapshot-regime-tick'
+      preLoaderRoute: typeof ApiPublicHooksSnapshotRegimeTickRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -354,17 +396,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  ApiPublicHooksSnapshotRegimeTickRoute: ApiPublicHooksSnapshotRegimeTickRoute,
+  ApiPublicHooksSnapshotSignalContextRoute:
+    ApiPublicHooksSnapshotSignalContextRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
