@@ -336,9 +336,25 @@ function SymbolRowView({
 
   if (!editing) {
     return (
-      <tr className={isLive ? "bg-danger/10" : ""}>
-        <td className="py-2 font-medium">{s.symbol}</td>
-        <td>{s.enabled ? "✓" : "—"}</td>
+      <tr
+        className={
+          !s.enabled ? "opacity-50 grayscale" : isLive ? "bg-danger/10" : ""
+        }
+      >
+        <td className={`py-2 font-medium ${!s.enabled ? "text-muted-foreground line-through" : ""}`}>
+          {s.symbol}
+        </td>
+        <td>
+          {s.enabled ? (
+            <span className="rounded border border-success/40 bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-success">
+              ✓ On
+            </span>
+          ) : (
+            <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+              Off
+            </span>
+          )}
+        </td>
         <td>
           <select
             value={s.execution_mode_override ?? "inherit_global"}

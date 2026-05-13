@@ -1,70 +1,31 @@
 ## Mål
 
-Når et symbol auto-opprettes via HEALTH_ALL skal det få samme "aggressive default-profil" som BSBUSDT/ZECUSDT, ikke arve globalt:
+Gjør disablede symboler i Symbols-tabellen visuelt tydelige — i dag står de bare med "—" i ON-kolonnen og er ellers identiske med aktive rader.
 
-| Felt | Verdi |
-|---|---|
-| `enabled` | `true` |
-| `execution_mode_override` | `'live'` |
-| `account_balance_percent` | `40` |
-| `sl_pct` | `3.5` |
-| `tsl_enabled` | `true` |
-| `tsl_activation_profit_pct` | `1` |
-| `tsl_callback_pct` | `4` |
+## Endring
 
-(Andre felter beholder kolonne-default: `leverage=10`, `margin_mode=isolated`, `position_size_multiplier=1`, `tp1_exit_percent=100`, `preferred_transport=webhook`.)
+Kun `src/routes/_app.symbols.tsx`, visnings-raden (linje 337-386). Ingen logikk-endringer.
 
-## Endringer
+1. **Dim hele raden** når `s.enabled === false`: legg til `opacity-50 grayscale` på `<tr>`. (Live-rødfarging fjernes for disablede så de ikke roper "LIVE" når de faktisk er av.)
+   ```
+   className={
+     !s.enabled ? "opacity-50 grayscale" :
+     isLive ? "bg-danger/10" : ""
+   }
+   ```
 
-### 1. `supabase/functions/_shared/dispatcher.ts` (auto-register-blokken, linje ~117-140)
+2. **Erstatt "—" i ON-kolonnen med en tydelig pille** når disabled:
+   - Aktiv: grønn `✓`-pille (`border-success/40 bg-success/10 text-success`)
+   - Disabled: muted "OFF"-pille (`border-border bg-muted text-muted-foreground uppercase`)
 
-Endre kun **insert-grenen** (når symbolet ikke finnes fra før) til å sette de nye defaultene:
-
-```ts
-await sb.from("symbols").insert({
-  symbol: signal.symbol,
-  enabled: true,
-  execution_mode_override: "live",
-  account_balance_percent: 40,
-  sl_pct: 3.5,
-  tsl_enabled: true,
-  tsl_activation_profit_pct: 1,
-  tsl_callback_pct: 4,
-});
-```
-
-Audit-loggen `symbol_auto_registered` får `after` utvidet til å inkludere disse defaultene for sporbarhet.
-
-**Reaktiverings-grenen** (`sym.enabled === false`) endres ikke — den setter kun `enabled=true` og rører ikke konfig som operatøren kan ha justert.
-
-### 2. Engangs-fix for FIGHTUSDT og RAVEUSDT
-
-Disse to ble nettopp auto-registrert med `mode=inherit, BAL=5%, SL=1.5%, TSL 1/0.5` (kolonne-defaults). Oppdater dem til den nye profilen via data-update slik at de står likt med BSB/ZEC umiddelbart:
-
-```sql
-UPDATE public.symbols
-SET execution_mode_override = 'live',
-    account_balance_percent = 40,
-    sl_pct = 3.5,
-    tsl_enabled = true,
-    tsl_activation_profit_pct = 1,
-    tsl_callback_pct = 4,
-    updated_at = now()
-WHERE symbol IN ('FIGHTUSDT','RAVEUSDT');
-```
-
-PIEVERSEUSDT lar vi være — den ble manuelt opprettet (BAL=2%, lev=5x), så operatøren har bevisst valgt en annen profil. Hvis du vil at den også skal normaliseres, si fra.
-
-LABUSDT/PENGUUSDT er stale og rører vi ikke (de er allerede konfigurert).
+3. **Symbol-navnet** får `text-muted-foreground line-through` når disabled, slik at det er lesbart i en skanning at raden ikke er aktiv.
 
 ## Ikke i scope
 
-- Ingen schema-/kolonnedefault-endringer (defaults forblir forsiktige; det er auto-register-koden som velger den aggressive profilen).
-- Ingen UI-endringer.
-- Ingen endring i reaktiverings-oppførsel — disabled→enabled rører kun `enabled`-flagget.
+- Ingen sortering/flytting av disablede til bunnen (kan legges til senere hvis ønsket).
+- Ingen endring i edit/aktiver-flyt.
+- Ingen endring av "Live default sizing on switch"-teksten i Sizing model (den sier fortsatt 5 — men auto-register-defaulten i backend er nå 40. Si fra hvis du vil at jeg oppdaterer den teksten samtidig).
 
 ## Verifisering
 
-1. SQL etter engangs-fix: FIGHTUSDT og RAVEUSDT viser `mode=live, BAL=40, SL=3.5, TSL 1/4` i Symbols-tabellen.
-2. Neste gang et helt nytt symbol sender HEALTH_ALL, dukker det opp med live + 40% + 3.5 / 1/4 — uten manuell editering.
-3. `audit_log` for `symbol_auto_registered` viser de nye default-verdiene i `after`.
+LABUSDT og PENGUUSDT skal i Symbols-listen vises dempet/grayscale, med gjennomstreket symbolnavn og en "OFF"-pille i ON-kolonnen. Aktive rader (BSB, FIGHT, RAVE, ZEC, PIEVERSE) ser ut som før.
