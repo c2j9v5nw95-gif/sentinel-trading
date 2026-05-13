@@ -1,79 +1,70 @@
-## Regel (bekreftet)
+## Mål
 
-1. **HEALTH_ALL kommer inn** → symbol auto-opprettes/auto-aktiveres i `symbols` (`enabled=true`).
-2. **Åpnes eller blokkeres** basert på snapshot-tallene mot HEALTH_ALL-thresholds (eksisterende logikk i `health-gate.ts`).
-3. **Ingen HEALTH_ALL på > 120 min** → `health_stale` → blokkert og vist i Stale-seksjonen (allerede implementert).
-4. **Disable-knapp i Stale** → `enabled=false`. Forblir disabled så lenge alerts er borte. Hvis TV-alert noensinne kommer tilbake → auto-reaktiveres ved første HEALTH_ALL.
+Når et symbol auto-opprettes via HEALTH_ALL skal det få samme "aggressive default-profil" som BSBUSDT/ZECUSDT, ikke arve globalt:
 
-## Status nå
+| Felt | Verdi |
+|---|---|
+| `enabled` | `true` |
+| `execution_mode_override` | `'live'` |
+| `account_balance_percent` | `40` |
+| `sl_pct` | `3.5` |
+| `tsl_enabled` | `true` |
+| `tsl_activation_profit_pct` | `1` |
+| `tsl_callback_pct` | `4` |
 
-| Symbol | I `symbols`? | enabled | Siste HEALTH_ALL | Synlig? |
-|---|---|---|---|---|
-| BSBUSDT, ZECUSDT | ✅ | true | fersk | ✅ Open/Blocked |
-| FIGHTUSDT, RAVEUSDT | ❌ mangler | — | fersk (18:30) | ❌ usynlig |
-| PIEVERSEUSDT | ✅ | false | fersk (18:15) | ❌ skjult |
-| LABUSDT, PENGUUSDT | ✅ | true | 9. mai (stale) | ✅ Stale |
+(Andre felter beholder kolonne-default: `leverage=10`, `margin_mode=isolated`, `position_size_multiplier=1`, `tp1_exit_percent=100`, `preferred_transport=webhook`.)
 
 ## Endringer
 
-### 1. Backend — auto-register i HEALTH_ALL-skrivingen
+### 1. `supabase/functions/_shared/dispatcher.ts` (auto-register-blokken, linje ~117-140)
 
-I `supabase/functions/_shared/dispatcher.ts` (der HEALTH_ALL-snapshots faktisk skrives — bekreftes ved implementasjon; `record-health/index.ts` delegerer hit), **etter** vellykket insert i `health_snapshots` og kun når `strategy='HEALTH_ALL' AND tag=''`:
+Endre kun **insert-grenen** (når symbolet ikke finnes fra før) til å sette de nye defaultene:
 
 ```ts
-// Auto-register or auto-reactivate the symbol so it shows up in
-// SymbolHealthPanel and is eligible for entries. Defaults from the
-// symbols table apply (leverage 10, sl_pct 1.5, tsl_enabled, ...).
-const { data: existing } = await sb
-  .from("symbols")
-  .select("symbol, enabled")
-  .eq("symbol", symbol)
-  .maybeSingle();
-
-if (!existing) {
-  await sb.from("symbols").insert({ symbol, enabled: true });
-  await sb.from("audit_log").insert({
-    action: "symbol_auto_registered",
-    target: symbol,
-    after: { source: "health_all_received" },
-  });
-} else if (existing.enabled === false) {
-  await sb.from("symbols").update({ enabled: true, updated_at: new Date().toISOString() }).eq("symbol", symbol);
-  await sb.from("audit_log").insert({
-    action: "symbol_auto_reenabled",
-    target: symbol,
-    before: { enabled: false },
-    after: { enabled: true, source: "health_all_received" },
-  });
-}
+await sb.from("symbols").insert({
+  symbol: signal.symbol,
+  enabled: true,
+  execution_mode_override: "live",
+  account_balance_percent: 40,
+  sl_pct: 3.5,
+  tsl_enabled: true,
+  tsl_activation_profit_pct: 1,
+  tsl_callback_pct: 4,
+});
 ```
 
-Failure-mode: hvis upsert/insert feiler, logges men HEALTH_ALL-mottaket kvitteres fortsatt OK (samme defensive mønster som ellers i dispatcher).
+Audit-loggen `symbol_auto_registered` får `after` utvidet til å inkludere disse defaultene for sporbarhet.
 
-### 2. Frontend — Disable-knapp tooltip
+**Reaktiverings-grenen** (`sym.enabled === false`) endres ikke — den setter kun `enabled=true` og rører ikke konfig som operatøren kan ha justert.
 
-I `SymbolHealthPanel.tsx`, oppdater hover/title på Disable-knappen:
-> "Disables symbol. Will auto-reactivate if a HEALTH_ALL alert arrives again."
+### 2. Engangs-fix for FIGHTUSDT og RAVEUSDT
 
-Confirm-dialog (window.confirm) får samme tekst slik at oppførselen er tydelig.
-
-### 3. Engangs-fix — PIEVERSEUSDT
-
-Sett `enabled=true` umiddelbart via data-insert (TV sender allerede ferske alerts), så den slipper å vente på neste alert-syklus:
+Disse to ble nettopp auto-registrert med `mode=inherit, BAL=5%, SL=1.5%, TSL 1/0.5` (kolonne-defaults). Oppdater dem til den nye profilen via data-update slik at de står likt med BSB/ZEC umiddelbart:
 
 ```sql
-UPDATE symbols SET enabled = true, updated_at = now() WHERE symbol = 'PIEVERSEUSDT';
+UPDATE public.symbols
+SET execution_mode_override = 'live',
+    account_balance_percent = 40,
+    sl_pct = 3.5,
+    tsl_enabled = true,
+    tsl_activation_profit_pct = 1,
+    tsl_callback_pct = 4,
+    updated_at = now()
+WHERE symbol IN ('FIGHTUSDT','RAVEUSDT');
 ```
 
-## Verifisering
+PIEVERSEUSDT lar vi være — den ble manuelt opprettet (BAL=2%, lev=5x), så operatøren har bevisst valgt en annen profil. Hvis du vil at den også skal normaliseres, si fra.
 
-1. SQL: `SELECT symbol, enabled FROM symbols WHERE symbol IN ('FIGHTUSDT','RAVEUSDT','PIEVERSEUSDT')` — PIEVERSEUSDT umiddelbart `true`; FIGHT/RAVE dukker opp som rader ved neste HEALTH_ALL (~15 min).
-2. Etter neste HEALTH_ALL-syklus skal SymbolHealthPanel vise BSBUSDT, ZECUSDT, FIGHTUSDT, RAVEUSDT, PIEVERSEUSDT i Open/Blocked, og LABUSDT/PENGUUSDT i Stale.
-3. Klikk Disable på LABUSDT → forsvinner. Auto-aktiveres kun hvis LAB-alert kommer tilbake.
-4. `audit_log` viser `symbol_auto_registered` for FIGHT/RAVE og `symbol_auto_reenabled` for PIEVERSE neste gang regelen trigges (PIEVERSE blir manuelt fixet før det rekker å skje).
+LABUSDT/PENGUUSDT er stale og rører vi ikke (de er allerede konfigurert).
 
 ## Ikke i scope
 
-- Ingen schema-endring
-- Ingen endring i `health-gate.ts` (stale-gate er allerede korrekt)
-- Ingen automatisk **deaktivering** når 120 min har gått — symbolet forblir `enabled=true` men blokkeres via stale-gate. Operatør velger selv om hen vil disable manuelt.
+- Ingen schema-/kolonnedefault-endringer (defaults forblir forsiktige; det er auto-register-koden som velger den aggressive profilen).
+- Ingen UI-endringer.
+- Ingen endring i reaktiverings-oppførsel — disabled→enabled rører kun `enabled`-flagget.
+
+## Verifisering
+
+1. SQL etter engangs-fix: FIGHTUSDT og RAVEUSDT viser `mode=live, BAL=40, SL=3.5, TSL 1/4` i Symbols-tabellen.
+2. Neste gang et helt nytt symbol sender HEALTH_ALL, dukker det opp med live + 40% + 3.5 / 1/4 — uten manuell editering.
+3. `audit_log` for `symbol_auto_registered` viser de nye default-verdiene i `after`.

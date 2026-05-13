@@ -119,10 +119,19 @@ async function recordHealth(sb: SupabaseClient, signal: any): Promise<void> {
       const { data: sym } = await sb.from("symbols")
         .select("symbol, enabled").eq("symbol", signal.symbol).maybeSingle();
       if (!sym) {
-        await sb.from("symbols").insert({ symbol: signal.symbol, enabled: true });
+        const defaults = {
+          enabled: true,
+          execution_mode_override: "live" as const,
+          account_balance_percent: 40,
+          sl_pct: 3.5,
+          tsl_enabled: true,
+          tsl_activation_profit_pct: 1,
+          tsl_callback_pct: 4,
+        };
+        await sb.from("symbols").insert({ symbol: signal.symbol, ...defaults });
         await sb.from("audit_log").insert({
           action: "symbol_auto_registered", target: signal.symbol,
-          after: { source: "health_all_received", signal_id: signal.id },
+          after: { source: "health_all_received", signal_id: signal.id, ...defaults },
         });
       } else if (sym.enabled === false) {
         await sb.from("symbols").update({
