@@ -131,8 +131,9 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
     const t = tasks[i];
     const r = fetched[i];
     if (r.status !== 'fulfilled' || !r.value.ok) {
-      const err = r.status === 'fulfilled' ? r.value.error : (r.reason as Error)?.message;
-      const httpStatus = r.status === 'fulfilled' ? r.value.http_status : null;
+      const failure = r.status === 'fulfilled' && r.value.ok === false ? r.value : null;
+      const err = failure ? failure.error : (r.reason as Error)?.message;
+      const httpStatus = failure ? failure.http_status : null;
       result.errors.push({ kind: 'fetch_failed', timeframe: t.tf, http_status: httpStatus, error_kind: err, via: 'bridge' });
       inserts.push({
         signal_id: sig.id, symbol: sig.symbol, strategy: sig.strategy, tag: sig.tag ?? '',
