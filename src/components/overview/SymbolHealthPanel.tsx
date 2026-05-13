@@ -149,7 +149,7 @@ export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
     : "";
 
   async function handleDisable(sym: string) {
-    if (!window.confirm(`Disable ${sym}? It will no longer be eligible for trades until re-enabled from the Symbols page.`)) {
+    if (!window.confirm(`Disable ${sym}? It will auto-reactivate if a HEALTH_ALL alert arrives again.`)) {
       return;
     }
     setBusy(sym);
