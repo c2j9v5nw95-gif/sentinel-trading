@@ -27,7 +27,7 @@ import { SignalHistoryTable } from "@/components/symbol-detail/SignalHistoryTabl
 import { SizingResolutionCard } from "@/components/symbol-detail/SizingResolutionCard";
 import { ExecutionReliabilityPanel } from "@/components/symbol-detail/ExecutionReliabilityPanel";
 
-export const Route = createFileRoute("/_app/symbols/$symbol")({
+export const Route = createFileRoute("/_app/symbols_/$symbol")({
   component: SymbolDetailPage,
 });
 
