@@ -1,44 +1,52 @@
-## Problem
+## Mål
 
-Linjene i `EdgeComparisonChart` (Backtest vs Live edge — winrate og PF) og arealet i `HealthHistoryChart` (Net profit history) tegnes ikke fordi fargene wrappes feil:
+Legge til en ekstra linje for **live cumulative realized PnL** i `Net profit history`-kortet, slik at backtest net profit og faktiske trades vises side om side på samme tidsakse.
 
-- `src/styles.css` definerer tokens som `oklch(...)`
-- chart-komponentene bruker `stroke="hsl(var(--accent))"` → CSS blir `hsl(oklch(...))` → ugyldig → Recharts tegner ingenting
+## Endringer
 
-I tillegg er `--accent` for mørk til å fungere som linjefarge på den mørke kortbakgrunnen.
+### `src/components/symbol-detail/HealthHistoryChart.tsx`
 
-## Fix (kun frontend, kun farge-strenger)
+1. Utvid prop-signaturen:
+   ```ts
+   { health: HealthSnapshotLite[]; closedPositions: PositionLite[] }
+   ```
+2. Bygg en flettet tidsserie (`t` sortert ascending) hvor hvert punkt har:
+   - `bt_net_profit` — siste sett-verdi fra `health_snapshots` (forward-fill mellom snapshots)
+   - `live_net_profit` — løpende sum av `realized_pnl` for closed positions opp til `t` (forward-fill)
+3. Bytt `AreaChart` → `ComposedChart` (eller behold `AreaChart` med to `Area`/`Line`):
+   - Backtest: eksisterende grønt areal + linje (`var(--success)`)
+   - Live: ny linje i `var(--primary)` (lys blå) — `dot={false}`, `strokeWidth={1.5}`, `type="monotone"`. Ingen fill for å holde det rolig.
+4. Legg til `<Legend />` med liten font så de to seriene er tydelig merket.
+5. Tooltip viser begge verdiene formatert med fortegn (`+12.34` / `−5.10`).
+6. Tom-tilstand: vis kortet hvis enten BT- eller live-data finnes (≥ 2 punkter totalt).
 
-### 1. `src/components/symbol-detail/EdgeComparisonChart.tsx`
+### `src/routes/_app.symbols_.$symbol.tsx`
 
-Bytt alle `stroke="hsl(var(--X))"` til `stroke="var(--X)"`. Bytt BT-serien fra `--accent` til `--primary` så den faktisk kontrasterer mot bakgrunnen.
+Send `closedPositions` ned til `<HealthHistoryChart>` (samme array som allerede sendes til `EdgeComparisonChart` og `ClosedTradesTable`).
 
-| Element | Før | Etter |
-|---|---|---|
-| Grid stroke | `hsl(var(--border))` | `var(--border)` |
-| Axis stroke | `hsl(var(--muted-foreground))` | `var(--muted-foreground))` |
-| Tooltip bg/border | `hsl(var(--card))` / `hsl(var(--border))` | `var(--card)` / `var(--border)` |
-| BT line stroke | `hsl(var(--accent))` | `var(--primary)` |
-| Live line stroke | `hsl(var(--success))` | `var(--success)` |
+## Designvalg
 
-Behold `strokeWidth={1.5}`, `dot={false}`, `type="monotone"`. Gjelder begge LineChart-blokkene (winrate + PF).
+- BT = grønn (eksisterende konsistens med "profitt-areal")
+- Live = lys blå (`--primary`) — samme som BT-linjen i `EdgeComparisonChart`, så fargesemantikken forblir: **grønn = backtest, blå = live** ... 
 
-### 2. `src/components/symbol-detail/HealthHistoryChart.tsx`
+Vent — det matcher ikke `EdgeComparisonChart` der jeg satte BT=blå/`--primary` og Live=grønn/`--success`. For å holde fargesemantikken konsekvent på tvers av siden:
 
-Samme fix:
-- gradient `stop` farger: `hsl(var(--success))` → `var(--success)`
-- grid/axis/tooltip strenger: fjern `hsl(...)`-wrapper
-- `Area` stroke: `hsl(var(--success))` → `var(--success)`
+- **Backtest = `--primary` (lys blå)**
+- **Live = `--success` (grønn)**
+
+Da må `HealthHistoryChart` også oppdateres så BT-arealet/linjen blir blå, og den nye live-linjen blir grønn. Dette gjør hele Symbol Detail-siden konsistent.
 
 ## Utenfor scope
 
-- Ingen endringer i `src/styles.css`, ingen nye tokens
-- Ingen endringer i datalag, queries, eller `symbol-metrics.ts`
-- Ingen endringer i KPI-grid, TradingView-chart, tabeller eller andre paneler
-- Ingen endringer i execution/risk/dispatcher/bridge
+- Ingen DB-endringer, ingen nye queries (data finnes allerede på siden)
+- Ingen endringer i `symbol-metrics.ts`
+- Ingen endringer i KPI-grid, TradingView-chart, eller andre paneler
+- Ingen execution/risk/dispatcher-endringer
+- Ingen ekvitytidserie utenfor closed positions (åpne PnL er ikke en del av "history")
 
 ## Verifisering
 
-Etter fix: refresh `/symbols/ZECUSDT` og bekreft at:
-- to fargede linjer (lys blå = Backtest, grønn = Live) vises i begge edge-charts
-- Net profit history viser grønt areal med toppstrøk
+På `/symbols/ZECUSDT`:
+- to linjer: blå (BT net profit fra health_snapshots) og grønn (live cumulative realized PnL fra closed positions)
+- Legend viser begge
+- Tooltip viser begge verdier ved hover
