@@ -60,6 +60,72 @@ function SymbolsPage() {
   });
   const balanceUsdt = Number(wallet?.equity_usdt ?? 10000);
 
+  // Pull the same data the Kontrollsenter uses, so we can show effective
+  // (post-rule, post-override) sizing alongside the configured value.
+  const { data: snaps } = useQuery({
+    queryKey: ["symbols-health-latest"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("health_snapshots")
+        .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at")
+        .order("created_at", { ascending: false })
+        .limit(2000);
+      const bySym = new Map<string, any[]>();
+      for (const r of data ?? []) {
+        const arr = bySym.get(r.symbol) ?? [];
+        arr.push(r);
+        bySym.set(r.symbol, arr);
+      }
+      const latest: EvalSnap[] = [];
+      for (const [, arr] of bySym) {
+        const heartbeat = arr.find((r) => r.strategy === "HEALTH_ALL");
+        const r = heartbeat ?? arr[0];
+        latest.push({
+          symbol: r.symbol,
+          strategy: r.strategy,
+          tag: r.tag ?? "",
+          winrate: r.winrate != null ? Number(r.winrate) : null,
+          profit_factor: r.profit_factor != null ? Number(r.profit_factor) : null,
+          net_profit: r.net_profit != null ? Number(r.net_profit) : null,
+        });
+      }
+      return latest;
+    },
+  });
+  const { data: overrides } = useQuery({
+    queryKey: ["overrides"],
+    queryFn: async () => {
+      const { data } = await supabase.from("symbol_strategy_overrides").select("*");
+      return data ?? [];
+    },
+  });
+  const { data: rules } = useQuery({
+    queryKey: ["sizing-rules"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("sizing_rules")
+        .select("*")
+        .eq("enabled", true)
+        .order("priority", { ascending: true });
+      return (data ?? []) as EvalRule[];
+    },
+  });
+
+  const effBySymbol = useMemo(() => {
+    const map = new Map<string, { balance_pct: number | null; leverage: number | null; source: string; blocked: boolean }>();
+    if (!data) return map;
+    const snapMap = new Map((snaps ?? []).map((s) => [s.symbol, s]));
+    const ovMap = new Map((overrides ?? []).map((o: any) => [`${o.symbol}|${o.strategy}|${o.tag ?? ""}`, o]));
+    for (const sym of data) {
+      const snap = snapMap.get(sym.symbol) ?? null;
+      const ov = snap ? ovMap.get(`${snap.symbol}|${snap.strategy}|${snap.tag ?? ""}`) : null;
+      const ev = evaluateClient(snap, sym, ov, rules ?? []);
+      map.set(sym.symbol, ev);
+    }
+    return map;
+  }, [data, snaps, overrides, rules]);
+
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingLive, setPendingLive] = useState<null | { id: string; symbol: string }>(null);
   const [adding, setAdding] = useState(false);
