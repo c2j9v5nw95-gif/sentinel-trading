@@ -10,6 +10,7 @@ export type HealthSnapshotLite = {
   net_profit: number | null;
   bar_time: string | null;
   created_at: string;
+  payload?: Record<string, any> | null;
 };
 
 export type PositionLite = {
