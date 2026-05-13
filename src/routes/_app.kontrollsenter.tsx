@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { useMemo, useState } from "react";
+import { evaluateClient, type EvalRule } from "@/lib/sizing-eval";
+import { DualValue } from "@/components/DualValue";
 
 export const Route = createFileRoute("/_app/kontrollsenter")({
   component: PerformancePage,
@@ -22,14 +24,7 @@ type Snap = {
 type SymbolRow = Record<string, any>;
 type Override = Record<string, any>;
 
-type Rule = {
-  id: string;
-  priority: number;
-  enabled: boolean;
-  label: string;
-  condition: { all?: Array<{ metric: string; op: string; value: number }> };
-  action: { block?: boolean; set?: Record<string, number> };
-};
+type Rule = EvalRule;
 
 function PerformancePage() {
   const [tab, setTab] = useState<"symbols" | "rules">("symbols");
@@ -174,8 +169,25 @@ function SymbolsTab() {
                   <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
                     {fmtNum(r.snap.net_profit, 2)}
                   </td>
-                  <td className="text-right">{noSymbol || isDisabled ? "—" : fmtNum(r.eval.balance_pct, 1)}</td>
-                  <td className="text-right">{noSymbol || isDisabled ? "—" : `${fmtNum(r.eval.leverage, 0)}x`}</td>
+                  <td className="text-right" title={r.eval.source}>
+                    {noSymbol || isDisabled ? "—" : (
+                      <DualValue
+                        eff={r.eval.balance_pct}
+                        cfg={r.sym ? Number(r.sym.account_balance_percent) : null}
+                        dec={1}
+                      />
+                    )}
+                  </td>
+                  <td className="text-right" title={r.eval.source}>
+                    {noSymbol || isDisabled ? "—" : (
+                      <DualValue
+                        eff={r.eval.leverage}
+                        cfg={r.sym ? Number(r.sym.leverage) : null}
+                        dec={0}
+                        suffix="x"
+                      />
+                    )}
+                  </td>
                   <td>
                     {noSymbol ? (
                       <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">unregistered</span>
@@ -230,55 +242,6 @@ function SymbolsTab() {
   );
 }
 
-function evaluateClient(snap: Snap, sym: any, ov: any, rules: Rule[]) {
-  if (!sym) return { blocked: false, balance_pct: null, leverage: null, source: "no symbol" };
-  if (ov?.force_state === "block") {
-    return { blocked: true, balance_pct: null, leverage: null, source: "override:block" };
-  }
-  let base: any = {};
-  let source = "default";
-  if (ov?.force_state !== "allow") {
-    for (const r of rules) {
-      if (!matches(r.condition, snap)) continue;
-      if (r.action?.block) {
-        return { blocked: true, balance_pct: null, leverage: null, source: `rule:${r.label}` };
-      }
-      if (r.action?.set) {
-        base = { ...r.action.set };
-        source = `rule:${r.label}`;
-        break;
-      }
-    }
-  } else {
-    source = "override:allow";
-  }
-  const overlay = (k: string) => (ov?.[k] != null ? Number(ov[k]) : (base[k] ?? Number(sym[k])));
-  return {
-    blocked: false,
-    balance_pct: overlay("account_balance_percent"),
-    leverage: overlay("leverage"),
-    source: ov && (ov.account_balance_percent != null || ov.leverage != null) ? `override:${sym.symbol}` : source,
-  };
-}
-
-function matches(cond: Rule["condition"], snap: Snap): boolean {
-  if (!cond?.all?.length) return false;
-  for (const c of cond.all) {
-    const v = (snap as any)[c.metric];
-    if (v == null) return false;
-    const n = Number(v); const t = Number(c.value);
-    let ok = false;
-    switch (c.op) {
-      case ">": ok = n > t; break;
-      case ">=": ok = n >= t; break;
-      case "<": ok = n < t; break;
-      case "<=": ok = n <= t; break;
-      case "==": ok = n === t; break;
-    }
-    if (!ok) return false;
-  }
-  return true;
-}
 
 function fmtNum(v: number | null | undefined, dec: number) {
   if (v == null || !Number.isFinite(Number(v))) return "—";

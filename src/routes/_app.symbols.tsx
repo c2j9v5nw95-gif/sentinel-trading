@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { ModeChip } from "@/components/ModeChip";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { evaluateClient, type EvalRule, type EvalSnap } from "@/lib/sizing-eval";
+import { DualValue } from "@/components/DualValue";
 
 export const Route = createFileRoute("/_app/symbols")({
   component: SymbolsPage,
@@ -57,6 +59,72 @@ function SymbolsPage() {
     },
   });
   const balanceUsdt = Number(wallet?.equity_usdt ?? 10000);
+
+  // Pull the same data the Kontrollsenter uses, so we can show effective
+  // (post-rule, post-override) sizing alongside the configured value.
+  const { data: snaps } = useQuery({
+    queryKey: ["symbols-health-latest"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("health_snapshots")
+        .select("symbol,strategy,tag,winrate,profit_factor,net_profit,bar_time,created_at")
+        .order("created_at", { ascending: false })
+        .limit(2000);
+      const bySym = new Map<string, any[]>();
+      for (const r of data ?? []) {
+        const arr = bySym.get(r.symbol) ?? [];
+        arr.push(r);
+        bySym.set(r.symbol, arr);
+      }
+      const latest: EvalSnap[] = [];
+      for (const [, arr] of bySym) {
+        const heartbeat = arr.find((r) => r.strategy === "HEALTH_ALL");
+        const r = heartbeat ?? arr[0];
+        latest.push({
+          symbol: r.symbol,
+          strategy: r.strategy,
+          tag: r.tag ?? "",
+          winrate: r.winrate != null ? Number(r.winrate) : null,
+          profit_factor: r.profit_factor != null ? Number(r.profit_factor) : null,
+          net_profit: r.net_profit != null ? Number(r.net_profit) : null,
+        });
+      }
+      return latest;
+    },
+  });
+  const { data: overrides } = useQuery({
+    queryKey: ["overrides"],
+    queryFn: async () => {
+      const { data } = await supabase.from("symbol_strategy_overrides").select("*");
+      return data ?? [];
+    },
+  });
+  const { data: rules } = useQuery({
+    queryKey: ["sizing-rules"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("sizing_rules")
+        .select("*")
+        .eq("enabled", true)
+        .order("priority", { ascending: true });
+      return (data ?? []) as EvalRule[];
+    },
+  });
+
+  const effBySymbol = useMemo(() => {
+    const map = new Map<string, { balance_pct: number | null; leverage: number | null; source: string; blocked: boolean }>();
+    if (!data) return map;
+    const snapMap = new Map((snaps ?? []).map((s) => [s.symbol, s]));
+    const ovMap = new Map((overrides ?? []).map((o: any) => [`${o.symbol}|${o.strategy}|${o.tag ?? ""}`, o]));
+    for (const sym of data) {
+      const snap = snapMap.get(sym.symbol) ?? null;
+      const ov = snap ? ovMap.get(`${snap.symbol}|${snap.strategy}|${snap.tag ?? ""}`) : null;
+      const ev = evaluateClient(snap, sym, ov, rules ?? []);
+      map.set(sym.symbol, ev);
+    }
+    return map;
+  }, [data, snaps, overrides, rules]);
+
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingLive, setPendingLive] = useState<null | { id: string; symbol: string }>(null);
@@ -120,8 +188,8 @@ function SymbolsPage() {
                   <th>On</th>
                   <th>Mode</th>
                   <th>Transport</th>
-                  <th title="Account balance %">Bal %</th>
-                  <th>Lev</th>
+                  <th title="Effective account balance % (configured shown below if rules/overrides change it)">Bal %</th>
+                  <th title="Effective leverage (configured shown below if rules/overrides change it)">Lev</th>
                   <th title="Position size multiplier">Mult</th>
                   <th>Margin</th>
                   <th>SL %</th>
@@ -138,6 +206,7 @@ function SymbolsPage() {
                   <SymbolRowView
                     key={s.id}
                     s={s}
+                    eff={effBySymbol.get(s.symbol)}
                     editing={editingId === s.id}
                     busy={updateSymbol.isPending}
                     onEdit={() => setEditingId(s.id)}
@@ -302,9 +371,10 @@ function validateDraft(d: Draft): { ok: boolean; patch?: Record<string, unknown>
 }
 
 function SymbolRowView({
-  s, editing, busy, onEdit, onCancel, onModeChange, onSave,
+  s, eff, editing, busy, onEdit, onCancel, onModeChange, onSave,
 }: {
   s: SymbolRow;
+  eff?: { balance_pct: number | null; leverage: number | null; source: string; blocked: boolean };
   editing: boolean;
   busy: boolean;
   onEdit: () => void;
@@ -374,8 +444,21 @@ function SymbolRowView({
             : null}
         </td>
         <td className="text-xs">{s.preferred_transport}</td>
-        <td>{s.account_balance_percent}</td>
-        <td>{s.leverage}x</td>
+        <td title={eff?.source}>
+          <DualValue
+            eff={eff?.balance_pct ?? Number(s.account_balance_percent)}
+            cfg={Number(s.account_balance_percent)}
+            dec={1}
+          />
+        </td>
+        <td title={eff?.source}>
+          <DualValue
+            eff={eff?.leverage ?? Number(s.leverage)}
+            cfg={Number(s.leverage)}
+            dec={0}
+            suffix="x"
+          />
+        </td>
         <td>{s.position_size_multiplier}</td>
         <td className="text-xs">{s.margin_mode}</td>
         <td>{s.sl_pct}</td>
