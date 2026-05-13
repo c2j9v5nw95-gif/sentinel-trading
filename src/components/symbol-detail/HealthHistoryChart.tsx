@@ -28,11 +28,11 @@ export function HealthHistoryChart({ health }: { health: HealthSnapshotLite[] })
             <AreaChart data={data}>
               <defs>
                 <linearGradient id="np" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(var(--success))" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="hsl(var(--success))" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--success)" stopOpacity={0.4} />
+                  <stop offset="100%" stopColor="var(--success)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis
                 dataKey="t"
                 tickFormatter={(t) => {
@@ -40,18 +40,18 @@ export function HealthHistoryChart({ health }: { health: HealthSnapshotLite[] })
                   return `${d.getMonth() + 1}/${d.getDate()}`;
                 }}
                 tick={{ fontSize: 10 }}
-                stroke="hsl(var(--muted-foreground))"
+                stroke="var(--muted-foreground)"
               />
-              <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+              <YAxis tick={{ fontSize: 10 }} stroke="var(--muted-foreground)" />
               <Tooltip
                 contentStyle={{
-                  background: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
                   fontSize: 11,
                 }}
                 labelFormatter={(l) => new Date(Number(l)).toLocaleString()}
               />
-              <Area type="monotone" dataKey="net_profit" stroke="hsl(var(--success))" fill="url(#np)" />
+              <Area type="monotone" dataKey="net_profit" stroke="var(--success)" fill="url(#np)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
