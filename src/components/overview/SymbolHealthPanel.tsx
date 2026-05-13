@@ -1,7 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, EmptyState } from "@/components/PageHeader";
 import { fmtNum, fmtSigned, fmtAge } from "./format";
+
+const STALE_MINUTES = 120;
 
 interface Snapshot {
   symbol: string;
@@ -17,7 +20,7 @@ interface Thresholds {
   wr: number | null;
 }
 
-type Status = "open" | "blocked" | "no_data";
+type Status = "open" | "blocked" | "stale" | "no_data";
 
 interface Row {
   symbol: string;
@@ -41,6 +44,10 @@ function classify(snap: Snapshot | undefined, t: Thresholds): Row {
       breaches: [],
     };
   }
+
+  const ageMs = Date.now() - new Date(snap.created_at).getTime();
+  const isStale = ageMs > STALE_MINUTES * 60 * 1000;
+
   const breaches: string[] = [];
   if (t.pf != null && snap.profit_factor != null && Number(snap.profit_factor) < t.pf) {
     breaches.push(`PF ${fmtNum(Number(snap.profit_factor), 2)} < ${fmtNum(t.pf, 2)}`);
@@ -51,9 +58,15 @@ function classify(snap: Snapshot | undefined, t: Thresholds): Row {
   if (t.wr != null && snap.winrate != null && Number(snap.winrate) < t.wr) {
     breaches.push(`WR ${fmtNum(Number(snap.winrate), 1)} < ${fmtNum(t.wr, 1)}`);
   }
+
+  let status: Status;
+  if (isStale) status = "stale";
+  else if (breaches.length > 0) status = "blocked";
+  else status = "open";
+
   return {
     symbol: snap.symbol,
-    status: breaches.length > 0 ? "blocked" : "open",
+    status,
     pf: snap.profit_factor != null ? Number(snap.profit_factor) : null,
     net: snap.net_profit != null ? Number(snap.net_profit) : null,
     wr: snap.winrate != null ? Number(snap.winrate) : null,
@@ -63,11 +76,13 @@ function classify(snap: Snapshot | undefined, t: Thresholds): Row {
 }
 
 export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+
   const { data } = useQuery({
     queryKey: ["overview", "symbol_health", symbol],
     refetchInterval: 30_000,
     queryFn: async () => {
-      // 1. enabled symbols
       let symQ = supabase
         .from("symbols")
         .select("symbol")
@@ -78,7 +93,6 @@ export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
       if (symErr) throw symErr;
       const symbols = (syms ?? []).map((r) => r.symbol as string);
 
-      // 2. thresholds (HEALTH_ALL row)
       const { data: strat } = await supabase
         .from("strategies")
         .select("health_min_profit_factor,health_min_net_profit,health_min_winrate")
@@ -91,7 +105,6 @@ export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
         wr: strat?.health_min_winrate != null ? Number(strat.health_min_winrate) : null,
       };
 
-      // 3. latest HEALTH_ALL snapshots — fetch recent window, then take latest per symbol
       if (symbols.length === 0) {
         return { rows: [] as Row[], thresholds };
       }
@@ -121,6 +134,7 @@ export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
   const rows = data?.rows ?? [];
   const open = rows.filter((r) => r.status === "open");
   const blocked = rows.filter((r) => r.status === "blocked");
+  const stale = rows.filter((r) => r.status === "stale");
   const noData = rows.filter((r) => r.status === "no_data");
 
   const t = data?.thresholds;
@@ -134,23 +148,47 @@ export function SymbolHealthPanel({ symbol }: { symbol: string | null }) {
         .join(" · ")
     : "";
 
+  async function handleDisable(sym: string) {
+    if (!window.confirm(`Disable ${sym}? It will no longer be eligible for trades until re-enabled from the Symbols page.`)) {
+      return;
+    }
+    setBusy(sym);
+    try {
+      const { error } = await supabase.from("symbols").update({ enabled: false }).eq("symbol", sym);
+      if (error) throw error;
+      await queryClient.invalidateQueries({ queryKey: ["overview", "symbol_health"] });
+    } catch (e) {
+      window.alert(`Failed to disable ${sym}: ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const titleParts = [
+    `${open.length} open`,
+    `${blocked.length} blocked`,
+    stale.length ? `${stale.length} stale` : null,
+    noData.length ? `${noData.length} no data` : null,
+  ].filter(Boolean);
+
   return (
-    <Card
-      title={`Symbol health · ${open.length} open · ${blocked.length} blocked${noData.length ? ` · ${noData.length} no data` : ""}`}
-    >
+    <Card title={`Symbol health · ${titleParts.join(" · ")}`}>
       {rows.length === 0 ? (
         <EmptyState title="No enabled symbols" />
       ) : (
         <div className="space-y-3">
           {thresholdLabel && (
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Thresholds (HEALTH_ALL): {thresholdLabel}
+              Thresholds (HEALTH_ALL): {thresholdLabel} · Stale after {STALE_MINUTES} min
             </div>
           )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Column title="Open for trades" tone="success" rows={open} />
             <Column title="Blocked by health" tone="danger" rows={[...blocked, ...noData]} />
           </div>
+          {stale.length > 0 && (
+            <StaleSection rows={stale} onDisable={handleDisable} busy={busy} />
+          )}
         </div>
       )}
     </Card>
@@ -186,12 +224,58 @@ function Column({
   );
 }
 
+function StaleSection({
+  rows,
+  onDisable,
+  busy,
+}: {
+  rows: Row[];
+  onDisable: (sym: string) => void;
+  busy: string | null;
+}) {
+  return (
+    <div className="rounded border border-warning/40 bg-warning/5 p-3">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-warning">
+        Stale — no health alert &gt; {STALE_MINUTES} min ({rows.length})
+      </div>
+      <div className="mb-2 text-[11px] text-muted-foreground">
+        These symbols are blocked from new entries until a fresh HEALTH_ALL snapshot arrives. If the alert was removed in TradingView intentionally, disable the symbol here to clean up the list.
+      </div>
+      <ul className="divide-y divide-border/50">
+        {rows.map((r) => (
+          <li key={r.symbol} className="flex items-center justify-between gap-2 py-1.5 text-xs tabular">
+            <span className="font-semibold">{r.symbol}</span>
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span title={r.capturedAt ? `Last snapshot: ${r.capturedAt}` : ""}>
+                last {r.capturedAt ? fmtAge(r.capturedAt) : "—"}
+              </span>
+              <span className="opacity-70">
+                PF {r.pf != null ? fmtNum(r.pf, 2) : "—"} · Net {r.net != null ? fmtSigned(r.net) : "—"}
+              </span>
+              <button
+                type="button"
+                onClick={() => onDisable(r.symbol)}
+                disabled={busy === r.symbol}
+                className="rounded border border-danger/50 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-danger transition hover:bg-danger/20 disabled:opacity-50"
+              >
+                {busy === r.symbol ? "…" : "Disable"}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function SymbolRow({ row }: { row: Row }) {
   const tooltip =
     row.status === "blocked"
       ? `Blocked: ${row.breaches.join(", ")} · snapshot ${fmtAge(row.capturedAt!)}`
       : row.status === "no_data"
       ? "No HEALTH_ALL snapshot received yet — gate passes (advisory)."
+      : row.status === "stale"
+      ? `Stale · last snapshot ${fmtAge(row.capturedAt!)}`
       : row.capturedAt
       ? `Healthy · snapshot ${fmtAge(row.capturedAt)}`
       : "";
@@ -233,6 +317,13 @@ function StatusPill({ status }: { status: Status }) {
     return (
       <span className="rounded border border-danger/40 bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-danger">
         Blocked
+      </span>
+    );
+  }
+  if (status === "stale") {
+    return (
+      <span className="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-warning">
+        Stale
       </span>
     );
   }
