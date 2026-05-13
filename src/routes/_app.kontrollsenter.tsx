@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PageHeader, Card, EmptyState } from "@/components/PageHeader";
 import { useMemo, useState } from "react";
 import { evaluateClient, type EvalRule } from "@/lib/sizing-eval";
+import { DualValue } from "@/components/DualValue";
 
 export const Route = createFileRoute("/_app/kontrollsenter")({
   component: PerformancePage,
