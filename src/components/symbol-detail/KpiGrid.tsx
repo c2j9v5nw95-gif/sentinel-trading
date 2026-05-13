@@ -77,6 +77,7 @@ export function KpiGrid({
           pfDelta != null ? (
             <>
               live Δ <span className={deltaClass(pfDelta)}>{fmtSigned(pfDelta, 2)}</span>
+              <span className="ml-1 text-[10px] text-muted-foreground/70">(live − backtest)</span>
             </>
           ) : null
         }
