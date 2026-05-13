@@ -168,8 +168,25 @@ function SymbolsTab() {
                   <td className={`text-right ${r.snap.net_profit != null && r.snap.net_profit < 0 ? "text-destructive" : ""}`}>
                     {fmtNum(r.snap.net_profit, 2)}
                   </td>
-                  <td className="text-right">{noSymbol || isDisabled ? "—" : fmtNum(r.eval.balance_pct, 1)}</td>
-                  <td className="text-right">{noSymbol || isDisabled ? "—" : `${fmtNum(r.eval.leverage, 0)}x`}</td>
+                  <td className="text-right" title={r.eval.source}>
+                    {noSymbol || isDisabled ? "—" : (
+                      <DualValue
+                        eff={r.eval.balance_pct}
+                        cfg={r.sym ? Number(r.sym.account_balance_percent) : null}
+                        dec={1}
+                      />
+                    )}
+                  </td>
+                  <td className="text-right" title={r.eval.source}>
+                    {noSymbol || isDisabled ? "—" : (
+                      <DualValue
+                        eff={r.eval.leverage}
+                        cfg={r.sym ? Number(r.sym.leverage) : null}
+                        dec={0}
+                        suffix="x"
+                      />
+                    )}
+                  </td>
                   <td>
                     {noSymbol ? (
                       <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">unregistered</span>
