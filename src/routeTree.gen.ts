@@ -23,7 +23,7 @@ import { Route as AppKontrollsenterRouteImport } from './routes/_app.kontrollsen
 import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
-import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols.$symbol'
+import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$symbol'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -95,9 +95,9 @@ const AppAlertsRoute = AppAlertsRouteImport.update({
   getParentRoute: () => AppRoute,
 } as any)
 const AppSymbolsSymbolRoute = AppSymbolsSymbolRouteImport.update({
-  id: '/$symbol',
-  path: '/$symbol',
-  getParentRoute: () => AppSymbolsRoute,
+  id: '/symbols_/$symbol',
+  path: '/symbols/$symbol',
+  getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -113,7 +113,7 @@ export interface FileRoutesByFullPath {
   '/signals': typeof AppSignalsRoute
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
-  '/symbols': typeof AppSymbolsRouteWithChildren
+  '/symbols': typeof AppSymbolsRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
 }
 export interface FileRoutesByTo {
@@ -129,7 +129,7 @@ export interface FileRoutesByTo {
   '/signals': typeof AppSignalsRoute
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
-  '/symbols': typeof AppSymbolsRouteWithChildren
+  '/symbols': typeof AppSymbolsRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
 }
 export interface FileRoutesById {
@@ -147,8 +147,8 @@ export interface FileRoutesById {
   '/_app/signals': typeof AppSignalsRoute
   '/_app/simulator': typeof AppSimulatorRoute
   '/_app/strategies': typeof AppStrategiesRoute
-  '/_app/symbols': typeof AppSymbolsRouteWithChildren
-  '/_app/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/_app/symbols': typeof AppSymbolsRoute
+  '/_app/symbols_/$symbol': typeof AppSymbolsSymbolRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -199,7 +199,7 @@ export interface FileRouteTypes {
     | '/_app/simulator'
     | '/_app/strategies'
     | '/_app/symbols'
-    | '/_app/symbols/$symbol'
+    | '/_app/symbols_/$symbol'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -308,27 +308,15 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAlertsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/symbols/$symbol': {
-      id: '/_app/symbols/$symbol'
-      path: '/$symbol'
+    '/_app/symbols_/$symbol': {
+      id: '/_app/symbols_/$symbol'
+      path: '/symbols/$symbol'
       fullPath: '/symbols/$symbol'
       preLoaderRoute: typeof AppSymbolsSymbolRouteImport
-      parentRoute: typeof AppSymbolsRoute
+      parentRoute: typeof AppRoute
     }
   }
 }
-
-interface AppSymbolsRouteChildren {
-  AppSymbolsSymbolRoute: typeof AppSymbolsSymbolRoute
-}
-
-const AppSymbolsRouteChildren: AppSymbolsRouteChildren = {
-  AppSymbolsSymbolRoute: AppSymbolsSymbolRoute,
-}
-
-const AppSymbolsRouteWithChildren = AppSymbolsRoute._addFileChildren(
-  AppSymbolsRouteChildren,
-)
 
 interface AppRouteChildren {
   AppAlertsRoute: typeof AppAlertsRoute
@@ -341,7 +329,8 @@ interface AppRouteChildren {
   AppSignalsRoute: typeof AppSignalsRoute
   AppSimulatorRoute: typeof AppSimulatorRoute
   AppStrategiesRoute: typeof AppStrategiesRoute
-  AppSymbolsRoute: typeof AppSymbolsRouteWithChildren
+  AppSymbolsRoute: typeof AppSymbolsRoute
+  AppSymbolsSymbolRoute: typeof AppSymbolsSymbolRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -355,7 +344,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppSignalsRoute: AppSignalsRoute,
   AppSimulatorRoute: AppSimulatorRoute,
   AppStrategiesRoute: AppStrategiesRoute,
-  AppSymbolsRoute: AppSymbolsRouteWithChildren,
+  AppSymbolsRoute: AppSymbolsRoute,
+  AppSymbolsSymbolRoute: AppSymbolsSymbolRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
@@ -368,3 +358,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
