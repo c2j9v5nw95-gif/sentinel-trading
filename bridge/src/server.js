@@ -37,6 +37,9 @@ const ALLOWED_ENDPOINTS = new Set([
   "/v5/position/set-leverage",
   "/v5/position/trading-stop",
   "/v5/account/wallet-balance",
+  // analytics — public GET market data only (read-only, no signing required by Bybit)
+  "/v5/market/kline",
+  "/v5/market/tickers",
 ]);
 
 if (!BRIDGE_SECRET) { console.error("BRIDGE_SECRET not set — refusing to start"); process.exit(1); }
