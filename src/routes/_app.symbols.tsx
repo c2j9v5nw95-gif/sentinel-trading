@@ -444,8 +444,21 @@ function SymbolRowView({
             : null}
         </td>
         <td className="text-xs">{s.preferred_transport}</td>
-        <td>{s.account_balance_percent}</td>
-        <td>{s.leverage}x</td>
+        <td title={eff?.source}>
+          <DualValue
+            eff={eff?.balance_pct ?? Number(s.account_balance_percent)}
+            cfg={Number(s.account_balance_percent)}
+            dec={1}
+          />
+        </td>
+        <td title={eff?.source}>
+          <DualValue
+            eff={eff?.leverage ?? Number(s.leverage)}
+            cfg={Number(s.leverage)}
+            dec={0}
+            suffix="x"
+          />
+        </td>
         <td>{s.position_size_multiplier}</td>
         <td className="text-xs">{s.margin_mode}</td>
         <td>{s.sl_pct}</td>
