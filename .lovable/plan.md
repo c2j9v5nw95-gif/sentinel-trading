@@ -1,43 +1,42 @@
-## To ting
+## Mål
 
-### 1. Synliggjøre disablede symboler i Kontrollsenter → Symbols
+Etter forklaringen er vi enige om at det er klargjørende å se **både** den konfigurerte og den effektive verdien overalt — ikke gjette, ikke skjule. Begge tabellene skal vise samme tallsett:
 
-I dag har Status-kolonnen kun tre tilstander: `unregistered`, `BLOCKED`, `trades`. Et symbol som finnes i `symbols` med `enabled=false` vil i praksis vises som `trades` eller `BLOCKED` avhengig av tall — ikke som "av".
+- **Konfigurert** = symbol-rad i `symbols` (det du selv har satt — f.eks. 40 % / 10x).
+- **Effektiv** = det `sizing-resolver` faktisk bruker etter at sizing rules + per-tuple overrides har spilt ut (f.eks. 15 % / 10x for FIGHTUSDT).
 
-**Endring i `src/routes/_app.kontrollsenter.tsx`** (visnings-raden, linje 162-205):
+## Endringer
 
-- Legg til en sjekk `const isDisabled = r.sym && r.sym.enabled === false;` før Status-cellen.
-- Når `isDisabled`:
-  - Hele `<tr>` får `opacity-50 grayscale` (samme mønster som vi nettopp brukte i Symbols-siden).
-  - Symbol-navnet i `<td>` får `text-muted-foreground line-through`.
-  - Status-pille viser `DISABLED` (`border-border bg-muted text-muted-foreground uppercase`) i stedet for BLOCKED/trades.
-  - `% equity` og `Lev`-cellene viser `—` (siden symbolet ikke trader uansett).
-- Ingen endring for `unregistered`, `BLOCKED`, `trades`.
+### 1. `src/routes/_app.kontrollsenter.tsx` (Symbols-tab)
 
-Ingen logikk-endring i `evaluateClient` — kun visuell tilstand.
+- Bytt kolonneheaderne **% equity** og **Lev** til to celler hver: vis effektiv verdi stort, og under den vises konfigurert verdi som liten muted tekst hvis de er forskjellige (f.eks. `15.0` på linje 1 og `cfg 40.0` i `text-xs text-muted-foreground` under). Hvis like, vis kun ett tall.
+- Når effektiv stammer fra en sizing rule eller override, legg på en liten badge/hover-tooltip med kilden (`r.eval.source` finnes allerede — `rule:high_winrate_equity`, `override:FIGHTUSDT`, `default`). Tooltip via `title=`.
+- Ingen logikk-endring: `evaluateClient` returnerer allerede både effektiv verdi og kilde. Vi trenger bare å hente konfigurert verdi fra `r.sym` for sammenligning.
 
-### 2. Fjerne BTCUSDT-raden
+### 2. `src/routes/_app.symbols.tsx`
 
-Sjekket opprinnelsen:
-- `health_snapshots`: én rad, `strategy='sim'`, fra 2026-05-08 (sim-injection, ikke ekte TradingView-alert).
-- `signals`: tilhørende rad er `transport=webhook, type=stats, strategy=sim, action=HEALTH` — altså en simulert testalert.
+- Legg til to nye read-only kolonner ved siden av **Bal %** og **Lev**: `Eff Bal %` og `Eff Lev`. De viser effektiv verdi etter samme regelsett som Kontrollsenter, og har samme tooltip-kilde.
+- For å unngå duplisert logikk: trekk ut `evaluateClient` + `matches` fra `_app.kontrollsenter.tsx` til en delt fil `src/lib/sizing-eval.ts` (ren klient-helper, ingen Supabase-kall — tar `snap, sym, ov, rules` som argumenter). Begge sidene importerer derfra.
+- Symbols-siden henter nå også siste `health_snapshots` (kollapset til ett rad per ticker, samme prefer-HEALTH_ALL-logikk som Kontrollsenter), `symbol_strategy_overrides` og `sizing_rules` for å kunne kalle `evaluateClient`. Hvis snapshot mangler for et symbol → effektiv = konfigurert (ingen rules treffer uten snapshot).
+- Ingen endring i edit-modus eller validering. Bare to ekstra display-kolonner.
 
-BTCUSDT vises fordi Symbols-tabben faller tilbake til siste snapshot (uansett strategi) når ingen HEALTH_ALL finnes for symbolet. Det er korrekt oppførsel for ekte symboler, men her er kilden en gammel sim-test.
+### 3. Ingen DB-endring, ingen executor-endring
 
-**Engangs-fix:** slett den ene sim-snapshoten:
-```sql
-DELETE FROM public.health_snapshots WHERE symbol='BTCUSDT' AND strategy='sim';
-```
+Sizing-resolveren på serveren er allerede sannhetskilden. Vi endrer kun visning. Ingen `sizing_rules` slås av; ingen migrasjoner.
 
-Da forsvinner BTCUSDT fra listen umiddelbart. Signal-raden i `signals` beholdes for sporbarhet (den dukker ikke opp i Kontrollsenter — kun i Signals/Audit).
+## Resultat
+
+- Du ser med ett blikk på Symbols-siden at FIGHTUSDT er konfigurert til 40 % men trader effektivt på 15 % pga. `high_winrate_equity`-regelen — uten å åpne Kontrollsenter.
+- Kontrollsenter viser også konfigurert ved siden av effektiv, så du raskt ser hva som ville skjedd hvis regelen ikke hadde truffet.
+- Tooltip på effektiv-kolonnen forteller hvilken regel/override som førte til verdien.
+
+## Filer som endres
+
+- `src/lib/sizing-eval.ts` (ny — eksporterer `evaluateClient`, `matches`, typer)
+- `src/routes/_app.kontrollsenter.tsx` (importerer fra sizing-eval, viser konfigurert under effektiv)
+- `src/routes/_app.symbols.tsx` (henter snaps/overrides/rules, legger til Eff Bal % + Eff Lev kolonner)
 
 ## Ikke i scope
 
-- Ingen filterregel for å skjule alle `strategy='sim'`-snapshots fra Kontrollsenter generelt — vi kan ta det hvis flere sim-symboler dukker opp i fremtiden.
-- Ingen endring i Symbols-siden (gjort i forrige loop).
-- Ingen endring i `evaluateClient`/sizing-logikk.
-
-## Verifisering
-
-1. BTCUSDT er borte fra Kontrollsenter → Symbols.
-2. Hvis du midlertidig disabler f.eks. BSBUSDT i Symbols-siden, dukker den opp i Kontrollsenter med dimmet rad, gjennomstreket navn og en `DISABLED`-pille i Status-kolonnen.
+- Ingen redigering av effektiv-verdi direkte (det gjøres fortsatt via Edit på symbol eller via override-drawer i Kontrollsenter).
+- Ingen ny indikator for "blocked by rule" i Symbols (Kontrollsenter har allerede status-pillen som dekker det).
