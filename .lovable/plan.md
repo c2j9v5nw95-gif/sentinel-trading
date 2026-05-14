@@ -1,67 +1,105 @@
-## Verdict
+## Part 1 — Cosmetic fix: stop stamping `trade_timeframe_*` trail on HEALTH (APPROVED)
 
-**The BSBUSDT failure happened BEFORE the Phase 1 deployment.**
+- `supabase/functions/ingest-webhook/index.ts` — only push the `trade_timeframe_resolved`/`unresolved` trail entry when `parsed.type === 'trade'`.
+- `supabase/functions/sim-inject/index.ts` — only push it when `!isHealth`.
+- HEALTH still inserts with `trade_timeframe = null`, no trail noise. No schema change.
 
-| Event | Time (UTC, 2026-05-14) |
-|---|---|
-| BSBUSDT entry signal received | **18:45:06** |
-| Order rejected (`bybit_10001:Qty invalid`) | **18:45:17** |
-| Phase 1 migration timestamp `20260514190341` | **19:03:41** |
-| Phase 1 edge-function deploy (executor/sizing/bybit-public/telegram) | shortly after 19:03 |
+---
 
-So this is **not a regression** — it is the same class of failure Phase 1 was designed to prevent. A replay AFTER Phase 1 will exercise the new fail-closed + bridge-cache + Telegram path.
+## Part 2 — Phase 2B: auto-trigger `snapshot-signal-context` (revised auth)
 
-## Evidence (signal `0c3010c8-2053-4207-9476-1208f6ce62cf`)
+**Mechanism unchanged:** Postgres `AFTER INSERT` trigger on `public.signals` calls the existing `/api/public/hooks/snapshot-signal-context` route via `pg_net.http_post`. Async, fire-and-forget; replay/sim-inject/ingest-webhook all covered automatically. Trade-only filter, idempotent writer, never blocks insert.
+
+**Hardened auth — dedicated `SNAPSHOT_HOOK_SECRET` (no anon key, no client exposure).**
+
+Two storage locations for the same value, populated once by the operator:
+
+1. **Runtime secret** `SNAPSHOT_HOOK_SECRET` (added via the secrets tool; surfaces as `process.env.SNAPSHOT_HOOK_SECRET`). Read by the route handler. Never bundled to client.
+2. **DB-only mirror** in a new table `public.internal_hook_config(name text PRIMARY KEY, value text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`. RLS enabled, **zero policies** → invisible to all PostgREST/client roles. Only `SECURITY DEFINER` functions can read it.
+
+**Migration (single SQL).**
+
+1. `CREATE EXTENSION IF NOT EXISTS pg_net;`
+2. `CREATE TABLE public.internal_hook_config (...)` + `ALTER TABLE ... ENABLE ROW LEVEL SECURITY;` (no policies → fully locked).
+3. `ALTER TABLE public.app_settings ADD COLUMN auto_snapshot_signal_context_enabled boolean NOT NULL DEFAULT true;`
+   `ALTER TABLE public.app_settings ADD COLUMN snapshot_signal_context_url text;`
+   (URL is non-sensitive; it stays in `app_settings`. The secret does NOT.)
+4. `CREATE FUNCTION public.trigger_snapshot_signal_context()` `SECURITY DEFINER`, `SET search_path = public`:
 
 ```text
-signals
-  symbol           BSBUSDT
-  type/action      trade / ENTER-SHORT
-  status           error
-  decision_reason  order_submit_failed:bybit_10001:Qty invalid
-  processed_at     18:45:19.771
+RETURNS TRIGGER AS $$
+DECLARE
+  cfg public.app_settings%ROWTYPE;
+  hook_secret text;
+BEGIN
+  IF NEW.type <> 'trade' THEN RETURN NEW; END IF;
 
-risk_decisions
-  18:45:09  gate=risk  outcome=pass  reason=all_gates_passed
-  (no qty_zero / instrument_rules_unavailable entry — pre-Phase-1)
+  SELECT * INTO cfg FROM public.app_settings WHERE singleton = true;
+  IF NOT cfg.auto_snapshot_signal_context_enabled
+     OR cfg.snapshot_signal_context_url IS NULL THEN
+    RETURN NEW;
+  END IF;
 
-orders  (single row)
-  status            rejected
-  qty               1055.1842274282963   ← raw, unrounded float
-  error_message     bybit_10001:Qty invalid
-  request_payload   { qty: 1055.1842274282963, orderType: Market, side: Sell, ... }
-  response_payload  null
+  SELECT value INTO hook_secret
+  FROM public.internal_hook_config
+  WHERE name = 'snapshot_hook_secret';
+  IF hook_secret IS NULL THEN RETURN NEW; END IF;
 
-system_alerts        (none in this window)
-notification_events  (none in this window)
+  BEGIN
+    PERFORM net.http_post(
+      url     := cfg.snapshot_signal_context_url,
+      headers := jsonb_build_object(
+                   'Content-Type','application/json',
+                   'X-Snapshot-Hook-Secret', hook_secret),
+      body    := jsonb_build_object('signal_id', NEW.id),
+      timeout_milliseconds := 5000
+    );
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO public.error_log(source, message, context)
+    VALUES ('trigger_snapshot_signal_context', SQLERRM,
+            jsonb_build_object('signal_id', NEW.id, 'sqlstate', SQLSTATE));
+  END;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
 ```
 
-## Mapped to your checklist
+5. `CREATE TRIGGER trg_signals_auto_snapshot AFTER INSERT ON public.signals FOR EACH ROW EXECUTE FUNCTION public.trigger_snapshot_signal_context();`
+6. Revoke any default grants on `public.internal_hook_config` from `anon` and `authenticated` (defensive — RLS already blocks, but no grants belt-and-braces).
 
-| Field you asked for | Value found in trail |
-|---|---|
-| instrument_rules step | **not logged** — pre-Phase-1 executor didn't record `instrument_rules_unavailable` |
-| qtyStep | **not logged / null** — bridge `fetchInstrumentRules` failed silently, no field stored |
-| raw qty | `1055.1842274282963` (in `orders.qty` and `orders.request_payload.qty`) |
-| rounded qty | **none** — `roundDownStep` was a no-op because qtyStep was null |
-| attempted_qty | `1055.1842274282963` (sent verbatim to Bybit) |
-| requireQtyStep=true | **N/A pre-Phase-1** — flag did not exist yet |
-| Telegram / system_alert for `order_submit_failed` | **NOT created** (0 rows in `system_alerts` and `notification_events` for that window) — exactly the blind-spot Phase 1 closes |
+**Route hardening (`src/routes/api/public/hooks/snapshot-signal-context.ts`).**
 
-## What to expect when you replay AFTER Phase 1
+Replace the current `apikey`-based check with:
 
-If `fetchInstrumentRules` succeeds (memory-cache or direct fallback now wired):
-- `qtyStep` resolved → raw `1055.184…` rounded down to a valid step → order accepted (or rejected on a different reason, but visibly so).
-- `decision_trail` will include the rounded qty.
+```text
+const expected = process.env.SNAPSHOT_HOOK_SECRET;
+if (!expected) return json({ error: 'unconfigured' }, 503);
+const got = req.headers.get('x-snapshot-hook-secret');
+if (!got || got.length !== expected.length
+    || !timingSafeEqual(Buffer.from(got), Buffer.from(expected))) {
+  return json({ error: 'unauthorized' }, 401);
+}
+```
 
-If `fetchInstrumentRules` still returns null:
-- Executor fail-closes BEFORE submit.
-- `risk_decisions` row with `reason=instrument_rules_unavailable`.
-- `system_alerts` row, severity `critical`, category `order_submit_failed`.
-- `notification_events` row dispatched to Telegram (category now in `enabled_categories`).
-- `signals.decision_reason = order_submit_failed:instrument_rules_unavailable`.
-- `orders` row with `status=rejected`, `qty=0`, `attempted_qty` recorded in `request_payload`.
+The `apikey` / anon-key path is removed. The endpoint is no longer callable from the browser; only the DB trigger (and operator curl with the secret) can reach it.
 
-## Recommendation
+**Operator setup (one-time, two steps).**
+1. Add runtime secret `SNAPSHOT_HOOK_SECRET` (random 32+ byte token) via the secrets tool — surfaces to the route.
+2. Run a one-shot data update (insert tool):
+   - `INSERT INTO public.internal_hook_config(name, value) VALUES ('snapshot_hook_secret', '<same value>') ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = now();`
+   - `UPDATE public.app_settings SET snapshot_signal_context_url = '<https://.../api/public/hooks/snapshot-signal-context>' WHERE singleton = true;`
 
-Safe to replay. Either path is now observable end-to-end. If you want, I can pre-warm the instrument-rules cache for `BSBUSDT` via `op-bridge-smoke` or a one-off direct fetch before you hit Replay — say the word and I'll plan that as a follow-up.
+Until both halves are populated, the trigger is a silent no-op (kill switch by omission). `auto_snapshot_signal_context_enabled = false` is the explicit runtime kill switch.
+
+**Failure semantics (unchanged).** Non-trade → no-op. Disabled / URL or secret missing → no-op. Any SQL error in trigger → caught, logged to `error_log`, insert always commits. HTTP errors observable in `net._http_response` and `analytics_snapshot_runs`.
+
+**Out of scope (unchanged).** No cron. No regime automation. No execution/dispatcher/risk/sizing changes. No backfill. No edits to `snapshotSignalContext` or `replay_signal`.
+
+---
+
+## Sequencing
+
+1. Land Part 1 cosmetic fix; validate HEALTH row decision_trail no longer carries a `trade_timeframe_*` entry, trade rows still do.
+2. Land Part 2 migration + route hardening.
+3. Operator: add `SNAPSHOT_HOOK_SECRET` runtime secret, then mirror it into `internal_hook_config` and set the URL in `app_settings`.
+4. Validate: insert trade signal via `sim-inject` → snapshot row appears within seconds; insert HEALTH → no trigger fire; flip `auto_snapshot_signal_context_enabled = false` → silent; hit the route from the browser with no/invalid header → 401.
+5. Phase 2C (regime automation, screener) builds on this.

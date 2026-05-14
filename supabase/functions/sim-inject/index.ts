@@ -87,6 +87,20 @@ Deno.serve(async (req) => {
       ? { timeframe: explicitTf, source: "payload.timeframe" as const }
       : await resolveTradeTimeframe({ sb, symbol, strategy, payload });
 
+  const buildTrail = () => {
+    const trail: Array<Record<string, unknown>> = [
+      { step: "simulator_injected", outcome: "info", at: new Date().toISOString() },
+    ];
+    if (!isHealth) {
+      trail.push({
+        step: tfResolved.timeframe ? "trade_timeframe_resolved" : "trade_timeframe_unresolved",
+        outcome: "info", at: new Date().toISOString(),
+        metrics: { timeframe: tfResolved.timeframe, source: tfResolved.source },
+      });
+    }
+    return trail;
+  };
+
   const insertRow = (dk: string) => sb.from("signals").insert({
     transport, type: payload.type, action: isHealth ? "HEALTH" : finalAction,
     symbol, strategy, tag, strategy_code: code,
@@ -95,12 +109,7 @@ Deno.serve(async (req) => {
     portion, bar_time: barTime, payload, dedupe_key: dk,
     status: "queued", bypass_dedupe: bypass,
     trade_timeframe: tfResolved.timeframe,
-    decision_trail: [
-      { step: "simulator_injected", outcome: "info", at: new Date().toISOString() },
-      { step: tfResolved.timeframe ? "trade_timeframe_resolved" : "trade_timeframe_unresolved",
-        outcome: "info", at: new Date().toISOString(),
-        metrics: { timeframe: tfResolved.timeframe, source: tfResolved.source } },
-    ],
+    decision_trail: buildTrail(),
   }).select("id").maybeSingle();
 
   const first = await insertRow(dedupe);

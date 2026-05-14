@@ -144,16 +144,20 @@ Deno.serve(async (req) => {
     ? await resolveTradeTimeframe({ sb, symbol, strategy, payload: parsed.raw })
     : { timeframe: null, source: "none" as const };
 
-  const initialTrail = [
+  const initialTrail: Array<Record<string, unknown>> = [
     { step: "parser_pass", outcome: "pass", at: nowIso,
       metrics: { action, strategy_code: parsed.strategy_code ?? null, portion } },
     { step: "normalized_symbol", outcome: "info",
       metrics: { raw: parsed.raw_ticker ?? null, normalized: symbol }, at: nowIso },
     { step: "dedupe_pass", outcome: "pass", at: nowIso },
-    { step: tfResolved.timeframe ? "trade_timeframe_resolved" : "trade_timeframe_unresolved",
-      outcome: "info", at: nowIso,
-      metrics: { timeframe: tfResolved.timeframe, source: tfResolved.source } },
   ];
+  if (parsed.type === "trade") {
+    initialTrail.push({
+      step: tfResolved.timeframe ? "trade_timeframe_resolved" : "trade_timeframe_unresolved",
+      outcome: "info", at: nowIso,
+      metrics: { timeframe: tfResolved.timeframe, source: tfResolved.source },
+    });
+  }
 
   const { data: signal, error: insertErr } = await sb
     .from("signals")

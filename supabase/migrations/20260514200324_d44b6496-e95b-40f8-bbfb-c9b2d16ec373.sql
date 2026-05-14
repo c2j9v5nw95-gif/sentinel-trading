@@ -1,0 +1,1 @@
+REVOKE ALL ON FUNCTION public.trigger_snapshot_signal_context() FROM PUBLIC, anon, authenticated;
