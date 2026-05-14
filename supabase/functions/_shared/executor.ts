@@ -212,12 +212,40 @@ export async function executeEntry(
     trail.add("instrument_rules", "info", undefined, instrumentRules as Record<string, unknown>);
   }
 
+  // Fail-closed: in live/testnet we MUST know the symbol's qtyStep before sizing,
+  // otherwise the order will be a raw float and Bybit will reject with retCode
+  // 10001 ("Qty invalid"). Block here, alert operator, do not submit.
+  if ((mode === "live" || mode === "testnet") && !instrumentRules?.qtyStep) {
+    const reason = "instrument_rules_unavailable:qty_step_missing";
+    trail.add("entry_blocked_no_qty_step", "fail", reason, {
+      via: publicViaBridge ? "bridge" : "direct",
+      symbol: signal.symbol,
+    });
+    await sb.from("risk_decisions").insert({
+      signal_id: signal.id, gate: "exposure_limit", outcome: "block",
+      reason, metrics: { symbol: signal.symbol, mode, instrumentRules },
+    });
+    await sb.from("system_alerts").insert({
+      severity: "critical", category: "order_submit_failed",
+      message: `Entry blocked for ${signal.symbol} — qtyStep unavailable; order would be rejected by Bybit`,
+      context: { signal_id: signal.id, symbol: signal.symbol, mode, reason },
+    });
+    notify({
+      severity: "critical", category: "order_submit_failed",
+      execution_mode: mode, symbol: signal.symbol, side,
+      reason: `Entry blocked: qtyStep unavailable for ${signal.symbol} (Bybit instruments-info failed). Order not sent.`,
+      extra: { signal_id: signal.id, stage: "pre_submit", failure: "instrument_rules_unavailable" },
+    });
+    return { ok: false, reason };
+  }
+
   const breakdown = computeEntrySizing(effectiveSym, {
     availableBalanceUsdt: wallet.availableBalance,
     markPrice,
     qtyStep: instrumentRules?.qtyStep,
     minQty: instrumentRules?.minQty,
     symbolMaxLeverage: instrumentRules?.maxLeverage,
+    requireQtyStep: mode === "live" || mode === "testnet",
   });
   trail.add("sizing", "info", undefined, breakdown as unknown as Record<string, unknown>);
 
@@ -281,13 +309,44 @@ export async function executeEntry(
     const bybit = e instanceof BybitError
       ? { ret_code: e.retCode, ret_msg: e.retMsg, http_status: e.httpStatus, endpoint: e.endpoint, body: e.body }
       : null;
-    await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink });
+    // Build a structured decision_reason that includes Bybit's retCode/retMsg
+    // so the dashboard, signals table, and operator alert all show the actual
+    // venue-side rejection (e.g. order_submit_failed:bybit_10001:Qty invalid).
+    const reasonTail = bybit
+      ? `bybit_${bybit.ret_code}:${(bybit.ret_msg ?? "").toString().slice(0, 120)}`
+      : msg.slice(0, 160);
+    const fullReason = `order_submit_failed:${reasonTail}`;
+    await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink, bybit });
     await sb.from("error_log").insert({
       source: "executor", message: "entry_submit_failed",
-      context: { signal_id: signal.id, symbol: signal.symbol, mode, error: msg, bybit },
+      context: { signal_id: signal.id, symbol: signal.symbol, mode, error: msg, bybit, qty: breakdown.estimatedQty },
     });
-    trail.add("entry_submit_failed", "fail", msg);
-    return { ok: false, reason: `order_submit_failed:${msg.slice(0, 160)}`, position_id: posRow.id };
+    trail.add("entry_submit_failed", "fail", reasonTail, bybit ?? { error: msg });
+
+    if (mode === "live" || mode === "testnet") {
+      await sb.from("system_alerts").insert({
+        severity: "critical", category: "order_submit_failed",
+        message: `Bybit rejected entry for ${signal.symbol}: ${reasonTail}`,
+        context: { signal_id: signal.id, symbol: signal.symbol, mode, bybit, qty: breakdown.estimatedQty, error: msg },
+      });
+      notify({
+        severity: "critical", category: "order_submit_failed",
+        execution_mode: mode, symbol: signal.symbol, side,
+        qty: breakdown.estimatedQty, price: markPrice,
+        reason: `Order rejected by Bybit — ${reasonTail}`,
+        extra: {
+          signal_id: signal.id,
+          position_id: posRow.id,
+          stage: "submit",
+          ret_code: bybit?.ret_code ?? null,
+          ret_msg: bybit?.ret_msg ?? null,
+          http_status: bybit?.http_status ?? null,
+          endpoint: bybit?.endpoint ?? null,
+          attempted_qty: breakdown.estimatedQty,
+        },
+      });
+    }
+    return { ok: false, reason: fullReason, position_id: posRow.id };
   }
 
   trail.add("entry_submitted", fill.status === "filled" ? "pass" : "fail", fill.message,
@@ -298,6 +357,20 @@ export async function executeEntry(
       closed_at: new Date().toISOString(), protection_state: "closed",
     }).eq("id", posRow.id);
     await logEvent(sb, posRow.id, "entry_failed", { fill });
+    if (mode === "live" || mode === "testnet") {
+      await sb.from("system_alerts").insert({
+        severity: "critical", category: "order_submit_failed",
+        message: `Entry order for ${signal.symbol} did not fill (status=${fill.status})`,
+        context: { signal_id: signal.id, symbol: signal.symbol, mode, fill },
+      });
+      notify({
+        severity: "critical", category: "order_submit_failed",
+        execution_mode: mode, symbol: signal.symbol, side,
+        qty: breakdown.estimatedQty, price: markPrice,
+        reason: `Entry not filled — status=${fill.status}${fill.message ? `: ${fill.message}` : ""}`,
+        extra: { signal_id: signal.id, position_id: posRow.id, stage: "fill", fill_status: fill.status, fill_message: fill.message ?? null },
+      });
+    }
     return { ok: false, reason: `entry_fill_failed:${fill.status}`, position_id: posRow.id };
   }
 

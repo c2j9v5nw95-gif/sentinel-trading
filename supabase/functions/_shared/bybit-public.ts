@@ -149,28 +149,66 @@ export async function fetchLastPrice(symbol: string, opts: FetchOpts = {}): Prom
   return Number.isFinite(px) && px > 0 ? px : null;
 }
 
+// In-memory cache of instrument rules. Bybit lot/leverage filters change rarely;
+// caching dramatically reduces failure surface (egress 403s, transient 5xx) so
+// `qtyStep` is far more likely to be available when an entry is sized.
+interface InstrumentCacheEntry { rules: PublicInstrumentRules; fetched_at: number; }
+const INSTRUMENT_CACHE = new Map<string, InstrumentCacheEntry>();
+const INSTRUMENT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 export async function fetchInstrumentRules(symbol: string, opts: FetchOpts = {}): Promise<PublicInstrumentRules | null> {
   const endpoint = "/v5/market/instruments-info";
   const query = { category: "linear", symbol };
-  const via = opts.useBridge ? "bridge" : "direct";
-  const res = opts.useBridge ? await fetchViaBridge(endpoint, query) : await fetchDirect(endpoint, query);
+
+  // 1) Try preferred path first (bridge in live, direct otherwise).
+  const primaryVia: "direct" | "bridge" = opts.useBridge ? "bridge" : "direct";
+  let res = opts.useBridge ? await fetchViaBridge(endpoint, query) : await fetchDirect(endpoint, query);
+
+  // 2) On failure, try the OTHER path as a fallback before giving up.
+  // instruments-info is a public endpoint — Bybit allows it from any IP, so
+  // the direct route is a safe fallback when the bridge call fails.
   if (!res.ok) {
     if (opts.onError) {
       try {
-        await opts.onError({ symbol, endpoint, via, http_status: res.http_status, error_kind: res.error ?? "unknown", body_snippet: res.raw });
+        await opts.onError({ symbol, endpoint, via: primaryVia, http_status: res.http_status, error_kind: res.error ?? "unknown", body_snippet: res.raw });
       } catch { /* swallow */ }
     }
-    console.log(JSON.stringify({ evt: "public_instrument_fail", symbol, via, http_status: res.http_status, error: res.error, body: res.raw }));
-    return null;
+    console.log(JSON.stringify({ evt: "public_instrument_fail", symbol, via: primaryVia, http_status: res.http_status, error: res.error, body: res.raw }));
+    const fallbackVia: "direct" | "bridge" = primaryVia === "bridge" ? "direct" : "bridge";
+    const fallbackRes = fallbackVia === "bridge" ? await fetchViaBridge(endpoint, query) : await fetchDirect(endpoint, query);
+    if (fallbackRes.ok) {
+      console.log(JSON.stringify({ evt: "public_instrument_fallback_ok", symbol, primary_via: primaryVia, fallback_via: fallbackVia }));
+      res = fallbackRes;
+    } else {
+      if (opts.onError) {
+        try {
+          await opts.onError({ symbol, endpoint, via: fallbackVia, http_status: fallbackRes.http_status, error_kind: fallbackRes.error ?? "unknown", body_snippet: fallbackRes.raw });
+        } catch { /* swallow */ }
+      }
+      console.log(JSON.stringify({ evt: "public_instrument_fail", symbol, via: fallbackVia, http_status: fallbackRes.http_status, error: fallbackRes.error, body: fallbackRes.raw }));
+      // 3) Last resort: serve from in-memory cache if still fresh.
+      const cached = INSTRUMENT_CACHE.get(symbol);
+      if (cached && Date.now() - cached.fetched_at < INSTRUMENT_CACHE_TTL_MS) {
+        console.log(JSON.stringify({ evt: "public_instrument_cache_hit", symbol, age_ms: Date.now() - cached.fetched_at }));
+        return cached.rules;
+      }
+      return null;
+    }
   }
+
   const row = res.payload?.list?.[0];
   if (!row) return null;
   const qtyStep = Number(row.lotSizeFilter?.qtyStep ?? NaN);
   const minQty = Number(row.lotSizeFilter?.minOrderQty ?? NaN);
   const maxLeverage = Number(row.leverageFilter?.maxLeverage ?? NaN);
-  return {
+  const rules: PublicInstrumentRules = {
     ...(Number.isFinite(qtyStep) && qtyStep > 0 ? { qtyStep } : {}),
     ...(Number.isFinite(minQty) && minQty > 0 ? { minQty } : {}),
     ...(Number.isFinite(maxLeverage) && maxLeverage > 0 ? { maxLeverage } : {}),
   };
+  // Only cache when we have the critical field; partial rules are not safe to reuse.
+  if (rules.qtyStep) {
+    INSTRUMENT_CACHE.set(symbol, { rules, fetched_at: Date.now() });
+  }
+  return rules;
 }

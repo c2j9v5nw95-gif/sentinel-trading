@@ -30,6 +30,13 @@ export interface SizingInputs {
   qtyStep?: number;
   minQty?: number;
   symbolMaxLeverage?: number;
+  /**
+   * When true, missing/invalid `qtyStep` is treated as a hard failure:
+   * `estimatedQty` is forced to 0 and a warning is added. The caller MUST
+   * block the trade. Live/testnet executions set this to true so an
+   * unrounded float is never sent to Bybit (causes retCode 10001 Qty invalid).
+   */
+  requireQtyStep?: boolean;
 }
 
 export interface SizingBreakdown {
@@ -87,9 +94,15 @@ export function computeEntrySizing(
   const exposure = margin * leverage * multiplier;
 
   let qty = inp.markPrice > 0 ? exposure / inp.markPrice : 0;
-  qty = roundDownStep(qty, inp.qtyStep);
+  const hasQtyStep = !!(inp.qtyStep && inp.qtyStep > 0);
+  if (!hasQtyStep && inp.requireQtyStep) {
+    warnings.push("missing_qty_step:cannot_round_safely_in_live_mode");
+    qty = 0;
+  } else {
+    qty = roundDownStep(qty, inp.qtyStep);
+  }
 
-  if (inp.minQty && qty < inp.minQty) {
+  if (inp.minQty && qty > 0 && qty < inp.minQty) {
     warnings.push(`computed qty ${qty} below symbol min ${inp.minQty}`);
   }
 

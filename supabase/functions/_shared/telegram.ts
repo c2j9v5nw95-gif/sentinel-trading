@@ -19,6 +19,7 @@ export type Category =
   | "dead_letter"
   | "emergency_stop"
   | "bridge_unreachable"
+  | "order_submit_failed"
   | "test";
 
 export interface AlertPayload {
