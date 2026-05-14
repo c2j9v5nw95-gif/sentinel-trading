@@ -436,7 +436,7 @@ function AnalyticsDebugPage() {
                       <td className="px-2 py-1">{r.tf_role}</td>
                       <td className="px-2 py-1">{r.environment ?? "—"}</td>
                       <td className="px-2 py-1">{r.strategy ?? "—"}</td>
-                      <td className="px-2 py-1 max-w-md truncate font-mono">{JSON.stringify(r.payload).slice(0, 160)}</td>
+                      <td className="px-2 py-1 font-mono break-all whitespace-pre-wrap text-[10px] text-muted-foreground">{JSON.stringify(r.payload)}</td>
                     </tr>
                     {open && (
                       <tr className="border-t border-border/30 bg-muted/10">
