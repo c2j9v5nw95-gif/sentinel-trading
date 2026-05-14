@@ -1364,6 +1364,7 @@ export type Database = {
           strategy_code: string | null
           symbol: string | null
           tag: string | null
+          trade_timeframe: string | null
           transport: Database["public"]["Enums"]["transport_kind"]
           type: Database["public"]["Enums"]["signal_type"]
         }
@@ -1393,6 +1394,7 @@ export type Database = {
           strategy_code?: string | null
           symbol?: string | null
           tag?: string | null
+          trade_timeframe?: string | null
           transport: Database["public"]["Enums"]["transport_kind"]
           type: Database["public"]["Enums"]["signal_type"]
         }
@@ -1422,6 +1424,7 @@ export type Database = {
           strategy_code?: string | null
           symbol?: string | null
           tag?: string | null
+          trade_timeframe?: string | null
           transport?: Database["public"]["Enums"]["transport_kind"]
           type?: Database["public"]["Enums"]["signal_type"]
         }
