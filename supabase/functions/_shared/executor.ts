@@ -212,12 +212,40 @@ export async function executeEntry(
     trail.add("instrument_rules", "info", undefined, instrumentRules as Record<string, unknown>);
   }
 
+  // Fail-closed: in live/testnet we MUST know the symbol's qtyStep before sizing,
+  // otherwise the order will be a raw float and Bybit will reject with retCode
+  // 10001 ("Qty invalid"). Block here, alert operator, do not submit.
+  if ((mode === "live" || mode === "testnet") && !instrumentRules?.qtyStep) {
+    const reason = "instrument_rules_unavailable:qty_step_missing";
+    trail.add("entry_blocked_no_qty_step", "fail", reason, {
+      via: publicViaBridge ? "bridge" : "direct",
+      symbol: signal.symbol,
+    });
+    await sb.from("risk_decisions").insert({
+      signal_id: signal.id, gate: "exposure_limit", outcome: "block",
+      reason, metrics: { symbol: signal.symbol, mode, instrumentRules },
+    });
+    await sb.from("system_alerts").insert({
+      severity: "critical", category: "order_submit_failed",
+      message: `Entry blocked for ${signal.symbol} — qtyStep unavailable; order would be rejected by Bybit`,
+      context: { signal_id: signal.id, symbol: signal.symbol, mode, reason },
+    });
+    notify({
+      severity: "critical", category: "order_submit_failed",
+      execution_mode: mode, symbol: signal.symbol, side,
+      reason: `Entry blocked: qtyStep unavailable for ${signal.symbol} (Bybit instruments-info failed). Order not sent.`,
+      extra: { signal_id: signal.id, stage: "pre_submit", failure: "instrument_rules_unavailable" },
+    });
+    return { ok: false, reason };
+  }
+
   const breakdown = computeEntrySizing(effectiveSym, {
     availableBalanceUsdt: wallet.availableBalance,
     markPrice,
     qtyStep: instrumentRules?.qtyStep,
     minQty: instrumentRules?.minQty,
     symbolMaxLeverage: instrumentRules?.maxLeverage,
+    requireQtyStep: mode === "live" || mode === "testnet",
   });
   trail.add("sizing", "info", undefined, breakdown as unknown as Record<string, unknown>);
 
