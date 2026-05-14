@@ -8,6 +8,7 @@
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { BybitRest, BybitError } from "../_shared/bybit-rest.ts";
+import { BridgeBybitRest, bridgeConfigured } from "../_shared/bridge-rest.ts";
 
 type SnapshotRow = {
   source: "paper" | "live";
@@ -64,22 +65,23 @@ async function snapshotLive(): Promise<SnapshotRow | null> {
   const apiSecret = Deno.env.get("BYBIT_LIVE_API_SECRET") ?? "";
   if (!apiKey || !apiSecret) return null;
 
-  const rest = new BybitRest({
-    apiKey, apiSecret,
-    baseUrl: "https://api.bybit.com",
-    recvWindowMs: 5000,
-  });
+  // Prefer the bridge — Edge egress IP isn't whitelisted on Bybit (retCode 10010).
+  const rest = bridgeConfigured()
+    ? new BridgeBybitRest({
+        bridgeUrl: Deno.env.get("EXECUTION_BRIDGE_URL")!,
+        bridgeSecret: Deno.env.get("EXECUTION_BRIDGE_SECRET")!,
+        label: "analytics-snapshot-balances",
+      })
+    : new BybitRest({
+        apiKey, apiSecret,
+        baseUrl: "https://api.bybit.com",
+        recvWindowMs: 5000,
+      });
 
   try {
-    let accountMode = "unknown";
-    try {
-      const info = await rest.request({ endpoint: "/v5/account/info", method: "GET" });
-      const r = (info as any).result ?? {};
-      accountMode = r.unifiedMarginStatus
-        ? `unified:${r.unifiedMarginStatus}`
-        : (r.marginMode ?? "unknown");
-    } catch { /* non-fatal */ }
-
+    // Note: /v5/account/info is intentionally NOT called — it is not
+    // bridge-allowlisted. account_mode is derived from the wallet-balance
+    // response below.
     let walletRaw: any;
     try {
       walletRaw = await rest.request({
@@ -97,6 +99,11 @@ async function snapshotLive(): Promise<SnapshotRow | null> {
     const coins: any[] = acct.coin ?? [];
     const usdt = coins.find((c) => c.coin === "USDT") ?? {};
 
+    const accountType: string | null = acct.accountType ?? null;
+    const accountMode = accountType
+      ? (accountType === "UNIFIED" ? "unified" : accountType.toLowerCase())
+      : "unknown";
+
     return {
       source: "live",
       total_equity: num(acct.totalEquity ?? usdt.equity),
@@ -109,7 +116,7 @@ async function snapshotLive(): Promise<SnapshotRow | null> {
         acct.totalInitialMargin ?? acct.totalMaintenanceMargin ?? usdt.totalPositionIM,
       ),
       account_mode: accountMode,
-      raw: { account_type: acct.accountType ?? null, info_account_mode: accountMode },
+      raw: { account_type: accountType, transport: bridgeConfigured() ? "bridge" : "direct" },
       error: null,
     };
   } catch (e) {
