@@ -30,6 +30,13 @@ export interface SizingInputs {
   qtyStep?: number;
   minQty?: number;
   symbolMaxLeverage?: number;
+  /**
+   * When true, missing/invalid `qtyStep` is treated as a hard failure:
+   * `estimatedQty` is forced to 0 and a warning is added. The caller MUST
+   * block the trade. Live/testnet executions set this to true so an
+   * unrounded float is never sent to Bybit (causes retCode 10001 Qty invalid).
+   */
+  requireQtyStep?: boolean;
 }
 
 export interface SizingBreakdown {
