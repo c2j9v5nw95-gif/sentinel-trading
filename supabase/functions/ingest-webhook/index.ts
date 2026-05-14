@@ -11,6 +11,7 @@ import { normalizeSymbol } from "../_shared/normalize.ts";
 import { resolveStrategyCode, actionFor } from "../_shared/strategy-map.ts";
 import { buildDedupeKey } from "../_shared/dedupe.ts";
 import { notify } from "../_shared/telegram.ts";
+import { resolveTradeTimeframe } from "../_shared/timeframe-resolver.ts";
 
 const UNAUTH_ALERT_THRESHOLD = 5;
 const UNAUTH_ALERT_WINDOW_MIN = 10;
@@ -138,12 +139,20 @@ Deno.serve(async (req) => {
 
   const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
   const nowIso = new Date().toISOString();
+
+  const tfResolved = parsed.type === "trade"
+    ? await resolveTradeTimeframe({ sb, symbol, strategy, payload: parsed.raw })
+    : { timeframe: null, source: "none" as const };
+
   const initialTrail = [
     { step: "parser_pass", outcome: "pass", at: nowIso,
       metrics: { action, strategy_code: parsed.strategy_code ?? null, portion } },
     { step: "normalized_symbol", outcome: "info",
       metrics: { raw: parsed.raw_ticker ?? null, normalized: symbol }, at: nowIso },
     { step: "dedupe_pass", outcome: "pass", at: nowIso },
+    { step: tfResolved.timeframe ? "trade_timeframe_resolved" : "trade_timeframe_unresolved",
+      outcome: "info", at: nowIso,
+      metrics: { timeframe: tfResolved.timeframe, source: tfResolved.source } },
   ];
 
   const { data: signal, error: insertErr } = await sb
@@ -165,6 +174,7 @@ Deno.serve(async (req) => {
       status: "queued",
       request_id: requestId,
       decision_trail: initialTrail,
+      trade_timeframe: tfResolved.timeframe,
     })
     .select("id")
     .maybeSingle();
