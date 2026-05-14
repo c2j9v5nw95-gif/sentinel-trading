@@ -8,6 +8,7 @@
 
 import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { BybitRest, BybitError } from "../_shared/bybit-rest.ts";
+import { BridgeBybitRest, bridgeConfigured } from "../_shared/bridge-rest.ts";
 
 type SnapshotRow = {
   source: "paper" | "live";
