@@ -85,6 +85,11 @@ Deno.serve(async (req) => {
       acct.totalInitialMargin ?? acct.totalMaintenanceMargin ?? usdt.totalPositionIM,
     );
 
+    const accountType: string | null = acct.accountType ?? null;
+    const accountMode = accountType
+      ? (accountType === "UNIFIED" ? "unified" : accountType.toLowerCase())
+      : "unknown";
+
     return json({
       ok: true,
       account_mode: accountMode,
