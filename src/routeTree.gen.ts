@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MIndexRouteImport } from './routes/m.index'
+import { Route as MPulseRouteImport } from './routes/m.pulse'
 import { Route as AppSymbolsRouteImport } from './routes/_app.symbols'
 import { Route as AppStrategiesRouteImport } from './routes/_app.strategies'
 import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
@@ -52,6 +53,11 @@ const IndexRoute = IndexRouteImport.update({
 const MIndexRoute = MIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => MRoute,
+} as any)
+const MPulseRoute = MPulseRouteImport.update({
+  id: '/pulse',
+  path: '/pulse',
   getParentRoute: () => MRoute,
 } as any)
 const AppSymbolsRoute = AppSymbolsRouteImport.update({
@@ -148,6 +154,7 @@ export interface FileRoutesByFullPath {
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
+  '/m/pulse': typeof MPulseRoute
   '/m/': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
@@ -168,6 +175,7 @@ export interface FileRoutesByTo {
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
+  '/m/pulse': typeof MPulseRoute
   '/m': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
@@ -191,6 +199,7 @@ export interface FileRoutesById {
   '/_app/simulator': typeof AppSimulatorRoute
   '/_app/strategies': typeof AppStrategiesRoute
   '/_app/symbols': typeof AppSymbolsRoute
+  '/m/pulse': typeof MPulseRoute
   '/m/': typeof MIndexRoute
   '/_app/symbols_/$symbol': typeof AppSymbolsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/simulator'
     | '/strategies'
     | '/symbols'
+    | '/m/pulse'
     | '/m/'
     | '/symbols/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
@@ -234,6 +244,7 @@ export interface FileRouteTypes {
     | '/simulator'
     | '/strategies'
     | '/symbols'
+    | '/m/pulse'
     | '/m'
     | '/symbols/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
@@ -256,6 +267,7 @@ export interface FileRouteTypes {
     | '/_app/simulator'
     | '/_app/strategies'
     | '/_app/symbols'
+    | '/m/pulse'
     | '/m/'
     | '/_app/symbols_/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
@@ -306,6 +318,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/m/'
       preLoaderRoute: typeof MIndexRouteImport
+      parentRoute: typeof MRoute
+    }
+    '/m/pulse': {
+      id: '/m/pulse'
+      path: '/pulse'
+      fullPath: '/m/pulse'
+      preLoaderRoute: typeof MPulseRouteImport
       parentRoute: typeof MRoute
     }
     '/_app/symbols': {
@@ -451,10 +470,12 @@ const AppRouteChildren: AppRouteChildren = {
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface MRouteChildren {
+  MPulseRoute: typeof MPulseRoute
   MIndexRoute: typeof MIndexRoute
 }
 
 const MRouteChildren: MRouteChildren = {
+  MPulseRoute: MPulseRoute,
   MIndexRoute: MIndexRoute,
 }
 
@@ -472,3 +493,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
