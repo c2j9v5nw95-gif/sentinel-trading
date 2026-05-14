@@ -36,11 +36,71 @@ function Card({ title, children, right }: { title: string; children: React.React
 
 function Pre({ value }: { value: unknown }) {
   return (
-    <pre className="max-h-64 overflow-auto rounded-md bg-muted/40 p-2 text-[11px] text-foreground">
+    <pre className="max-h-96 overflow-auto rounded-md bg-muted/40 p-2 text-[11px] text-foreground">
       {JSON.stringify(value, null, 2)}
     </pre>
   );
 }
+
+function fmtVal(v: unknown, d = 2): string {
+  if (v == null) return "—";
+  if (typeof v === "number") return Number.isFinite(v) ? v.toFixed(d) : "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
+}
+
+function KV({ items }: { items: Array<[string, unknown, number?]> }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] sm:grid-cols-3 md:grid-cols-4">
+      {items.map(([k, v, d]) => (
+        <div key={k} className="flex items-baseline justify-between gap-2 border-b border-border/30 py-0.5">
+          <span className="text-muted-foreground">{k}</span>
+          <span className="font-mono text-foreground">{fmtVal(v, d ?? 4)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TfSourceBadge({ source, hasTf }: { source: unknown; hasTf: boolean }) {
+  if (!hasTf) {
+    return (
+      <span className="ml-1 inline-block rounded border border-dashed border-border px-1 py-0 text-[9px] text-muted-foreground">
+        none
+      </span>
+    );
+  }
+  const s = typeof source === "string" ? source : "payload";
+  if (s === "health_snapshot") {
+    return (
+      <span className="ml-1 inline-block rounded bg-warning/20 px-1 py-0 text-[9px] text-warning">
+        health
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1 inline-block rounded bg-muted px-1 py-0 text-[9px] text-muted-foreground">
+      {s}
+    </span>
+  );
+}
+
+const TRADE_FIELDS: Array<[string, number?]> = [
+  ["regime_class", 0], ["tf_source", 0],
+  ["atr", 6], ["atr_pct", 4],
+  ["candle_range_pct", 4], ["rel_volume_20", 3],
+  ["ema20", 6], ["ema50", 6],
+  ["ema200", 6], ["ema_slope_pct", 4],
+  ["dist_from_ema50_pct", 4], ["rsi14", 2],
+  ["adx14", 2], ["volume", 2],
+];
+
+const CONTEXT_FIELDS: Array<[string, number?]> = [
+  ["regime_class", 0], ["ema_slope_pct", 4],
+  ["adx14", 2], ["atr_pct", 4],
+  ["rel_volume_20", 3], ["dist_from_ema50_pct", 4],
+];
 
 function ResponseBlock({ resp, busy }: { resp: EndpointResponse | null; busy: boolean }) {
   if (busy) return <div className="text-xs text-muted-foreground">Running…</div>;
