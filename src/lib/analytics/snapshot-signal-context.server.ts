@@ -85,14 +85,14 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
 
   const { data: signal, error: sigErr } = await supabaseAdmin
     .from('signals')
-    .select('id, symbol, strategy, tag, type, payload, received_at, bar_time')
+    .select('id, symbol, strategy, tag, type, payload, received_at, bar_time, trade_timeframe')
     .eq('id', signalId)
     .maybeSingle();
   if (sigErr || !signal) {
     result.errors.push({ kind: 'signal_not_found' });
     return result;
   }
-  const sig = signal as unknown as SignalRow;
+  const sig = signal as unknown as SignalRow & { trade_timeframe: string | null };
   if (sig.type !== 'trade') {
     result.ok = true; result.skipped = 'meta_signal';
     return result;
@@ -104,9 +104,17 @@ export async function snapshotSignalContext(signalId: string): Promise<SignalCon
 
   const run = await openRun('signal_context');
 
-  const rawTf = (sig.payload?.timeframe ?? sig.payload?.interval ?? null) as unknown;
-  let tradeTf = resolveTimeframe(rawTf);
-  let tfSource: 'payload' | 'health_snapshot' | null = tradeTf ? 'payload' : null;
+  // Canonical source: signals.trade_timeframe (stamped at ingest).
+  // Fall back to legacy payload/health re-resolution only for older rows
+  // that pre-date the column being populated.
+  let tradeTf: Timeframe | null = isTimeframe(sig.trade_timeframe) ? sig.trade_timeframe : null;
+  let tfSource: 'signals_column' | 'payload' | 'health_snapshot' | null =
+    tradeTf ? 'signals_column' : null;
+  if (!tradeTf) {
+    const rawTf = (sig.payload?.timeframe ?? sig.payload?.interval ?? null) as unknown;
+    tradeTf = resolveTimeframe(rawTf);
+    if (tradeTf) tfSource = 'payload';
+  }
   if (!tradeTf) {
     const fallback = await resolveTimeframeFromHealth(
       sig.symbol,
