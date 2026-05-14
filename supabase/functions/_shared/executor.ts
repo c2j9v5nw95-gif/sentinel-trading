@@ -309,13 +309,44 @@ export async function executeEntry(
     const bybit = e instanceof BybitError
       ? { ret_code: e.retCode, ret_msg: e.retMsg, http_status: e.httpStatus, endpoint: e.endpoint, body: e.body }
       : null;
-    await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink });
+    // Build a structured decision_reason that includes Bybit's retCode/retMsg
+    // so the dashboard, signals table, and operator alert all show the actual
+    // venue-side rejection (e.g. order_submit_failed:bybit_10001:Qty invalid).
+    const reasonTail = bybit
+      ? `bybit_${bybit.ret_code}:${(bybit.ret_msg ?? "").toString().slice(0, 120)}`
+      : msg.slice(0, 160);
+    const fullReason = `order_submit_failed:${reasonTail}`;
+    await logEvent(sb, posRow.id, "entry_submit_failed", { error: msg, orderLink, bybit });
     await sb.from("error_log").insert({
       source: "executor", message: "entry_submit_failed",
-      context: { signal_id: signal.id, symbol: signal.symbol, mode, error: msg, bybit },
+      context: { signal_id: signal.id, symbol: signal.symbol, mode, error: msg, bybit, qty: breakdown.estimatedQty },
     });
-    trail.add("entry_submit_failed", "fail", msg);
-    return { ok: false, reason: `order_submit_failed:${msg.slice(0, 160)}`, position_id: posRow.id };
+    trail.add("entry_submit_failed", "fail", reasonTail, bybit ?? { error: msg });
+
+    if (mode === "live" || mode === "testnet") {
+      await sb.from("system_alerts").insert({
+        severity: "critical", category: "order_submit_failed",
+        message: `Bybit rejected entry for ${signal.symbol}: ${reasonTail}`,
+        context: { signal_id: signal.id, symbol: signal.symbol, mode, bybit, qty: breakdown.estimatedQty, error: msg },
+      });
+      notify({
+        severity: "critical", category: "order_submit_failed",
+        execution_mode: mode, symbol: signal.symbol, side,
+        qty: breakdown.estimatedQty, price: markPrice,
+        reason: `Order rejected by Bybit — ${reasonTail}`,
+        extra: {
+          signal_id: signal.id,
+          position_id: posRow.id,
+          stage: "submit",
+          ret_code: bybit?.ret_code ?? null,
+          ret_msg: bybit?.ret_msg ?? null,
+          http_status: bybit?.http_status ?? null,
+          endpoint: bybit?.endpoint ?? null,
+          attempted_qty: breakdown.estimatedQty,
+        },
+      });
+    }
+    return { ok: false, reason: fullReason, position_id: posRow.id };
   }
 
   trail.add("entry_submitted", fill.status === "filled" ? "pass" : "fail", fill.message,
