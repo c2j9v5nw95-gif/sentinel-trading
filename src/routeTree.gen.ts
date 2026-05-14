@@ -9,9 +9,14 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as MRouteImport } from './routes/m'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MIndexRouteImport } from './routes/m.index'
+import { Route as MPulseRouteImport } from './routes/m.pulse'
+import { Route as MPositionsRouteImport } from './routes/m.positions'
+import { Route as MAlertsRouteImport } from './routes/m.alerts'
 import { Route as AppSymbolsRouteImport } from './routes/_app.symbols'
 import { Route as AppStrategiesRouteImport } from './routes/_app.strategies'
 import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
@@ -24,10 +29,16 @@ import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAnalyticsDebugRouteImport } from './routes/_app.analytics-debug'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
+import { Route as MPositionsSymbolRouteImport } from './routes/m.positions_.$symbol'
 import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$symbol'
 import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './routes/api/public/hooks/snapshot-signal-context'
 import { Route as ApiPublicHooksSnapshotRegimeTickRouteImport } from './routes/api/public/hooks/snapshot-regime-tick'
 
+const MRoute = MRouteImport.update({
+  id: '/m',
+  path: '/m',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -41,6 +52,26 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const MIndexRoute = MIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => MRoute,
+} as any)
+const MPulseRoute = MPulseRouteImport.update({
+  id: '/pulse',
+  path: '/pulse',
+  getParentRoute: () => MRoute,
+} as any)
+const MPositionsRoute = MPositionsRouteImport.update({
+  id: '/positions',
+  path: '/positions',
+  getParentRoute: () => MRoute,
+} as any)
+const MAlertsRoute = MAlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
+  getParentRoute: () => MRoute,
 } as any)
 const AppSymbolsRoute = AppSymbolsRouteImport.update({
   id: '/symbols',
@@ -102,6 +133,11 @@ const AppAlertsRoute = AppAlertsRouteImport.update({
   path: '/alerts',
   getParentRoute: () => AppRoute,
 } as any)
+const MPositionsSymbolRoute = MPositionsSymbolRouteImport.update({
+  id: '/positions_/$symbol',
+  path: '/positions/$symbol',
+  getParentRoute: () => MRoute,
+} as any)
 const AppSymbolsSymbolRoute = AppSymbolsSymbolRouteImport.update({
   id: '/symbols_/$symbol',
   path: '/symbols/$symbol',
@@ -123,6 +159,7 @@ const ApiPublicHooksSnapshotRegimeTickRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/m': typeof MRouteWithChildren
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
@@ -135,7 +172,12 @@ export interface FileRoutesByFullPath {
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
+  '/m/alerts': typeof MAlertsRoute
+  '/m/positions': typeof MPositionsRoute
+  '/m/pulse': typeof MPulseRoute
+  '/m/': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/m/positions/$symbol': typeof MPositionsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
   '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
 }
@@ -154,7 +196,12 @@ export interface FileRoutesByTo {
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
+  '/m/alerts': typeof MAlertsRoute
+  '/m/positions': typeof MPositionsRoute
+  '/m/pulse': typeof MPulseRoute
+  '/m': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/m/positions/$symbol': typeof MPositionsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
   '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
 }
@@ -163,6 +210,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/m': typeof MRouteWithChildren
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
   '/_app/audit': typeof AppAuditRoute
@@ -175,7 +223,12 @@ export interface FileRoutesById {
   '/_app/simulator': typeof AppSimulatorRoute
   '/_app/strategies': typeof AppStrategiesRoute
   '/_app/symbols': typeof AppSymbolsRoute
+  '/m/alerts': typeof MAlertsRoute
+  '/m/positions': typeof MPositionsRoute
+  '/m/pulse': typeof MPulseRoute
+  '/m/': typeof MIndexRoute
   '/_app/symbols_/$symbol': typeof AppSymbolsSymbolRoute
+  '/m/positions_/$symbol': typeof MPositionsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
   '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
 }
@@ -184,6 +237,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/m'
     | '/alerts'
     | '/analytics-debug'
     | '/audit'
@@ -196,7 +250,12 @@ export interface FileRouteTypes {
     | '/simulator'
     | '/strategies'
     | '/symbols'
+    | '/m/alerts'
+    | '/m/positions'
+    | '/m/pulse'
+    | '/m/'
     | '/symbols/$symbol'
+    | '/m/positions/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
     | '/api/public/hooks/snapshot-signal-context'
   fileRoutesByTo: FileRoutesByTo
@@ -215,7 +274,12 @@ export interface FileRouteTypes {
     | '/simulator'
     | '/strategies'
     | '/symbols'
+    | '/m/alerts'
+    | '/m/positions'
+    | '/m/pulse'
+    | '/m'
     | '/symbols/$symbol'
+    | '/m/positions/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
     | '/api/public/hooks/snapshot-signal-context'
   id:
@@ -223,6 +287,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_app'
     | '/login'
+    | '/m'
     | '/_app/alerts'
     | '/_app/analytics-debug'
     | '/_app/audit'
@@ -235,7 +300,12 @@ export interface FileRouteTypes {
     | '/_app/simulator'
     | '/_app/strategies'
     | '/_app/symbols'
+    | '/m/alerts'
+    | '/m/positions'
+    | '/m/pulse'
+    | '/m/'
     | '/_app/symbols_/$symbol'
+    | '/m/positions_/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
     | '/api/public/hooks/snapshot-signal-context'
   fileRoutesById: FileRoutesById
@@ -244,12 +314,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  MRoute: typeof MRouteWithChildren
   ApiPublicHooksSnapshotRegimeTickRoute: typeof ApiPublicHooksSnapshotRegimeTickRoute
   ApiPublicHooksSnapshotSignalContextRoute: typeof ApiPublicHooksSnapshotSignalContextRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/m': {
+      id: '/m'
+      path: '/m'
+      fullPath: '/m'
+      preLoaderRoute: typeof MRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -270,6 +348,34 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/m/': {
+      id: '/m/'
+      path: '/'
+      fullPath: '/m/'
+      preLoaderRoute: typeof MIndexRouteImport
+      parentRoute: typeof MRoute
+    }
+    '/m/pulse': {
+      id: '/m/pulse'
+      path: '/pulse'
+      fullPath: '/m/pulse'
+      preLoaderRoute: typeof MPulseRouteImport
+      parentRoute: typeof MRoute
+    }
+    '/m/positions': {
+      id: '/m/positions'
+      path: '/positions'
+      fullPath: '/m/positions'
+      preLoaderRoute: typeof MPositionsRouteImport
+      parentRoute: typeof MRoute
+    }
+    '/m/alerts': {
+      id: '/m/alerts'
+      path: '/alerts'
+      fullPath: '/m/alerts'
+      preLoaderRoute: typeof MAlertsRouteImport
+      parentRoute: typeof MRoute
     }
     '/_app/symbols': {
       id: '/_app/symbols'
@@ -355,6 +461,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAlertsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/m/positions_/$symbol': {
+      id: '/m/positions_/$symbol'
+      path: '/positions/$symbol'
+      fullPath: '/m/positions/$symbol'
+      preLoaderRoute: typeof MPositionsSymbolRouteImport
+      parentRoute: typeof MRoute
+    }
     '/_app/symbols_/$symbol': {
       id: '/_app/symbols_/$symbol'
       path: '/symbols/$symbol'
@@ -413,10 +526,29 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface MRouteChildren {
+  MAlertsRoute: typeof MAlertsRoute
+  MPositionsRoute: typeof MPositionsRoute
+  MPulseRoute: typeof MPulseRoute
+  MIndexRoute: typeof MIndexRoute
+  MPositionsSymbolRoute: typeof MPositionsSymbolRoute
+}
+
+const MRouteChildren: MRouteChildren = {
+  MAlertsRoute: MAlertsRoute,
+  MPositionsRoute: MPositionsRoute,
+  MPulseRoute: MPulseRoute,
+  MIndexRoute: MIndexRoute,
+  MPositionsSymbolRoute: MPositionsSymbolRoute,
+}
+
+const MRouteWithChildren = MRoute._addFileChildren(MRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  MRoute: MRouteWithChildren,
   ApiPublicHooksSnapshotRegimeTickRoute: ApiPublicHooksSnapshotRegimeTickRoute,
   ApiPublicHooksSnapshotSignalContextRoute:
     ApiPublicHooksSnapshotSignalContextRoute,
