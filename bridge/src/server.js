@@ -40,6 +40,7 @@ const ALLOWED_ENDPOINTS = new Set([
   // analytics — public GET market data only (read-only, no signing required by Bybit)
   "/v5/market/kline",
   "/v5/market/tickers",
+  "/v5/market/instruments-info",
 ]);
 
 if (!BRIDGE_SECRET) { console.error("BRIDGE_SECRET not set — refusing to start"); process.exit(1); }
