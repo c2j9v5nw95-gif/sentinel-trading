@@ -399,6 +399,7 @@ function AnalyticsDebugPage() {
           <table className="w-full text-[11px]">
             <thead className="text-muted-foreground">
               <tr>
+                <th className="w-6 px-1 py-1"></th>
                 <th className="px-2 py-1 text-left">created_at</th>
                 <th className="px-2 py-1 text-left">symbol</th>
                 <th className="px-2 py-1 text-left">tf</th>
@@ -409,17 +410,59 @@ function AnalyticsDebugPage() {
               </tr>
             </thead>
             <tbody>
-              {(ctxSnapshots.data ?? []).map((r) => (
-                <tr key={r.id} className="border-t border-border/50 align-top">
-                  <td className="px-2 py-1 font-mono">{new Date(r.created_at).toLocaleTimeString()}</td>
-                  <td className="px-2 py-1">{r.symbol}</td>
-                  <td className="px-2 py-1">{r.timeframe ?? "—"}</td>
-                  <td className="px-2 py-1">{r.tf_role}</td>
-                  <td className="px-2 py-1">{r.environment ?? "—"}</td>
-                  <td className="px-2 py-1">{r.strategy ?? "—"}</td>
-                  <td className="px-2 py-1 max-w-md truncate font-mono">{JSON.stringify(r.payload).slice(0, 160)}</td>
-                </tr>
-              ))}
+              {(ctxSnapshots.data ?? []).map((r) => {
+                const p = (r.payload ?? {}) as any;
+                const open = expandedCtx.has(r.id);
+                const isTrade = r.tf_role === "trade";
+                const fields = isTrade ? TRADE_FIELDS : CONTEXT_FIELDS;
+                return (
+                  <Fragment key={r.id}>
+                    <tr className="border-t border-border/50 align-top">
+                      <td className="px-1 py-1 text-center">
+                        <button
+                          onClick={() => toggle(expandedCtx, setExpandedCtx, r.id)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={open ? "collapse" : "expand"}
+                        >
+                          {open ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono">{new Date(r.created_at).toLocaleTimeString()}</td>
+                      <td className="px-2 py-1">{r.symbol}</td>
+                      <td className="px-2 py-1">
+                        {r.timeframe ?? "—"}
+                        <TfSourceBadge source={p.tf_source} hasTf={!!r.timeframe} />
+                      </td>
+                      <td className="px-2 py-1">{r.tf_role}</td>
+                      <td className="px-2 py-1">{r.environment ?? "—"}</td>
+                      <td className="px-2 py-1">{r.strategy ?? "—"}</td>
+                      <td className="px-2 py-1 max-w-md truncate font-mono">{JSON.stringify(r.payload).slice(0, 160)}</td>
+                    </tr>
+                    {open && (
+                      <tr className="border-t border-border/30 bg-muted/10">
+                        <td></td>
+                        <td colSpan={7} className="px-2 py-3">
+                          <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            {isTrade ? "Trade row detail" : "Context row detail"}
+                            {r.bar_time && (
+                              <span className="ml-2 normal-case text-muted-foreground">
+                                · bar_time: <span className="font-mono">{new Date(r.bar_time).toLocaleString()}</span>
+                              </span>
+                            )}
+                          </div>
+                          <KV items={fields.map(([k, d]) => [k, p[k], d])} />
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                              Raw JSON
+                            </summary>
+                            <div className="mt-2"><Pre value={r.payload} /></div>
+                          </details>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -430,6 +473,7 @@ function AnalyticsDebugPage() {
           <table className="w-full text-[11px]">
             <thead className="text-muted-foreground">
               <tr>
+                <th className="w-6 px-1 py-1"></th>
                 <th className="px-2 py-1 text-left">captured_at</th>
                 <th className="px-2 py-1 text-left">symbol</th>
                 <th className="px-2 py-1 text-left">tf</th>
@@ -444,17 +488,45 @@ function AnalyticsDebugPage() {
               {(regimeSnapshots.data ?? []).map((r) => {
                 const p = (r.payload ?? {}) as any;
                 const fmt = (v: unknown, d = 2) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "—");
+                const open = expandedRegime.has(r.id);
                 return (
-                  <tr key={r.id} className="border-t border-border/50">
-                    <td className="px-2 py-1 font-mono">{new Date(r.captured_at).toLocaleTimeString()}</td>
-                    <td className="px-2 py-1">{r.symbol}</td>
-                    <td className="px-2 py-1">{r.timeframe}</td>
-                    <td className="px-2 py-1">{r.regime_class ?? "—"}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.atr_pct)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.adx14, 1)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.ema_slope_pct)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.rel_volume_20)}</td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr className="border-t border-border/50">
+                      <td className="px-1 py-1 text-center">
+                        <button
+                          onClick={() => toggle(expandedRegime, setExpandedRegime, r.id)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={open ? "collapse" : "expand"}
+                        >
+                          {open ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono">{new Date(r.captured_at).toLocaleTimeString()}</td>
+                      <td className="px-2 py-1">{r.symbol}</td>
+                      <td className="px-2 py-1">{r.timeframe}</td>
+                      <td className="px-2 py-1">{r.regime_class ?? "—"}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.atr_pct)}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.adx14, 1)}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.ema_slope_pct)}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.rel_volume_20)}</td>
+                    </tr>
+                    {open && (
+                      <tr className="border-t border-border/30 bg-muted/10">
+                        <td></td>
+                        <td colSpan={8} className="px-2 py-3">
+                          <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Regime snapshot payload
+                            {r.bar_time && (
+                              <span className="ml-2 normal-case">
+                                · bar_time: <span className="font-mono">{new Date(r.bar_time).toLocaleString()}</span>
+                              </span>
+                            )}
+                          </div>
+                          <Pre value={r.payload} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
