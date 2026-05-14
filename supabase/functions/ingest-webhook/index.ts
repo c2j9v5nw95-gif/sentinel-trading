@@ -11,6 +11,7 @@ import { normalizeSymbol } from "../_shared/normalize.ts";
 import { resolveStrategyCode, actionFor } from "../_shared/strategy-map.ts";
 import { buildDedupeKey } from "../_shared/dedupe.ts";
 import { notify } from "../_shared/telegram.ts";
+import { resolveTradeTimeframe } from "../_shared/timeframe-resolver.ts";
 
 const UNAUTH_ALERT_THRESHOLD = 5;
 const UNAUTH_ALERT_WINDOW_MIN = 10;
