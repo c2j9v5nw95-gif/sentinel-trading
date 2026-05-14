@@ -17,6 +17,7 @@ import { serviceClient, corsHeaders } from "../_shared/db.ts";
 import { resolveStrategyCode, actionFor } from "../_shared/strategy-map.ts";
 import { buildDedupeKey } from "../_shared/dedupe.ts";
 import { normalizeSymbol } from "../_shared/normalize.ts";
+import { resolveTradeTimeframe, normalizeTimeframe } from "../_shared/timeframe-resolver.ts";
 
 const STRATEGY_CODE_FOR: Record<string, string> = {
   "ENTER-LONG": "EL1", "ENTER-SHORT": "ES1",
