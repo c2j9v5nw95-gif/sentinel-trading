@@ -357,6 +357,20 @@ export async function executeEntry(
       closed_at: new Date().toISOString(), protection_state: "closed",
     }).eq("id", posRow.id);
     await logEvent(sb, posRow.id, "entry_failed", { fill });
+    if (mode === "live" || mode === "testnet") {
+      await sb.from("system_alerts").insert({
+        severity: "critical", category: "order_submit_failed",
+        message: `Entry order for ${signal.symbol} did not fill (status=${fill.status})`,
+        context: { signal_id: signal.id, symbol: signal.symbol, mode, fill },
+      });
+      notify({
+        severity: "critical", category: "order_submit_failed",
+        execution_mode: mode, symbol: signal.symbol, side,
+        qty: breakdown.estimatedQty, price: markPrice,
+        reason: `Entry not filled — status=${fill.status}${fill.message ? `: ${fill.message}` : ""}`,
+        extra: { signal_id: signal.id, position_id: posRow.id, stage: "fill", fill_status: fill.status, fill_message: fill.message ?? null },
+      });
+    }
     return { ok: false, reason: `entry_fill_failed:${fill.status}`, position_id: posRow.id };
   }
 
