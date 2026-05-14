@@ -83,6 +83,7 @@ export type Database = {
       app_settings: {
         Row: {
           auto_pause_on_critical_invariant: boolean
+          auto_snapshot_signal_context_enabled: boolean
           chaos_config: Json
           created_at: string
           dedupe_window_seconds: number
@@ -114,6 +115,7 @@ export type Database = {
           paper_slippage_bps: number
           paper_starting_balance_usdt: number
           singleton: boolean
+          snapshot_signal_context_url: string | null
           testnet_enabled: boolean
           testnet_validated_at: string | null
           updated_at: string
@@ -124,6 +126,7 @@ export type Database = {
         }
         Insert: {
           auto_pause_on_critical_invariant?: boolean
+          auto_snapshot_signal_context_enabled?: boolean
           chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
@@ -155,6 +158,7 @@ export type Database = {
           paper_slippage_bps?: number
           paper_starting_balance_usdt?: number
           singleton?: boolean
+          snapshot_signal_context_url?: string | null
           testnet_enabled?: boolean
           testnet_validated_at?: string | null
           updated_at?: string
@@ -165,6 +169,7 @@ export type Database = {
         }
         Update: {
           auto_pause_on_critical_invariant?: boolean
+          auto_snapshot_signal_context_enabled?: boolean
           chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
@@ -196,6 +201,7 @@ export type Database = {
           paper_slippage_bps?: number
           paper_starting_balance_usdt?: number
           singleton?: boolean
+          snapshot_signal_context_url?: string | null
           testnet_enabled?: boolean
           testnet_validated_at?: string | null
           updated_at?: string
@@ -675,6 +681,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      internal_hook_config: {
+        Row: {
+          name: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          name: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          name?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
       }
       invariant_runs: {
         Row: {
