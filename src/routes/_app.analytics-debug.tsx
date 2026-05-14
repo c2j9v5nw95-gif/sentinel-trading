@@ -211,6 +211,14 @@ function AnalyticsDebugPage() {
   const [regimeResp, setRegimeResp] = useState<EndpointResponse | null>(null);
   const [regimeBusy, setRegimeBusy] = useState(false);
 
+  const [expandedCtx, setExpandedCtx] = useState<Set<string>>(new Set());
+  const [expandedRegime, setExpandedRegime] = useState<Set<string>>(new Set());
+  const toggle = (set: Set<string>, setSet: (s: Set<string>) => void, id: string) => {
+    const n = new Set(set);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    setSet(n);
+  };
+
   const signalChoices = useMemo(() => recentSignals.data ?? [], [recentSignals.data]);
 
   async function runSignalCtx() {
