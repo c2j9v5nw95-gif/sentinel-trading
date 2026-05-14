@@ -9,9 +9,11 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as MRouteImport } from './routes/m'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MIndexRouteImport } from './routes/m.index'
 import { Route as AppSymbolsRouteImport } from './routes/_app.symbols'
 import { Route as AppStrategiesRouteImport } from './routes/_app.strategies'
 import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
@@ -28,6 +30,11 @@ import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$sy
 import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './routes/api/public/hooks/snapshot-signal-context'
 import { Route as ApiPublicHooksSnapshotRegimeTickRouteImport } from './routes/api/public/hooks/snapshot-regime-tick'
 
+const MRoute = MRouteImport.update({
+  id: '/m',
+  path: '/m',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -41,6 +48,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const MIndexRoute = MIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => MRoute,
 } as any)
 const AppSymbolsRoute = AppSymbolsRouteImport.update({
   id: '/symbols',
@@ -123,6 +135,7 @@ const ApiPublicHooksSnapshotRegimeTickRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/m': typeof MRouteWithChildren
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
@@ -135,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
+  '/m/': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
   '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
@@ -154,6 +168,7 @@ export interface FileRoutesByTo {
   '/simulator': typeof AppSimulatorRoute
   '/strategies': typeof AppStrategiesRoute
   '/symbols': typeof AppSymbolsRoute
+  '/m': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
   '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
@@ -163,6 +178,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/m': typeof MRouteWithChildren
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
   '/_app/audit': typeof AppAuditRoute
@@ -175,6 +191,7 @@ export interface FileRoutesById {
   '/_app/simulator': typeof AppSimulatorRoute
   '/_app/strategies': typeof AppStrategiesRoute
   '/_app/symbols': typeof AppSymbolsRoute
+  '/m/': typeof MIndexRoute
   '/_app/symbols_/$symbol': typeof AppSymbolsSymbolRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
   '/api/public/hooks/snapshot-signal-context': typeof ApiPublicHooksSnapshotSignalContextRoute
@@ -184,6 +201,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/m'
     | '/alerts'
     | '/analytics-debug'
     | '/audit'
@@ -196,6 +214,7 @@ export interface FileRouteTypes {
     | '/simulator'
     | '/strategies'
     | '/symbols'
+    | '/m/'
     | '/symbols/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
     | '/api/public/hooks/snapshot-signal-context'
@@ -215,6 +234,7 @@ export interface FileRouteTypes {
     | '/simulator'
     | '/strategies'
     | '/symbols'
+    | '/m'
     | '/symbols/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
     | '/api/public/hooks/snapshot-signal-context'
@@ -223,6 +243,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_app'
     | '/login'
+    | '/m'
     | '/_app/alerts'
     | '/_app/analytics-debug'
     | '/_app/audit'
@@ -235,6 +256,7 @@ export interface FileRouteTypes {
     | '/_app/simulator'
     | '/_app/strategies'
     | '/_app/symbols'
+    | '/m/'
     | '/_app/symbols_/$symbol'
     | '/api/public/hooks/snapshot-regime-tick'
     | '/api/public/hooks/snapshot-signal-context'
@@ -244,12 +266,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  MRoute: typeof MRouteWithChildren
   ApiPublicHooksSnapshotRegimeTickRoute: typeof ApiPublicHooksSnapshotRegimeTickRoute
   ApiPublicHooksSnapshotSignalContextRoute: typeof ApiPublicHooksSnapshotSignalContextRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/m': {
+      id: '/m'
+      path: '/m'
+      fullPath: '/m'
+      preLoaderRoute: typeof MRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -270,6 +300,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/m/': {
+      id: '/m/'
+      path: '/'
+      fullPath: '/m/'
+      preLoaderRoute: typeof MIndexRouteImport
+      parentRoute: typeof MRoute
     }
     '/_app/symbols': {
       id: '/_app/symbols'
@@ -413,10 +450,21 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface MRouteChildren {
+  MIndexRoute: typeof MIndexRoute
+}
+
+const MRouteChildren: MRouteChildren = {
+  MIndexRoute: MIndexRoute,
+}
+
+const MRouteWithChildren = MRoute._addFileChildren(MRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  MRoute: MRouteWithChildren,
   ApiPublicHooksSnapshotRegimeTickRoute: ApiPublicHooksSnapshotRegimeTickRoute,
   ApiPublicHooksSnapshotSignalContextRoute:
     ApiPublicHooksSnapshotSignalContextRoute,
