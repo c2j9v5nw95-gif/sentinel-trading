@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_app/analytics-debug")({
@@ -36,11 +36,71 @@ function Card({ title, children, right }: { title: string; children: React.React
 
 function Pre({ value }: { value: unknown }) {
   return (
-    <pre className="max-h-64 overflow-auto rounded-md bg-muted/40 p-2 text-[11px] text-foreground">
+    <pre className="max-h-96 overflow-auto rounded-md bg-muted/40 p-2 text-[11px] text-foreground">
       {JSON.stringify(value, null, 2)}
     </pre>
   );
 }
+
+function fmtVal(v: unknown, d = 2): string {
+  if (v == null) return "—";
+  if (typeof v === "number") return Number.isFinite(v) ? v.toFixed(d) : "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
+}
+
+function KV({ items }: { items: Array<[string, unknown, number?]> }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] sm:grid-cols-3 md:grid-cols-4">
+      {items.map(([k, v, d]) => (
+        <div key={k} className="flex items-baseline justify-between gap-2 border-b border-border/30 py-0.5">
+          <span className="text-muted-foreground">{k}</span>
+          <span className="font-mono text-foreground">{fmtVal(v, d ?? 4)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TfSourceBadge({ source, hasTf }: { source: unknown; hasTf: boolean }) {
+  if (!hasTf) {
+    return (
+      <span className="ml-1 inline-block rounded border border-dashed border-border px-1 py-0 text-[9px] text-muted-foreground">
+        none
+      </span>
+    );
+  }
+  const s = typeof source === "string" ? source : "payload";
+  if (s === "health_snapshot") {
+    return (
+      <span className="ml-1 inline-block rounded bg-warning/20 px-1 py-0 text-[9px] text-warning">
+        health
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1 inline-block rounded bg-muted px-1 py-0 text-[9px] text-muted-foreground">
+      {s}
+    </span>
+  );
+}
+
+const TRADE_FIELDS: Array<[string, number?]> = [
+  ["regime_class", 0], ["tf_source", 0],
+  ["atr", 6], ["atr_pct", 4],
+  ["candle_range_pct", 4], ["rel_volume_20", 3],
+  ["ema20", 6], ["ema50", 6],
+  ["ema200", 6], ["ema_slope_pct", 4],
+  ["dist_from_ema50_pct", 4], ["rsi14", 2],
+  ["adx14", 2], ["volume", 2],
+];
+
+const CONTEXT_FIELDS: Array<[string, number?]> = [
+  ["regime_class", 0], ["ema_slope_pct", 4],
+  ["adx14", 2], ["atr_pct", 4],
+  ["rel_volume_20", 3], ["dist_from_ema50_pct", 4],
+];
 
 function ResponseBlock({ resp, busy }: { resp: EndpointResponse | null; busy: boolean }) {
   if (busy) return <div className="text-xs text-muted-foreground">Running…</div>;
@@ -150,6 +210,14 @@ function AnalyticsDebugPage() {
   const [regimeDry, setRegimeDry] = useState(true);
   const [regimeResp, setRegimeResp] = useState<EndpointResponse | null>(null);
   const [regimeBusy, setRegimeBusy] = useState(false);
+
+  const [expandedCtx, setExpandedCtx] = useState<Set<string>>(new Set());
+  const [expandedRegime, setExpandedRegime] = useState<Set<string>>(new Set());
+  const toggle = (set: Set<string>, setSet: (s: Set<string>) => void, id: string) => {
+    const n = new Set(set);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    setSet(n);
+  };
 
   const signalChoices = useMemo(() => recentSignals.data ?? [], [recentSignals.data]);
 
@@ -331,6 +399,7 @@ function AnalyticsDebugPage() {
           <table className="w-full text-[11px]">
             <thead className="text-muted-foreground">
               <tr>
+                <th className="w-6 px-1 py-1"></th>
                 <th className="px-2 py-1 text-left">created_at</th>
                 <th className="px-2 py-1 text-left">symbol</th>
                 <th className="px-2 py-1 text-left">tf</th>
@@ -341,17 +410,59 @@ function AnalyticsDebugPage() {
               </tr>
             </thead>
             <tbody>
-              {(ctxSnapshots.data ?? []).map((r) => (
-                <tr key={r.id} className="border-t border-border/50 align-top">
-                  <td className="px-2 py-1 font-mono">{new Date(r.created_at).toLocaleTimeString()}</td>
-                  <td className="px-2 py-1">{r.symbol}</td>
-                  <td className="px-2 py-1">{r.timeframe ?? "—"}</td>
-                  <td className="px-2 py-1">{r.tf_role}</td>
-                  <td className="px-2 py-1">{r.environment ?? "—"}</td>
-                  <td className="px-2 py-1">{r.strategy ?? "—"}</td>
-                  <td className="px-2 py-1 max-w-md truncate font-mono">{JSON.stringify(r.payload).slice(0, 160)}</td>
-                </tr>
-              ))}
+              {(ctxSnapshots.data ?? []).map((r) => {
+                const p = (r.payload ?? {}) as any;
+                const open = expandedCtx.has(r.id);
+                const isTrade = r.tf_role === "trade";
+                const fields = isTrade ? TRADE_FIELDS : CONTEXT_FIELDS;
+                return (
+                  <Fragment key={r.id}>
+                    <tr className="border-t border-border/50 align-top">
+                      <td className="px-1 py-1 text-center">
+                        <button
+                          onClick={() => toggle(expandedCtx, setExpandedCtx, r.id)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={open ? "collapse" : "expand"}
+                        >
+                          {open ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono">{new Date(r.created_at).toLocaleTimeString()}</td>
+                      <td className="px-2 py-1">{r.symbol}</td>
+                      <td className="px-2 py-1">
+                        {r.timeframe ?? "—"}
+                        <TfSourceBadge source={p.tf_source} hasTf={!!r.timeframe} />
+                      </td>
+                      <td className="px-2 py-1">{r.tf_role}</td>
+                      <td className="px-2 py-1">{r.environment ?? "—"}</td>
+                      <td className="px-2 py-1">{r.strategy ?? "—"}</td>
+                      <td className="px-2 py-1 max-w-md truncate font-mono">{JSON.stringify(r.payload).slice(0, 160)}</td>
+                    </tr>
+                    {open && (
+                      <tr className="border-t border-border/30 bg-muted/10">
+                        <td></td>
+                        <td colSpan={7} className="px-2 py-3">
+                          <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            {isTrade ? "Trade row detail" : "Context row detail"}
+                            {r.bar_time && (
+                              <span className="ml-2 normal-case text-muted-foreground">
+                                · bar_time: <span className="font-mono">{new Date(r.bar_time).toLocaleString()}</span>
+                              </span>
+                            )}
+                          </div>
+                          <KV items={fields.map(([k, d]) => [k, p[k], d])} />
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                              Raw JSON
+                            </summary>
+                            <div className="mt-2"><Pre value={r.payload} /></div>
+                          </details>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -362,6 +473,7 @@ function AnalyticsDebugPage() {
           <table className="w-full text-[11px]">
             <thead className="text-muted-foreground">
               <tr>
+                <th className="w-6 px-1 py-1"></th>
                 <th className="px-2 py-1 text-left">captured_at</th>
                 <th className="px-2 py-1 text-left">symbol</th>
                 <th className="px-2 py-1 text-left">tf</th>
@@ -376,17 +488,45 @@ function AnalyticsDebugPage() {
               {(regimeSnapshots.data ?? []).map((r) => {
                 const p = (r.payload ?? {}) as any;
                 const fmt = (v: unknown, d = 2) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "—");
+                const open = expandedRegime.has(r.id);
                 return (
-                  <tr key={r.id} className="border-t border-border/50">
-                    <td className="px-2 py-1 font-mono">{new Date(r.captured_at).toLocaleTimeString()}</td>
-                    <td className="px-2 py-1">{r.symbol}</td>
-                    <td className="px-2 py-1">{r.timeframe}</td>
-                    <td className="px-2 py-1">{r.regime_class ?? "—"}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.atr_pct)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.adx14, 1)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.ema_slope_pct)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(p.rel_volume_20)}</td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr className="border-t border-border/50">
+                      <td className="px-1 py-1 text-center">
+                        <button
+                          onClick={() => toggle(expandedRegime, setExpandedRegime, r.id)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={open ? "collapse" : "expand"}
+                        >
+                          {open ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono">{new Date(r.captured_at).toLocaleTimeString()}</td>
+                      <td className="px-2 py-1">{r.symbol}</td>
+                      <td className="px-2 py-1">{r.timeframe}</td>
+                      <td className="px-2 py-1">{r.regime_class ?? "—"}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.atr_pct)}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.adx14, 1)}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.ema_slope_pct)}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.rel_volume_20)}</td>
+                    </tr>
+                    {open && (
+                      <tr className="border-t border-border/30 bg-muted/10">
+                        <td></td>
+                        <td colSpan={8} className="px-2 py-3">
+                          <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Regime snapshot payload
+                            {r.bar_time && (
+                              <span className="ml-2 normal-case">
+                                · bar_time: <span className="font-mono">{new Date(r.bar_time).toLocaleString()}</span>
+                              </span>
+                            )}
+                          </div>
+                          <Pre value={r.payload} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
