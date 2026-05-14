@@ -1,52 +1,67 @@
-## Goal
+## Verdict
 
-Eliminate the "Failed to load live wallet" 403 and ensure all live wallet/balance reads go through the execution bridge (never direct from Supabase). No execution / order / sizing logic touched.
+**The BSBUSDT failure happened BEFORE the Phase 1 deployment.**
 
-## Root cause recap
+| Event | Time (UTC, 2026-05-14) |
+|---|---|
+| BSBUSDT entry signal received | **18:45:06** |
+| Order rejected (`bybit_10001:Qty invalid`) | **18:45:17** |
+| Phase 1 migration timestamp `20260514190341` | **19:03:41** |
+| Phase 1 edge-function deploy (executor/sizing/bybit-public/telegram) | shortly after 19:03 |
 
-- `op-live-wallet` correctly uses the bridge, but its first call is `GET /v5/account/info`, which is **not on the bridge allowlist** → bridge returns 403 `endpoint_not_whitelisted` → whole function fails before it ever reaches the wallet-balance call.
-- `analytics-snapshot-balances` uses `BybitRest` **directly** (`https://api.bybit.com`) for live mode → Bybit returns `retCode 10010` (Supabase egress IP not whitelisted on the live key).
+So this is **not a regression** — it is the same class of failure Phase 1 was designed to prevent. A replay AFTER Phase 1 will exercise the new fail-closed + bridge-cache + Telegram path.
 
-## Changes
+## Evidence (signal `0c3010c8-2053-4207-9476-1208f6ce62cf`)
 
-### 1. `supabase/functions/op-live-wallet/index.ts`
+```text
+signals
+  symbol           BSBUSDT
+  type/action      trade / ENTER-SHORT
+  status           error
+  decision_reason  order_submit_failed:bybit_10001:Qty invalid
+  processed_at     18:45:19.771
 
-- Remove the `/v5/account/info` call entirely (lines ~55–60).
-- Set `account_mode` from the wallet-balance response instead: derive from `acct.accountType` (e.g. `"UNIFIED"` → `"unified"`, `"CONTRACT"` → `"contract"`); fall back to `"unknown"`.
-- Keep the existing UNIFIED-then-CONTRACT wallet-balance fallback exactly as is.
-- Keep the bridge-preferred / direct-fallback selection exactly as is.
-- No other behavior changes; response shape stays identical (`account_mode` field still populated).
+risk_decisions
+  18:45:09  gate=risk  outcome=pass  reason=all_gates_passed
+  (no qty_zero / instrument_rules_unavailable entry — pre-Phase-1)
 
-### 2. `supabase/functions/analytics-snapshot-balances/index.ts`
+orders  (single row)
+  status            rejected
+  qty               1055.1842274282963   ← raw, unrounded float
+  error_message     bybit_10001:Qty invalid
+  request_payload   { qty: 1055.1842274282963, orderType: Market, side: Sell, ... }
+  response_payload  null
 
-- In `snapshotLive()` (lines ~62–94): replace the direct `new BybitRest({...api.bybit.com...})` with the same bridge-preferred pattern used in `op-live-wallet`:
-  - `bridgeConfigured() ? new BridgeBybitRest({ bridgeUrl, bridgeSecret, label: "analytics-snapshot-balances" }) : new BybitRest({...})`
-  - Add `import { BridgeBybitRest, bridgeConfigured } from "../_shared/bridge-rest.ts";`
-- Remove the `/v5/account/info` call here too (same reason — not allowlisted, and `accountMode` can come from wallet-balance result or be left `"unknown"` since this is a snapshot writer, not a UI field).
-- Keep UNIFIED→CONTRACT fallback unchanged. Keep paper path untouched.
+system_alerts        (none in this window)
+notification_events  (none in this window)
+```
 
-### 3. Audit — confirmed no other callers need changes
+## Mapped to your checklist
 
-`rg` shows only three places hit `/v5/account/wallet-balance` or `/v5/account/info`:
-- `op-live-wallet` ✓ fixed above
-- `analytics-snapshot-balances` ✓ fixed above
-- `_shared/venue-client.ts` — already uses `BridgeBybitRest` when `mode === "live"` and bridge is configured (line 51). No change needed.
+| Field you asked for | Value found in trail |
+|---|---|
+| instrument_rules step | **not logged** — pre-Phase-1 executor didn't record `instrument_rules_unavailable` |
+| qtyStep | **not logged / null** — bridge `fetchInstrumentRules` failed silently, no field stored |
+| raw qty | `1055.1842274282963` (in `orders.qty` and `orders.request_payload.qty`) |
+| rounded qty | **none** — `roundDownStep` was a no-op because qtyStep was null |
+| attempted_qty | `1055.1842274282963` (sent verbatim to Bybit) |
+| requireQtyStep=true | **N/A pre-Phase-1** — flag did not exist yet |
+| Telegram / system_alert for `order_submit_failed` | **NOT created** (0 rows in `system_alerts` and `notification_events` for that window) — exactly the blind-spot Phase 1 closes |
 
-`op-bridge-smoke` and `op-test-bybit-connection` are diagnostic tools and out of scope.
+## What to expect when you replay AFTER Phase 1
 
-## Out of scope (per Core memory and your instructions)
+If `fetchInstrumentRules` succeeds (memory-cache or direct fallback now wired):
+- `qtyStep` resolved → raw `1055.184…` rounded down to a valid step → order accepted (or rejected on a different reason, but visibly so).
+- `decision_trail` will include the rounded qty.
 
-- No changes to executor, sizing, dispatcher, bridge routing logic, locks, risk engine, reconcile, or order submit paths.
-- Not adding `/v5/account/info` to the bridge allowlist (bridge config is yours; we simply stop calling that endpoint).
-- Not touching the Bybit live key IP whitelist (that's an exchange-side setting; bridge routing makes it unnecessary).
+If `fetchInstrumentRules` still returns null:
+- Executor fail-closes BEFORE submit.
+- `risk_decisions` row with `reason=instrument_rules_unavailable`.
+- `system_alerts` row, severity `critical`, category `order_submit_failed`.
+- `notification_events` row dispatched to Telegram (category now in `enabled_categories`).
+- `signals.decision_reason = order_submit_failed:instrument_rules_unavailable`.
+- `orders` row with `status=rejected`, `qty=0`, `attempted_qty` recorded in `request_payload`.
 
-## Verification
+## Recommendation
 
-1. Deploy `op-live-wallet` and `analytics-snapshot-balances`.
-2. Reload `/settings` (or wherever the live wallet card renders) — expect 200 with populated `total_equity`, `available_balance`, etc.
-3. Tail `op-live-wallet` logs — expect `bridge_request` for `/v5/account/wallet-balance` with `http_status: 200` and `ret_code: 0`. No more `endpoint_not_whitelisted`.
-4. Trigger `analytics-snapshot-balances` and confirm bridge transport in logs (no more `Unmatched IP` `retCode 10010`).
-
-## Risk
-
-Very low — read-only endpoints, response shape preserved, bridge path already proven by `venue-client.ts`. If `account_mode` precision matters for the Settings UI, we can add it back via a separate allowlisted call later.
+Safe to replay. Either path is now observable end-to-end. If you want, I can pre-warm the instrument-rules cache for `BSBUSDT` via `op-bridge-smoke` or a one-off direct fetch before you hit Replay — say the word and I'll plan that as a follow-up.
