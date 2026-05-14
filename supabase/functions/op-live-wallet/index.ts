@@ -52,14 +52,9 @@ Deno.serve(async (req) => {
     : new BybitRest({ apiKey, apiSecret, baseUrl: "https://api.bybit.com", recvWindowMs: 5000 });
 
   try {
-    // Account info — for accountMode
-    const info = await rest.request({ endpoint: "/v5/account/info", method: "GET" });
-    const infoR = (info as any).result ?? {};
-    const accountMode = infoR.unifiedMarginStatus
-      ? `unified:${infoR.unifiedMarginStatus}`
-      : (infoR.marginMode ?? "unknown");
-
     // Wallet — try UNIFIED first, fall back to CONTRACT
+    // (We intentionally do NOT call /v5/account/info — it is not bridge-allowlisted.
+    //  account_mode is derived from the wallet-balance response below.)
     let walletRaw: any;
     try {
       walletRaw = await rest.request({
