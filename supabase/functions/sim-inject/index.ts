@@ -65,6 +65,8 @@ Deno.serve(async (req) => {
   if (body.winrate != null) payload.winrate = Number(body.winrate);
   if (body.net_profit != null) payload.net_profit = Number(body.net_profit);
   if (body.profit_factor != null) payload.profit_factor = Number(body.profit_factor);
+  if (body.timeframe != null) payload.timeframe = String(body.timeframe);
+  if (body.interval != null) payload.interval = String(body.interval);
 
   const { data: settings } = await sb.from("app_settings")
     .select("dedupe_window_seconds").maybeSingle();
@@ -77,6 +79,14 @@ Deno.serve(async (req) => {
   const bypass = body.bypass_dedupe === true;
   const dedupe = bypass ? `${dedupeBase}|sim=${crypto.randomUUID()}` : dedupeBase;
 
+  // Explicit body.timeframe wins (priority 0); otherwise use the standard resolver.
+  const explicitTf = normalizeTimeframe(body.timeframe);
+  const tfResolved = isHealth
+    ? { timeframe: null, source: "none" as const }
+    : explicitTf
+      ? { timeframe: explicitTf, source: "payload.timeframe" as const }
+      : await resolveTradeTimeframe({ sb, symbol, strategy, payload });
+
   const insertRow = (dk: string) => sb.from("signals").insert({
     transport, type: payload.type, action: isHealth ? "HEALTH" : finalAction,
     symbol, strategy, tag, strategy_code: code,
@@ -84,7 +94,13 @@ Deno.serve(async (req) => {
     exit_reason: mapping?.exitReason ?? null,
     portion, bar_time: barTime, payload, dedupe_key: dk,
     status: "queued", bypass_dedupe: bypass,
-    decision_trail: [{ step: "simulator_injected", outcome: "info", at: new Date().toISOString() }],
+    trade_timeframe: tfResolved.timeframe,
+    decision_trail: [
+      { step: "simulator_injected", outcome: "info", at: new Date().toISOString() },
+      { step: tfResolved.timeframe ? "trade_timeframe_resolved" : "trade_timeframe_unresolved",
+        outcome: "info", at: new Date().toISOString(),
+        metrics: { timeframe: tfResolved.timeframe, source: tfResolved.source } },
+    ],
   }).select("id").maybeSingle();
 
   const first = await insertRow(dedupe);
