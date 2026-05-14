@@ -99,6 +99,11 @@ async function snapshotLive(): Promise<SnapshotRow | null> {
     const coins: any[] = acct.coin ?? [];
     const usdt = coins.find((c) => c.coin === "USDT") ?? {};
 
+    const accountType: string | null = acct.accountType ?? null;
+    const accountMode = accountType
+      ? (accountType === "UNIFIED" ? "unified" : accountType.toLowerCase())
+      : "unknown";
+
     return {
       source: "live",
       total_equity: num(acct.totalEquity ?? usdt.equity),
@@ -111,7 +116,7 @@ async function snapshotLive(): Promise<SnapshotRow | null> {
         acct.totalInitialMargin ?? acct.totalMaintenanceMargin ?? usdt.totalPositionIM,
       ),
       account_mode: accountMode,
-      raw: { account_type: acct.accountType ?? null, info_account_mode: accountMode },
+      raw: { account_type: accountType, transport: bridgeConfigured() ? "bridge" : "direct" },
       error: null,
     };
   } catch (e) {
