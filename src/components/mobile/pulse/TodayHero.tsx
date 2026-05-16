@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Sparkline } from "@/components/overview/Sparkline";
 import { fmtNum, fmtSigned, pnlTone } from "@/components/overview/format";
+import { osloDayStartISO } from "@/lib/time/oslo-day";
 
 interface OpenPos {
   side: "long" | "short";
@@ -22,14 +23,12 @@ export function TodayHero() {
   const source = settings?.live_enabled ? "live" : "paper";
 
   const { data: realized } = useQuery({
-    queryKey: ["mobile", "realized_today"],
+    queryKey: ["mobile", "realized_today_oslo"],
     queryFn: async () => {
-      const start = new Date();
-      start.setUTCHours(0, 0, 0, 0);
       const { data } = await supabase
         .from("positions")
         .select("realized_pnl")
-        .gte("closed_at", start.toISOString())
+        .gte("closed_at", osloDayStartISO())
         .not("closed_at", "is", null);
       return (data ?? []).reduce((s, r) => s + Number(r.realized_pnl ?? 0), 0);
     },
