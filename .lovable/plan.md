@@ -1,42 +1,36 @@
+## Mål
 
-## Problem
+Endre "i dag"-grensen i de to kortene som i dag bruker UTC-midnatt, slik at de speiler din lokale dag (Europe/Oslo). Alt annet rører jeg ikke — individuelle tidsstempler vises allerede i din nettlesertid (Oslo), DB lagrer fortsatt UTC, og TradingView-embeddingen lar jeg stå.
 
-Live ENTER-signaler blir avvist med `exec_rejected:instrument_rules_unavailable:qty_step_missing` for symboler der bridge ikke har cachet instrument-reglene (sett på `BSBUSDT`, også `ZECUSDT`).
+## Hva endres
 
-`error_log` viser at:
-- Bridge svarer `403 endpoint_not_whitelisted` for `/v5/market/instruments-info`
-- Direkte fallback fra edge-runtime treffer Bybit CloudFront og får `403` (geo-blokk)
+### 1. `src/components/overview/RealizedPnLTodayCard.tsx`
+- Erstatt `start.setUTCHours(0,0,0,0)` med et helper-kall som returnerer ISO-strengen for **00:00 Europe/Oslo i dag** (regnet om til UTC før vi sender til databasen).
+- Oppdater label fra `"Realized PnL · today (UTC)"` → `"Realized PnL · today (Oslo)"`.
+- Oppdater sub-tekst fra `"… closed since 00:00 UTC"` → `"… closed since 00:00 Oslo"`.
+- Legg `"today_oslo"` inn i `queryKey` så cachen ikke kolliderer med en eventuell gammel verdi.
 
-Resultatet er at `executor.ts` (linje 218) gjør riktig fail-closed: uten `qtyStep` ville Bybit avvise ordren med retCode 10001, så signalet stoppes pre-submit. Koden i executor er korrekt — det er bridge-allowlisten som er mangelfull.
+### 2. `src/components/mobile/pulse/TodayHero.tsx`
+- Samme bytte for `start.setUTCHours(0,0,0,0)` → Oslo-midnatt helper.
+- Ingen synlig label endres her (kortet sier bare "Today"), bare grensen.
 
-`bridge/src/server.js` `ALLOWED_ENDPOINTS` inneholder kun `/v5/market/kline` og `/v5/market/tickers` for public data. `/v5/market/instruments-info` brukes av `fetchInstrumentRules` men er aldri whitelistet.
-
-## Endring
-
-**Én linje** i `bridge/src/server.js`, i `ALLOWED_ENDPOINTS`-settet:
-
-```js
-"/v5/market/kline",
-"/v5/market/tickers",
-"/v5/market/instruments-info",   // <— legg til
+### 3. Ny liten helper: `src/lib/time/oslo-day.ts`
+```ts
+// Returns ISO timestamp (UTC) for 00:00 Europe/Oslo of "today".
+// Uses Intl with timeZone to find the current Oslo Y-M-D, then converts back.
+export function osloDayStartISO(now = new Date()): string { ... }
 ```
+Implementasjonen bruker `Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Oslo', year/month/day })` for å finne dagens Oslo-dato, og bygger så et UTC-tidspunkt for 00:00 i den tidssonen ved å beregne offset via `Intl` (håndterer både CET +01:00 og CEST +02:00 automatisk, inkludert sommertid-overgang).
 
-`fetchInstrumentRules` i `supabase/functions/_shared/bybit-public.ts` kaller allerede denne endpointen via bridgen når `useBridge=true`, så ingen edge-side-endring trengs. Endepunktet er public/read-only, ingen signering — samme klasse som `kline`/`tickers`.
+## Hva som ikke endres
 
-## Out of scope
+- Database-skjema, RLS, server functions, edge functions, execution, dispatcher, risk engine, signalprosessering — null endringer.
+- Alle andre `toLocaleString()`-kall (Signals, Positions, Alerts, Audit, Bridge, Telegram, Symbol detail osv.) — uberørte. De viser allerede Oslo-tid via nettleseren din.
+- TradingView-embed på `m.positions_.$symbol.tsx` (`timezone=Etc/UTC`) — uberørt, siden du valgte "bare today-grenser".
+- `balance_snapshots` "24h" vinduet i TodayHero — det er rullende 24t, ikke kalenderdag, så det er korrekt som det er.
 
-- Ingen endringer i `executor.ts`, signal-prosessering, Phase 2B-trigger, snapshot-pipeline, risk-engine, dispatcher eller replay.
-- Ingen DB-migrasjoner.
-- Ingen retry-logikk eller cache-prewarm i edge-koden — vil være separate forbedringer hvis vi senere vil tåle bridge-nedetid.
-- Direct-fallback (CloudFront 403) fikses ikke — bridge er den autoritative pathen i live, og det er forventet at edge-IP er geo-blokket.
+## Verifisering
 
-## Deploy / verifikasjon
-
-1. Operatøren deployer bridge på VPS (npm restart eller tilsvarende — bridge-prosessen kjører utenfor Lovable).
-2. Bekreft `/v1/health` svarer `bybit_reachable: true`.
-3. `sim-inject` en ENTER-LONG på `BSBUSDT` i live, eller vent på neste TradingView-alarm; trail skal nå vise `instrument_rules` (info) i stedet for `entry_blocked_no_qty_step`.
-4. Sjekk at `error_log` ikke får nye `bridge_http_403` for `instruments-info`.
-
-## Hvorfor ikke noe mer
-
-Vi har én konkret feilmodus: én public endpoint manglet i allowlisten. Å utvide scope (retry, prewarm, alternativ datakilde) ville endre executor-pathen, og det ligger utenfor det du har bedt om — og utenfor de stående reglene om å ikke røre execution-pipen for ikke-relaterte oppgaver.
+- Sjekk Overview: Realized PnL-kortet viser nå "today (Oslo)" og summen inkluderer trades lukket fra 00:00 Oslo (ikke 01:00/02:00 lokal tid som før).
+- Sjekk mobil Pulse `/m/pulse`: "Today" Realized-tallet matcher Overview-kortet.
+- Build går grønn (kun frontend-endringer, ingen nye dependencies).
