@@ -1808,6 +1808,13 @@ export type Database = {
         }
         Returns: Json
       }
+      equity_snapshots_bucketed: {
+        Args: { _buckets?: number; _since: string; _source: string }
+        Returns: {
+          captured_at: string
+          total_equity: number
+        }[]
+      }
       expire_stale_locks: { Args: never; Returns: number }
       has_role: {
         Args: {
