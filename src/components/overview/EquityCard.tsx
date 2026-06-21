@@ -5,39 +5,60 @@ import { Sparkline } from "./Sparkline";
 import { fmtNum, fmtAge } from "./format";
 import { RANGE_LABEL, rangeSinceISO, type RangeKey } from "./filters";
 
-interface Snapshot {
-  captured_at: string;
-  total_equity: number | null;
-  source: string;
-}
-
 export function EquityCard({ live, range }: { live: boolean; range: RangeKey }) {
   const source = live ? "live" : "paper";
   const { data, isLoading } = useQuery({
-    queryKey: ["overview", "equity_snapshots", source, range],
+    queryKey: ["overview", "equity_snapshots_v2", source, range],
+    refetchInterval: 30_000,
     queryFn: async () => {
       const since = rangeSinceISO(range);
-      const { data, error } = await supabase
-        .from("balance_snapshots")
-        .select("captured_at,total_equity,source")
-        .eq("source", source)
-        .gte("captured_at", since)
-        .order("captured_at", { ascending: true })
-        .limit(1000);
-      if (error) throw error;
-      return (data ?? []) as Snapshot[];
+
+      const [firstRes, lastRes, bucketRes] = await Promise.all([
+        supabase
+          .from("balance_snapshots")
+          .select("captured_at,total_equity")
+          .eq("source", source)
+          .gte("captured_at", since)
+          .order("captured_at", { ascending: true })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("balance_snapshots")
+          .select("captured_at,total_equity")
+          .eq("source", source)
+          .order("captured_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase.rpc("equity_snapshots_bucketed", {
+          _source: source,
+          _since: since,
+          _buckets: 200,
+        }),
+      ]);
+
+      if (firstRes.error) throw firstRes.error;
+      if (lastRes.error) throw lastRes.error;
+      if (bucketRes.error) throw bucketRes.error;
+
+      const points = ((bucketRes.data ?? []) as Array<{ captured_at: string; total_equity: number | string | null }>)
+        .map((r) => Number(r.total_equity))
+        .filter((v) => Number.isFinite(v));
+
+      return {
+        first: firstRes.data?.total_equity != null ? Number(firstRes.data.total_equity) : null,
+        last: lastRes.data?.total_equity != null ? Number(lastRes.data.total_equity) : null,
+        lastAt: lastRes.data?.captured_at ?? null,
+        points,
+      };
     },
-    refetchInterval: 30_000,
   });
 
-  const points = (data ?? [])
-    .map((r) => Number(r.total_equity))
-    .filter((v) => Number.isFinite(v));
-  const last = points.length ? points[points.length - 1] : null;
-  const first = points.length ? points[0] : null;
+  const last = data?.last ?? null;
+  const first = data?.first ?? null;
+  const points = data?.points ?? [];
   const delta = last != null && first != null ? last - first : null;
   const deltaPct = delta != null && first ? (delta / first) * 100 : null;
-  const lastAt = data && data.length ? data[data.length - 1].captured_at : null;
+  const lastAt = data?.lastAt ?? null;
 
   return (
     <MetricCard
