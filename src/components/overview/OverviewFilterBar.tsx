@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { rangeSinceISO, RANGE_LABEL, type RangeKey } from "./filters";
 
-const RANGES: RangeKey[] = ["1h", "24h", "7d"];
+const RANGES: RangeKey[] = ["1h", "24h", "7d", "30d", "90d", "1y"];
 
 export function OverviewFilterBar({
   range,
