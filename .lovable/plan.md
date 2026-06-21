@@ -1,36 +1,42 @@
-## Mål
+# Health gate: null = pass
 
-Endre "i dag"-grensen i de to kortene som i dag bruker UTC-midnatt, slik at de speiler din lokale dag (Europe/Oslo). Alt annet rører jeg ikke — individuelle tidsstempler vises allerede i din nettlesertid (Oslo), DB lagrer fortsatt UTC, og TradingView-embeddingen lar jeg stå.
+## Problem
+Du backtester på 3000 lys for å sikre statistisk relevans. Når et symbol ikke har hatt trades i de siste 3000 lysene, sender TradingView `profit_factor: na` (null). I dag tolker gaten `null` som "under terskel" og blokkerer entryen:
 
-## Hva endres
-
-### 1. `src/components/overview/RealizedPnLTodayCard.tsx`
-- Erstatt `start.setUTCHours(0,0,0,0)` med et helper-kall som returnerer ISO-strengen for **00:00 Europe/Oslo i dag** (regnet om til UTC før vi sender til databasen).
-- Oppdater label fra `"Realized PnL · today (UTC)"` → `"Realized PnL · today (Oslo)"`.
-- Oppdater sub-tekst fra `"… closed since 00:00 UTC"` → `"… closed since 00:00 Oslo"`.
-- Legg `"today_oslo"` inn i `queryKey` så cachen ikke kolliderer med en eventuell gammel verdi.
-
-### 2. `src/components/mobile/pulse/TodayHero.tsx`
-- Samme bytte for `start.setUTCHours(0,0,0,0)` → Oslo-midnatt helper.
-- Ingen synlig label endres her (kortet sier bare "Today"), bare grensen.
-
-### 3. Ny liten helper: `src/lib/time/oslo-day.ts`
 ```ts
-// Returns ISO timestamp (UTC) for 00:00 Europe/Oslo of "today".
-// Uses Intl with timeZone to find the current Oslo Y-M-D, then converts back.
-export function osloDayStartISO(now = new Date()): string { ... }
+if (minPf != null && (pf == null || pf < minPf))
+  return { pass: false, reason: "profit_factor_below_threshold", ... }
 ```
-Implementasjonen bruker `Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Oslo', year/month/day })` for å finne dagens Oslo-dato, og bygger så et UTC-tidspunkt for 00:00 i den tidssonen ved å beregne offset via `Intl` (håndterer både CET +01:00 og CEST +02:00 automatisk, inkludert sommertid-overgang).
 
-## Hva som ikke endres
+Det var årsaken til at PIEVERSEUSDT-entryen din i morges ble avvist — snapshotet hadde `profit_factor: null, winrate: null, net_profit: 0`.
 
-- Database-skjema, RLS, server functions, edge functions, execution, dispatcher, risk engine, signalprosessering — null endringer.
-- Alle andre `toLocaleString()`-kall (Signals, Positions, Alerts, Audit, Bridge, Telegram, Symbol detail osv.) — uberørte. De viser allerede Oslo-tid via nettleseren din.
-- TradingView-embed på `m.positions_.$symbol.tsx` (`timezone=Etc/UTC`) — uberørt, siden du valgte "bare today-grenser".
-- `balance_snapshots` "24h" vinduet i TodayHero — det er rullende 24t, ikke kalenderdag, så det er korrekt som det er.
+## Endring
+I `supabase/functions/_shared/health-gate.ts`, behandle `null`-verdier som "ingen data for denne metrikken" → ikke blokker. Bare blokker når metrikken faktisk er rapportert OG ligger under terskel.
 
-## Verifisering
+**Før:**
+```ts
+if (minPf != null && (pf == null || pf < minPf))
+  return { pass: false, reason: "profit_factor_below_threshold", metrics };
+```
 
-- Sjekk Overview: Realized PnL-kortet viser nå "today (Oslo)" og summen inkluderer trades lukket fra 00:00 Oslo (ikke 01:00/02:00 lokal tid som før).
-- Sjekk mobil Pulse `/m/pulse`: "Today" Realized-tallet matcher Overview-kortet.
-- Build går grønn (kun frontend-endringer, ingen nye dependencies).
+**Etter:**
+```ts
+if (minPf != null && pf != null && pf < minPf)
+  return { pass: false, reason: "profit_factor_below_threshold", metrics };
+```
+
+Samme mønster for `winrate` og `net_profit` — for konsistens, slik at et symbol uten trades ikke blokkeres av noen av de tre tersklene.
+
+Hvis ALLE tre metrikkene er null, returnerer vi `pass: true` med `reason: "no_metric_data"` (ny grunn) slik at det er tydelig i `risk_decisions`-loggen at gaten passerte fordi det ikke fantes data å sammenligne mot — ikke fordi tersklene var møtt.
+
+Andre gates (stale-vakten på 120 min, `health_strategy_disabled`, snapshot mangler helt) er uendret.
+
+## Filer
+- `supabase/functions/_shared/health-gate.ts` — løs opp `pf/wr/np < terskel`-sjekkene som beskrevet, legg til `no_metric_data`-utfall.
+
+## Hvorfor ikke endre frontend også
+`SymbolHealthPanel` viser allerede null som "—" og klassifiserer bare som `blocked` når en faktisk verdi ligger under terskel — den logikken er allerede korrekt. Ingen endring der.
+
+## Ikke i scope
+- Endre hvordan TradingView-alertet sender stats (du har bekreftet at `na` er forventet ved 0 trades).
+- Endre `STALE_MINUTES`-vakten — den skal fortsatt blokkere om HEALTH_ALL-alertet stopper helt.
