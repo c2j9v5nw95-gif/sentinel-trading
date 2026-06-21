@@ -125,12 +125,25 @@ export async function evaluateHealth(
     thresholds: { minWr, minPf, minNp },
   };
 
-  if (minWr != null && (wr == null || wr < minWr))
+  // Null = "no trades in lookback window" (e.g. backtest over 3000 bars produced
+  // zero trades). Treat as "no data for this metric" → don't block on it.
+  // Only block when the metric is actually reported AND below threshold.
+  if (minWr != null && wr != null && wr < minWr)
     return { pass: false, reason: "winrate_below_threshold", metrics };
-  if (minPf != null && (pf == null || pf < minPf))
+  if (minPf != null && pf != null && pf < minPf)
     return { pass: false, reason: "profit_factor_below_threshold", metrics };
-  if (minNp != null && (np == null || np < minNp))
+  if (minNp != null && np != null && np < minNp)
     return { pass: false, reason: "net_profit_below_threshold", metrics };
+
+  // If every metric we care about is null, surface that explicitly in the
+  // decision log instead of pretending all thresholds were met.
+  const checkedAllNull =
+    (minWr == null || wr == null) &&
+    (minPf == null || pf == null) &&
+    (minNp == null || np == null);
+  if (checkedAllNull) {
+    return { pass: true, reason: "no_metric_data", metrics };
+  }
 
   return { pass: true, reason: "ok", metrics };
 }
