@@ -356,6 +356,8 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       classification_negative_drivers: auto.negative_drivers,
       classification_safety_overrides: auto.safety_overrides,
       classification_summary: auto.summary,
+      sample_bucket: auto.sample_bucket,
+      sample_confidence_weight: auto.sample_confidence_weight,
       label_source: labelSource,
       label_overridden_at: labelSource === 'manual_override' ? new Date().toISOString() : null,
       label_overridden_by: labelSource === 'manual_override' ? userId : null,
@@ -366,6 +368,7 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
     const { data: inserted, error } = await supabase
       .from('coin_backtest_results')
       .insert(row)
+
       .select('*')
       .single();
     if (error) {
