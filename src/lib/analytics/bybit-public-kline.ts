@@ -1,5 +1,5 @@
 // Whitelisted public Bybit fetcher routed through the execution bridge VPS.
-// ANALYTICS-ONLY. Strict allowlist: kline + tickers. GET only. No signing.
+// ANALYTICS-ONLY. Strict allowlist: kline + tickers + instruments-info. GET only. No signing.
 // Never imports execution / dispatcher / live-client code.
 
 import type { Bar } from './indicators';
@@ -8,6 +8,7 @@ import { toBybitInterval, type Timeframe } from './timeframe';
 const ANALYTICS_PUBLIC_ENDPOINTS = [
   '/v5/market/kline',
   '/v5/market/tickers',
+  '/v5/market/instruments-info',
 ] as const;
 type AnalyticsEndpoint = typeof ANALYTICS_PUBLIC_ENDPOINTS[number];
 
