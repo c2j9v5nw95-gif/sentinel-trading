@@ -232,7 +232,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           status: scored.status,
           score: scored.score,
           trend_score: scored.trend_score, // HTQ for back-compat
-          trend_components: htqComponents ?? momentumComponents,
+          trend_components: htqComponents, // back-compat mirror of htq_components only
           historical_trend_quality: htqScore,
           htq_components: htqComponents,
           htq_lookback_days: htqLookback,
@@ -240,6 +240,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           trend_classification: htqClassification,
           htq_reason: htqReason,
           current_momentum_score: momentumScore,
+          current_momentum_components: momentumComponents,
           strategy_fit_score: scored.strategy_fit_score,
           strategy_fit_label: strategyFitLabel(scored.strategy_fit_score),
           admission_mode: data.mode,

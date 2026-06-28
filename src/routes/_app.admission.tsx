@@ -181,6 +181,7 @@ type Result = {
   trend_classification: 'trend_friendly' | 'neutral' | 'choppy' | null;
   htq_reason: string | null;
   current_momentum_score: number | null;
+  current_momentum_components: Record<string, number> | null;
   fetch_error: string | null;
 };
 
@@ -759,15 +760,26 @@ function AdmissionPage() {
                               <div>
                                 <h4 className="font-semibold mb-1">Current Momentum (live)</h4>
                                 <pre className="rounded bg-background p-2 overflow-auto">
-                                  {JSON.stringify(
-                                    {
-                                      momentum_score: r.current_momentum_score,
-                                      ...(r.trend_components ?? {}),
-                                    },
-                                    null,
-                                    2,
-                                  )}
+                                  {r.current_momentum_components
+                                    ? JSON.stringify(
+                                        {
+                                          momentum_score: r.current_momentum_score,
+                                          ...r.current_momentum_components,
+                                        },
+                                        null,
+                                        2,
+                                      )
+                                    : JSON.stringify(
+                                        { momentum_score: r.current_momentum_score },
+                                        null,
+                                        2,
+                                      )}
                                 </pre>
+                                {!r.current_momentum_components && (
+                                  <p className="mt-1 text-muted-foreground">
+                                    Live momentum snapshot — no component breakdown available.
+                                  </p>
+                                )}
                               </div>
                               <div>
                                 <h4 className="font-semibold mb-1">Details</h4>

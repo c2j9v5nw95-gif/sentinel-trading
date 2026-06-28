@@ -1,0 +1,1 @@
+ALTER TABLE public.coin_admission_results ADD COLUMN IF NOT EXISTS current_momentum_components jsonb;
