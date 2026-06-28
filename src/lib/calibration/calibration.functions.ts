@@ -66,6 +66,17 @@ const BacktestPayload = z.object({
   profitable_trades_count: IntNullable.optional(),
   losing_trades_count: IntNullable.optional(),
 
+  // Sizing & leverage assumptions (defaults applied server-side if missing)
+  initial_capital_usd: NumericNullable.optional(),
+  position_size_type: z.enum(['percent_of_equity']).optional(),
+  position_size_pct: NumericNullable.optional(),
+  position_size_usd: NumericNullable.optional(),
+  leverage: NumericNullable.optional(),
+  leverage_enabled: z.boolean().optional(),
+  sizing_assumption_source: z
+    .enum(['default_backfill', 'user_confirmed', 'imported_from_screenshot', 'manual_override'])
+    .optional(),
+
   label: LabelEnum,
   notes: z.string().max(2000).nullable().optional(),
 
