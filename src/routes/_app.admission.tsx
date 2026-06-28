@@ -232,6 +232,191 @@ function computeCandidatePriority(r: Result): number | null {
   return 0.60 * fit + 0.40 * calib!;
 }
 
+// ---- BT cell + detail components ---------------------------------------------
+
+function BtScoreCell({ r }: { r: Result }) {
+  const isNoTrades = r.last_backtest_label === 'no_trades';
+  if (isNoTrades) {
+    return (
+      <td className="py-1 pr-2 text-right">
+        <span
+          className={`inline-block rounded px-1.5 py-0.5 text-xs ${btBucketBadgeClass('no_setup')}`}
+          title="No trades during test period — strategy found no valid setup"
+        >
+          N/A
+        </span>
+      </td>
+    );
+  }
+  const s = r.last_bt_score;
+  if (s == null) {
+    return <td className="py-1 pr-2 text-right text-muted-foreground">—</td>;
+  }
+  const bucket = btScoreBucket(s);
+  const pct = Math.max(0, Math.min(100, s));
+  const warn = r.last_needs_review && r.last_label_source === 'auto';
+  return (
+    <td className="py-1 pr-2 text-right">
+      <div className="inline-flex flex-col items-end gap-0.5 min-w-[64px]">
+        <div className="flex items-center gap-1">
+          <span className={`rounded px-1.5 py-0.5 text-xs font-mono font-semibold ${btBucketBadgeClass(bucket)}`}>
+            {s.toFixed(0)}
+          </span>
+          {warn && (
+            <span className="text-yellow-600" title="Backtest label needs review — score may be unreliable.">⚠</span>
+          )}
+        </div>
+        <div className="h-1 w-16 rounded bg-muted overflow-hidden">
+          <div
+            className={
+              bucket === 'strong' ? 'h-full bg-emerald-500'
+              : bucket === 'good' ? 'h-full bg-green-500'
+              : bucket === 'mixed' ? 'h-full bg-yellow-500'
+              : 'h-full bg-red-500'
+            }
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    </td>
+  );
+}
+
+function BtClassCell({ r }: { r: Result }) {
+  const label = r.last_backtest_label;
+  if (!label) return <td className="py-1 pr-2 text-xs text-muted-foreground">—</td>;
+  const display = btClassDisplay(label);
+  const cls =
+    label === 'profitable_plus' ? 'bg-emerald-500/20 text-emerald-700'
+    : label === 'profitable' ? 'bg-green-500/20 text-green-700'
+    : label === 'marginal' ? 'bg-yellow-500/20 text-yellow-700'
+    : label === 'rejected_backtest' ? 'bg-red-500/20 text-red-700'
+    : 'bg-slate-400/20 text-slate-700';
+  return (
+    <td className="py-1 pr-2 text-xs">
+      <span className={`rounded px-1.5 py-0.5 ${cls}`}>{display}</span>
+      {r.last_label_source === 'manual_override' && (
+        <span className="ml-1 text-[10px] text-muted-foreground">✓</span>
+      )}
+    </td>
+  );
+}
+
+function LastBacktestDetail({ r }: { r: Result }) {
+  const hasAny =
+    r.last_backtest_label != null ||
+    r.last_bt_score != null ||
+    r.last_num_trades != null;
+  if (!hasAny) return null;
+  const isNoTrades = r.last_backtest_label === 'no_trades';
+  const warn = r.last_needs_review && r.last_label_source === 'auto';
+  const pos = Array.isArray(r.last_positive_drivers) ? r.last_positive_drivers : [];
+  const neg = Array.isArray(r.last_negative_drivers) ? r.last_negative_drivers : [];
+  const safety = Array.isArray(r.last_safety_overrides) ? r.last_safety_overrides : [];
+  const hasDiagnostics = pos.length > 0 || neg.length > 0 || safety.length > 0 || !!r.last_bt_summary;
+  return (
+    <div className="mt-3 rounded border bg-background p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <h4 className="font-semibold text-sm">Last Backtest</h4>
+        <span className="text-muted-foreground">{r.last_backtest_date ?? '—'}</span>
+        <span className="text-muted-foreground">{r.last_backtest_strategy_version ?? ''}</span>
+        {warn && (
+          <span className="rounded bg-yellow-500/20 text-yellow-700 px-1.5 py-0.5">
+            ⚠ Backtest label needs review — score may be unreliable.
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div>
+          <div className="text-muted-foreground">BT Score</div>
+          <div className="font-mono font-semibold">
+            {isNoTrades ? 'N/A' : (r.last_bt_score != null ? r.last_bt_score.toFixed(1) : '—')}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Confirmed Label</div>
+          <div>{btClassDisplay(r.last_backtest_label)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Auto Suggested</div>
+          <div>{btClassDisplay(r.last_auto_suggested_label)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Source / Review</div>
+          <div>
+            {r.last_label_source ?? '—'}
+            {r.last_needs_review ? <span className="ml-1 text-yellow-600">· needs review</span> : null}
+          </div>
+        </div>
+      </div>
+      {hasDiagnostics ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <div>
+            <div className="text-muted-foreground mb-1">Summary</div>
+            <div>{r.last_bt_summary ?? '—'}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-1">Positive drivers</div>
+            {pos.length === 0 ? <div className="text-muted-foreground">—</div> : (
+              <ul className="list-disc pl-4">
+                {pos.map((d: any, i: number) => (
+                  <li key={i}>{typeof d === 'string' ? d : (d?.label ?? d?.reason ?? JSON.stringify(d))}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-1">Negative drivers</div>
+            {neg.length === 0 ? <div className="text-muted-foreground">—</div> : (
+              <ul className="list-disc pl-4">
+                {neg.map((d: any, i: number) => (
+                  <li key={i}>{typeof d === 'string' ? d : (d?.label ?? d?.reason ?? JSON.stringify(d))}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {safety.length > 0 && (
+            <div className="md:col-span-3">
+              <div className="text-muted-foreground mb-1">Safety overrides</div>
+              <div className="flex flex-wrap gap-1">
+                {safety.map((s, i) => (
+                  <span key={i} className="rounded bg-red-500/15 text-red-700 px-1.5 py-0.5">{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-muted-foreground mb-3">No diagnostics available</div>
+      )}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Metric label="Net Profit %" value={r.last_net_profit_pct} dp={2} />
+        <Metric label="Normalized Net %" value={r.last_normalized_net_profit_pct} dp={2} />
+        <Metric label="Leverage-adj Net %" value={r.last_leverage_adjusted_net_profit_pct} dp={2} />
+        <Metric label="Profit Factor" value={r.last_profit_factor} dp={2} />
+        <Metric label="Win Rate %" value={r.last_win_rate_pct} dp={1} />
+        <Metric label="Max Drawdown %" value={r.last_max_drawdown_pct} dp={2} />
+        <Metric label="Trades" value={r.last_num_trades} dp={0} />
+        {r.last_needs_review_reason && (
+          <div>
+            <div className="text-muted-foreground">Review reason</div>
+            <div>{r.last_needs_review_reason}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, dp }: { label: string; value: number | null | undefined; dp: number }) {
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-mono">{value == null || !Number.isFinite(value) ? '—' : value.toFixed(dp)}</div>
+    </div>
+  );
+}
+
 
 export const Route = createFileRoute('/_app/admission')({
   component: AdmissionPage,
