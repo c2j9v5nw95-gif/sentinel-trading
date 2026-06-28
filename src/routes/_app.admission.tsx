@@ -463,14 +463,25 @@ function AdmissionPage() {
             Skjul hard rejections
           </label>
           <label className="flex items-center gap-1">
-            Min Trend
+            Min HTQ
             <input type="number" min={0} max={100} className="w-16 rounded border bg-background px-1 py-0.5" value={minTrend} onChange={(e) => setMinTrend(e.target.value)} />
           </label>
           <label className="flex items-center gap-1">
             Min Strategy Fit
             <input type="number" min={0} max={100} className="w-16 rounded border bg-background px-1 py-0.5" value={minFit} onChange={(e) => setMinFit(e.target.value)} />
           </label>
+          <span className="ml-2 text-muted-foreground">Klassifisering:</span>
+          {(['all', 'trend_friendly', 'neutral', 'choppy'] as ClassFilter[]).map((c) => (
+            <button
+              key={c}
+              className={`rounded px-2 py-0.5 ${classFilter === c ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              onClick={() => setClassFilter(c)}
+            >
+              {c === 'all' ? 'alle' : c === 'trend_friendly' ? 'trend-friendly' : c}
+            </button>
+          ))}
         </div>
+
 
         {!activeRunId ? (
           <EmptyState title="Velg en kjøring" hint="Trykk vis på en kjøring over for å se resultatene." />
@@ -485,21 +496,23 @@ function AdmissionPage() {
                 <tr className="text-left text-xs text-muted-foreground border-b">
                   <th className="py-1 pr-2">Symbol</th>
                   <th className="py-1 pr-2">Status</th>
+                  <th className="py-1 pr-2">Class</th>
                   <th className="py-1 pr-2 text-right">Fit</th>
                   <th className="py-1 pr-2 text-right">Robust</th>
-                  <th className="py-1 pr-2 text-right">Trend</th>
+                  <th className="py-1 pr-2 text-right">HTQ</th>
+                  <th className="py-1 pr-2 text-right">Mom</th>
                   <th className="py-1 pr-2 text-right">Rank</th>
                   <th className="py-1 pr-2 text-right">24h TO</th>
-                  <th className="py-1 pr-2 text-right">7d med</th>
                   <th className="py-1 pr-2 text-right">OI</th>
                   <th className="py-1 pr-2 text-right">Spread</th>
                   <th className="py-1 pr-2 text-right">Age</th>
                   <th className="py-1 pr-2 text-right">Wick%</th>
                   <th className="py-1 pr-2">Hard Kills</th>
-                  <th className="py-1 pr-2">Soft Failures</th>
+                  <th className="py-1 pr-2">Soft</th>
                   <th className="py-1 pr-2">Reason</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredResults.map((r) => {
                   const isOpen = expanded === r.id;
