@@ -936,11 +936,168 @@ function AdmissionPage() {
         open={!!backtestPrefill}
         onOpenChange={(o) => { if (!o) setBacktestPrefill(null); }}
         prefill={backtestPrefill ?? undefined}
-        onSaved={() => {
+        onSaved={(info) => {
           setBacktestPrefill(null);
           qc.invalidateQueries({ queryKey: ['admission-results'] });
+          qc.invalidateQueries({ queryKey: ['backtest-latest-map'] });
+          if (info?.symbol) {
+            qc.invalidateQueries({ queryKey: ['backtest-history', info.symbol] });
+          } else {
+            qc.invalidateQueries({ queryKey: ['backtest-history'] });
+          }
+          qc.invalidateQueries({ queryKey: ['calibration-strategy-versions'] });
         }}
       />
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Expanded-row helpers
+// ---------------------------------------------------------------------------
+
+function fmtTs(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return ts;
+  }
+}
+
+function BacktestHistorySection({ symbol }: { symbol: string }) {
+  const historyQ = useQuery({
+    queryKey: ['backtest-history', symbol],
+    queryFn: () => listBacktestResults({ data: { symbol, limit: 100 } }),
+    enabled: !!symbol,
+  });
+
+  if (historyQ.isLoading) {
+    return <p className="mt-3 text-xs text-muted-foreground">Laster backtest-historikk…</p>;
+  }
+  const rows = historyQ.data?.rows ?? [];
+  if (rows.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-muted-foreground">
+        Ingen backtest-observasjoner registrert for {symbol} ennå.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded border bg-background/60 p-2">
+      <div className="mb-1 text-xs font-semibold">
+        Backtest History ({rows.length} observasjon{rows.length === 1 ? '' : 'er'})
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-muted-foreground border-b">
+              <th className="py-0.5 pr-2">Test Date</th>
+              <th className="py-0.5 pr-2">Label</th>
+              <th className="py-0.5 pr-2">Strategy</th>
+              <th className="py-0.5 pr-2 text-right">Net %</th>
+              <th className="py-0.5 pr-2 text-right">DD %</th>
+              <th className="py-0.5 pr-2 text-right">PF</th>
+              <th className="py-0.5 pr-2 text-right">Trades</th>
+              <th className="py-0.5 pr-2">Source</th>
+              <th className="py-0.5 pr-2">Saved</th>
+              <th className="py-0.5 pr-2">Screenshot</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row: any) => (
+              <tr key={row.id} className="border-b last:border-b-0">
+                <td className="py-0.5 pr-2 font-mono">{row.test_date}</td>
+                <td className="py-0.5 pr-2">
+                  <span className="rounded bg-muted px-1.5 py-0.5">{row.label}</span>
+                </td>
+                <td className="py-0.5 pr-2 text-muted-foreground">{row.strategy_version}</td>
+                <td className="py-0.5 pr-2 text-right">{fmtNum(row.net_profit_pct, 1)}</td>
+                <td className="py-0.5 pr-2 text-right">{fmtNum(row.max_drawdown_pct, 1)}</td>
+                <td className="py-0.5 pr-2 text-right">{fmtNum(row.profit_factor, 2)}</td>
+                <td className="py-0.5 pr-2 text-right">{row.num_trades ?? '—'}</td>
+                <td className="py-0.5 pr-2">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${row.extraction_source === 'screenshot_ocr' ? 'bg-blue-500/15 text-blue-700' : 'bg-muted'}`}>
+                    {row.extraction_source === 'screenshot_ocr' ? 'OCR' : 'manual'}
+                  </span>
+                </td>
+                <td className="py-0.5 pr-2 text-muted-foreground">{fmtTs(row.created_at)}</td>
+                <td className="py-0.5 pr-2">
+                  {row.screenshot_storage_path ? (
+                    <ScreenshotLink id={row.id} />
+                  ) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ScreenshotLink({ id }: { id: string }) {
+  const [loading, setLoading] = useState(false);
+  const open = async () => {
+    setLoading(true);
+    try {
+      const res = await getBacktestScreenshotUrl({ data: { id } });
+      if (res.url) window.open(res.url, '_blank', 'noopener');
+      else toast.error('Screenshot ikke tilgjengelig');
+    } catch (e: any) {
+      toast.error(`Kunne ikke hente screenshot: ${e?.message ?? e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <button
+      className="text-blue-600 hover:underline disabled:opacity-50"
+      onClick={open}
+      disabled={loading}
+    >
+      {loading ? '…' : 'view'}
+    </button>
+  );
+}
+
+function RecalcCalibrationButton({
+  runId,
+  symbol,
+  onDone,
+}: {
+  runId: string;
+  symbol: string;
+  onDone?: () => void;
+}) {
+  const m = useMutation({
+    mutationFn: () => recalcCalibrationForSymbol({ data: { run_id: runId, symbol } }),
+    onSuccess: (res) => {
+      if (res.status === 'ok') {
+        toast.success(`Calibration oppdatert for ${symbol}`, {
+          description: `Score: ${res.calibration_score ?? '—'} · Label: ${res.calibration_label ?? '—'} · ${res.observations_used} observasjoner brukt.`,
+        });
+      } else {
+        toast.warning(`Calibration unavailable for ${symbol}`, {
+          description: res.reason ?? 'unknown',
+        });
+      }
+      onDone?.();
+    },
+    onError: (e: any) => toast.error(`Recalc feilet: ${e?.message ?? e}`),
+  });
+  return (
+    <button
+      className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+      onClick={(e) => {
+        e.stopPropagation();
+        m.mutate();
+      }}
+      disabled={m.isPending}
+    >
+      {m.isPending ? 'Recalculating…' : 'Recalculate calibration for this symbol'}
+    </button>
+  );
+}
+
