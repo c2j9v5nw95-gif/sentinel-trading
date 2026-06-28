@@ -640,22 +640,23 @@ function AdmissionPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b">
-                  <HeaderCell label="Symbol" />
-                  <HeaderCell label="Status" />
-                  <HeaderCell label="Class" />
-                  <HeaderCell label="Fit" align="right" />
-                  <HeaderCell label="Robust" align="right" />
-                  <HeaderCell label="HTQ" align="right" />
-                  <HeaderCell label="Mom" align="right" />
-                  <HeaderCell label="Rank" align="right" />
-                  <HeaderCell label="24h TO" align="right" />
-                  <HeaderCell label="OI" align="right" />
-                  <HeaderCell label="Spread" align="right" />
-                  <HeaderCell label="Age" align="right" />
-                  <HeaderCell label="Wick%" align="right" />
-                  <HeaderCell label="Hard Kills" />
-                  <HeaderCell label="Soft" />
-                  <HeaderCell label="Reason" />
+                  <HeaderCell label="Symbol" sortKey="symbol" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Status" sortKey="status" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Class" sortKey="class" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Fit" align="right" sortKey="fit" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Robust" align="right" sortKey="robust" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="HTQ" align="right" sortKey="htq" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Mom" align="right" sortKey="momentum" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Rank" align="right" sortKey="rank" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="24h TO" align="right" sortKey="turnover_24h" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="OI" align="right" sortKey="oi" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Spread" align="right" sortKey="spread" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Age" align="right" sortKey="age" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Wick%" align="right" sortKey="wick" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Hard Kills" sortKey="hard_kills" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Soft" sortKey="soft" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Reason" sortKey="reason" activeSort={sort} onSort={toggleSort} />
+
                 </tr>
               </thead>
 
