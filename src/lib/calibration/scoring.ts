@@ -1,18 +1,27 @@
 /**
- * Calibration Score v1 — heuristic weighted-kNN over stable profile features.
+ * Calibration Score — strategy-aware revision (v3-strategy-aware).
  *
- * Phase 0 update (Label Quality / Review):
- *   - Adds `no_trades` label for backtests with zero trades. By default this
- *     label is EXCLUDED from kNN training (handled by callers via
- *     `calibration_exclude_no_trades`).
- *   - `autoSuggestLabel` now returns a structured diagnosis:
- *       { label, reason, confidence, quality_score,
- *         reason_codes, positive_drivers, negative_drivers,
- *         safety_overrides, summary, config_version }
- *   - Negative net profit, PF < 1.0 and extreme leverage-adjusted drawdown
- *     are hard safety overrides → `rejected_backtest`.
- *   - Drawdown control prefers normalized/leverage-aware ratios with
- *     guardrails (no divide-by-zero, capped extreme ratios).
+ * Key changes vs v2-phase0:
+ *   - Sample buckets reflect the selective live strategy:
+ *       0          → no_trades       (excluded)
+ *       1–3        → very_low_sample (weight 0.15)
+ *       4–7        → low_sample      (weight 0.35)
+ *       8–12       → acceptable      (weight 0.75)
+ *       13–19      → good            (weight 0.90)
+ *       20+        → strong          (weight 1.00)
+ *     The old hard 20-trade floor that penalised valid 15–17 trade backtests
+ *     is gone.
+ *   - autoSuggestLabel uses these buckets so e.g. 15 trades / PF 8.7 / WR 80
+ *     can become `profitable` (or `profitable_plus` when the stricter
+ *     normalized-net / drawdown gates are met).
+ *   - Profitable+ is intentionally strict: trades ≥ 12, PF ≥ 3.0, WR ≥ 70,
+ *     meaningful normalized net, controlled drawdown, no safety override.
+ *   - calibrateCandidate uses `backtest_quality_score` as the per-neighbour
+ *     outcome (weighted by similarity · time_decay · sample_confidence_weight).
+ *     Falls back to LABEL_SCORE when quality_score is missing and surfaces the
+ *     fallback in the neighbour breakdown.
+ *
+ * Nothing here touches execution, risk, dispatcher or live orders.
  */
 
 export type BacktestLabel =
@@ -22,7 +31,15 @@ export type BacktestLabel =
   | 'profitable'
   | 'profitable_plus';
 
-/** Score used by kNN. `no_trades` is excluded from training by default. */
+export type SampleBucket =
+  | 'no_trades'
+  | 'very_low_sample'
+  | 'low_sample'
+  | 'acceptable_sample'
+  | 'good_sample'
+  | 'strong_sample';
+
+/** Legacy label → outcome score, used as a FALLBACK when quality_score is missing. */
 export const LABEL_SCORE: Record<BacktestLabel, number> = {
   no_trades: 0,
   rejected_backtest: 0,
@@ -32,14 +49,50 @@ export const LABEL_SCORE: Record<BacktestLabel, number> = {
 };
 
 export const LABEL_FIT_MULTIPLIER: Record<BacktestLabel, number> = {
-  no_trades: 1.0, // neutral; should never be a dominant neighbor
+  no_trades: 1.0,
   rejected_backtest: 0.6,
   marginal: 0.85,
   profitable: 1.05,
   profitable_plus: 1.2,
 };
 
-export const LABEL_CONFIG_VERSION = 'v2-phase0';
+export const LABEL_CONFIG_VERSION = 'v3-strategy-aware';
+
+// ─── Sample buckets ────────────────────────────────────────────────────────
+
+export function sampleBucketFor(numTrades: number | null | undefined): SampleBucket {
+  const t = numTrades ?? 0;
+  if (t <= 0) return 'no_trades';
+  if (t <= 3) return 'very_low_sample';
+  if (t <= 7) return 'low_sample';
+  if (t <= 12) return 'acceptable_sample';
+  if (t <= 19) return 'good_sample';
+  return 'strong_sample';
+}
+
+export const SAMPLE_CONFIDENCE_WEIGHT: Record<SampleBucket, number> = {
+  no_trades: 0,
+  very_low_sample: 0.15,
+  low_sample: 0.35,
+  acceptable_sample: 0.75,
+  good_sample: 0.9,
+  strong_sample: 1.0,
+};
+
+export function sampleConfidenceWeight(numTrades: number | null | undefined): number {
+  return SAMPLE_CONFIDENCE_WEIGHT[sampleBucketFor(numTrades)];
+}
+
+export const SAMPLE_BUCKET_LABEL: Record<SampleBucket, string> = {
+  no_trades: 'No Trades',
+  very_low_sample: 'Very Low Sample (1–3)',
+  low_sample: 'Low Sample (4–7)',
+  acceptable_sample: 'Acceptable (8–12)',
+  good_sample: 'Good (13–19)',
+  strong_sample: 'Strong (20+)',
+};
+
+// ─── Feature extraction (unchanged) ────────────────────────────────────────
 
 export const FEATURE_WEIGHTS: Record<string, number> = {
   robustness: 3.0,
@@ -142,13 +195,49 @@ export function computeFeatureStds(
   return out;
 }
 
+// ─── kNN ───────────────────────────────────────────────────────────────────
+
 export type Observation = {
   id: string;
   symbol: string;
   test_date: string;
   label: BacktestLabel;
+  label_source?: 'auto' | 'manual_override' | string | null;
   features: Record<string, number | null>;
   age_days: number;
+  /** New: quality outcome (0–100). Null → fallback to LABEL_SCORE. */
+  quality_score?: number | null;
+  /** New: persisted sample confidence multiplier 0..1. */
+  sample_confidence_weight?: number | null;
+  /** New: persisted sample bucket. */
+  sample_bucket?: SampleBucket | null;
+  num_trades?: number | null;
+};
+
+export type NeighborBreakdown = {
+  id: string;
+  symbol: string;
+  test_date: string;
+  label: BacktestLabel;
+  label_source: string | null;
+  num_trades: number | null;
+  sample_bucket: SampleBucket | null;
+  distance: number;
+  /** time decay (0–1) */
+  time_decay: number;
+  /** raw 1/(1+dist) similarity */
+  similarity: number;
+  /** sample_confidence_weight applied */
+  sample_confidence_weight: number;
+  /** outcome used (quality_score or LABEL_SCORE fallback) */
+  outcome: number;
+  /** true when quality_score was missing and label-score fallback used */
+  used_fallback: boolean;
+  /** final weight in the weighted average (similarity*decay*sample_w) */
+  final_weight: number;
+  /** outcome × final_weight (pre-normalisation) */
+  contribution: number;
+  note?: string;
 };
 
 export type CalibrationResult = {
@@ -156,14 +245,7 @@ export type CalibrationResult = {
   confidence: 'low' | 'medium' | 'high';
   label: BacktestLabel | null;
   fit_multiplier: number;
-  neighbors: Array<{
-    id: string;
-    symbol: string;
-    test_date: string;
-    label: BacktestLabel;
-    distance: number;
-    weight: number;
-  }>;
+  neighbors: NeighborBreakdown[];
   observations_used: number;
 };
 
@@ -206,14 +288,34 @@ export function calibrateCandidate(
     }
     const distance = Math.sqrt(d2);
     const decay = Math.pow(0.5, o.age_days / Math.max(cfg.half_life_days, 1));
-    const similarity = (1 / (1 + distance)) * decay;
-    return { obs: o, distance, decay, similarity };
+    const baseSim = 1 / (1 + distance);
+    const sampleW =
+      o.sample_confidence_weight != null
+        ? Math.max(0, Math.min(1, o.sample_confidence_weight))
+        : sampleConfidenceWeight(o.num_trades);
+    const finalWeight = baseSim * decay * sampleW;
+
+    const usedFallback = o.quality_score == null || !Number.isFinite(o.quality_score);
+    const outcome = usedFallback ? LABEL_SCORE[o.label] : Number(o.quality_score);
+
+    return {
+      obs: o,
+      distance,
+      decay,
+      baseSim,
+      sampleW,
+      finalWeight,
+      outcome,
+      usedFallback,
+    };
   });
 
-  scored.sort((a, b) => b.similarity - a.similarity);
+  // Rank by final_weight (which already folds in similarity, decay, sample).
+  scored.sort((a, b) => b.finalWeight - a.finalWeight);
   const top = scored.slice(0, Math.max(cfg.k, 1));
 
-  let num = 0; let den = 0;
+  let num = 0;
+  let den = 0;
   const labelCounts: Record<BacktestLabel, number> = {
     no_trades: 0,
     rejected_backtest: 0,
@@ -222,9 +324,9 @@ export function calibrateCandidate(
     profitable_plus: 0,
   };
   for (const t of top) {
-    num += t.similarity * LABEL_SCORE[t.obs.label];
-    den += t.similarity;
-    labelCounts[t.obs.label] += t.similarity;
+    num += t.finalWeight * t.outcome;
+    den += t.finalWeight;
+    labelCounts[t.obs.label] += t.finalWeight;
   }
   const score = den > 0 ? num / den : 0;
 
@@ -235,52 +337,80 @@ export function calibrateCandidate(
   }
   const fit_multiplier = dominant ? LABEL_FIT_MULTIPLIER[dominant] : 1;
 
+  // Confidence uses spatial neighbours (raw distance), not the sample-weighted
+  // ranking — so we still penalise sparse feature regions.
   const inRadius = scored.filter((s) => s.distance <= radius).length;
   let confidence: 'low' | 'medium' | 'high' = 'low';
   if (inRadius >= cfg.min_neighbors_high) confidence = 'high';
   else if (inRadius >= cfg.min_neighbors_medium) confidence = 'medium';
+
+  const neighbors: NeighborBreakdown[] = top.map((t) => ({
+    id: t.obs.id,
+    symbol: t.obs.symbol,
+    test_date: t.obs.test_date,
+    label: t.obs.label,
+    label_source: (t.obs.label_source ?? null) as string | null,
+    num_trades: t.obs.num_trades ?? null,
+    sample_bucket: (t.obs.sample_bucket ?? sampleBucketFor(t.obs.num_trades)) as SampleBucket,
+    distance: Number(t.distance.toFixed(3)),
+    time_decay: Number(t.decay.toFixed(3)),
+    similarity: Number(t.baseSim.toFixed(4)),
+    sample_confidence_weight: Number(t.sampleW.toFixed(2)),
+    outcome: Number(t.outcome.toFixed(1)),
+    used_fallback: t.usedFallback,
+    final_weight: Number(t.finalWeight.toFixed(4)),
+    contribution: Number((t.finalWeight * t.outcome).toFixed(2)),
+    note: t.usedFallback
+      ? 'Fallback: label-based outcome because quality score is missing'
+      : undefined,
+  }));
 
   return {
     score: Math.max(0, Math.min(100, score)),
     confidence,
     label: dominant,
     fit_multiplier,
-    neighbors: top.map((t) => ({
-      id: t.obs.id,
-      symbol: t.obs.symbol,
-      test_date: t.obs.test_date,
-      label: t.obs.label,
-      distance: Number(t.distance.toFixed(3)),
-      weight: Number(t.similarity.toFixed(4)),
-    })),
+    neighbors,
     observations_used: observations.length,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Auto-classification (Phase 0)
+// Auto-classification (strategy-aware)
 // ─────────────────────────────────────────────────────────────────────────
 
 export type ClassificationThresholds = {
-  min_trades: number;
+  /** Smallest sample considered "acceptable" for Profitable. Selective
+   *  strategies can hit this with 8 trades. */
+  profitable_min_trades: number;
+  /** Profitable+ requires a noticeably larger / cleaner sample. */
+  profitable_plus_min_trades: number;
   marginal_min_profit_factor: number;
   profitable_min_profit_factor: number;
   profitable_plus_min_profit_factor: number;
+  profitable_min_win_rate_pct: number;
+  profitable_plus_min_win_rate_pct: number;
   profitable_min_normalized_net_profit_pct: number;
   profitable_plus_min_normalized_net_profit_pct: number;
   max_leverage_adjusted_drawdown_profitable: number;
   max_leverage_adjusted_drawdown_profitable_plus: number;
+  /** Required net/DD ratio for Profitable+. */
+  profitable_plus_min_drawdown_control_ratio: number;
 };
 
 export const DEFAULT_CLASSIFICATION_THRESHOLDS: ClassificationThresholds = {
-  min_trades: 20,
+  profitable_min_trades: 8,
+  profitable_plus_min_trades: 12,
   marginal_min_profit_factor: 1.05,
-  profitable_min_profit_factor: 1.2,
-  profitable_plus_min_profit_factor: 1.5,
-  profitable_min_normalized_net_profit_pct: 20,
-  profitable_plus_min_normalized_net_profit_pct: 40,
-  max_leverage_adjusted_drawdown_profitable: 30,
-  max_leverage_adjusted_drawdown_profitable_plus: 25,
+  profitable_min_profit_factor: 1.5,
+  profitable_plus_min_profit_factor: 3.0,
+  profitable_min_win_rate_pct: 55,
+  profitable_plus_min_win_rate_pct: 70,
+  profitable_min_normalized_net_profit_pct: 10,
+  profitable_plus_min_normalized_net_profit_pct: 30,
+  max_leverage_adjusted_drawdown_profitable: 35,
+  max_leverage_adjusted_drawdown_profitable_plus: 30,
+  profitable_plus_min_drawdown_control_ratio: 2.0,
 };
 
 export type AutoSuggestInput = {
@@ -299,18 +429,19 @@ export type AutoSuggestResult = {
   label: BacktestLabel;
   reason: string;
   confidence: 'low' | 'normal';
-  /** 0–100 backtest quality score (independent of label). */
   quality_score: number;
   reason_codes: string[];
   positive_drivers: Record<string, number | string>;
   negative_drivers: Record<string, number | string>;
   safety_overrides: string[];
   summary: string;
+  /** New: classified sample bucket for this row. */
+  sample_bucket: SampleBucket;
+  /** New: confidence multiplier 0..1 used downstream by calibration. */
+  sample_confidence_weight: number;
   config_version: string;
 };
 
-/** Drawdown-control ratio (net / DD), prefers normalized/leverage-aware values,
- *  with guardrails: returns null when DD is missing or zero; clamps extremes. */
 function drawdownControlRatio(input: AutoSuggestInput): { ratio: number | null; source: string } {
   const pairs: Array<[number | null | undefined, number | null | undefined, string]> = [
     [input.leverage_adjusted_net_profit_pct, input.leverage_adjusted_drawdown_pct, 'leverage_adjusted'],
@@ -320,7 +451,7 @@ function drawdownControlRatio(input: AutoSuggestInput): { ratio: number | null; 
   for (const [n, d, src] of pairs) {
     if (n == null || d == null) continue;
     const dd = Math.abs(d);
-    if (dd < 0.5) continue; // guardrail: avoid divide-by-near-zero
+    if (dd < 0.5) continue;
     const r = n / dd;
     return { ratio: Math.max(-10, Math.min(10, r)), source: src };
   }
@@ -335,19 +466,14 @@ export function computeBacktestQualityScore(input: AutoSuggestInput): {
   if (trades === 0) return { score: 0, components: { no_trades: 0 } };
 
   const components: Record<string, number> = {};
-  // Profitability (0–35)
   const np = input.net_profit_pct;
   components.profitability = np == null ? 10 : Math.max(0, Math.min(35, 17 + np * 0.6));
-  // Profit factor (0–20)
   const pf = input.profit_factor;
   components.profit_factor = pf == null ? 5 : Math.max(0, Math.min(20, (pf - 1) * 20));
-  // Drawdown control (0–20)
   const { ratio } = drawdownControlRatio(input);
   components.drawdown_control = ratio == null ? 8 : Math.max(0, Math.min(20, ratio * 8 + 8));
-  // Win rate (0–10)
   const wr = input.win_rate_pct;
   components.win_rate = wr == null ? 4 : Math.max(0, Math.min(10, (wr - 30) * 0.3));
-  // Sample size (0–15)
   const tradeBoost = Math.min(15, Math.log10(Math.max(trades, 1) + 1) * 12);
   components.sample_size = tradeBoost;
 
@@ -356,16 +482,15 @@ export function computeBacktestQualityScore(input: AutoSuggestInput): {
 }
 
 /**
- * Auto-suggest a label with full diagnostics. Always a SUGGESTION.
+ * Suggest a label. Always a SUGGESTION — never overrides manual confirmation.
  *
  * Priority:
- *   1. num_trades == 0                 → no_trades  (separate from rejected)
- *   2. net_profit_pct < 0              → rejected_backtest (safety override)
- *   3. profit_factor < 1.0             → rejected_backtest (safety override)
- *   4. extreme leverage-adj drawdown   → rejected/marginal cap (safety override)
- *   5. Profitable+ gates               → profitable_plus
- *   6. Profitable gates                → profitable
- *   7. Otherwise                        → marginal (low confidence if trades < min)
+ *   1. num_trades == 0                      → no_trades
+ *   2. net < 0 / PF < 1 / extreme lev DD     → rejected_backtest (safety)
+ *   3. Profitable+ strict gates              → profitable_plus
+ *   4. Profitable gates                      → profitable
+ *   5. PF below marginal floor               → rejected_backtest
+ *   6. Otherwise                              → marginal
  */
 export function autoSuggestLabel(
   input: AutoSuggestInput,
@@ -382,13 +507,15 @@ export function autoSuggestLabel(
   const lDd =
     input.leverage_adjusted_drawdown_pct == null ? null : Math.abs(input.leverage_adjusted_drawdown_pct);
 
+  const bucket = sampleBucketFor(trades);
+  const sampleW = SAMPLE_CONFIDENCE_WEIGHT[bucket];
   const { score: qScore } = computeBacktestQualityScore(input);
-  const reason_codes: string[] = [];
+  const reason_codes: string[] = [`sample:${bucket}`];
   const positive_drivers: Record<string, number | string> = {};
   const negative_drivers: Record<string, number | string> = {};
   const safety_overrides: string[] = [];
 
-  // 1) No-trades — separate label
+  // 1) No trades
   if (trades === 0) {
     reason_codes.push('no_trades');
     return {
@@ -401,18 +528,22 @@ export function autoSuggestLabel(
       negative_drivers,
       safety_overrides,
       summary: 'No trades during test period — no setup found.',
+      sample_bucket: bucket,
+      sample_confidence_weight: sampleW,
       config_version: LABEL_CONFIG_VERSION,
     };
   }
 
-  // Collect drivers for diagnostics
+  // Diagnostics
   if (pf != null) (pf >= 1 ? positive_drivers : negative_drivers).profit_factor = Number(pf.toFixed(2));
   if (np != null) (np >= 0 ? positive_drivers : negative_drivers).net_profit_pct = Number(np.toFixed(2));
   if (nNet != null) (nNet >= 0 ? positive_drivers : negative_drivers).normalized_net_profit_pct = Number(nNet.toFixed(2));
   if (lDd != null) negative_drivers.leverage_adjusted_drawdown_pct = Number(lDd.toFixed(2));
   if (wr != null) (wr >= 50 ? positive_drivers : negative_drivers).win_rate_pct = Number(wr.toFixed(1));
+  positive_drivers.sample_bucket = bucket;
+  positive_drivers.sample_confidence_weight = sampleW;
 
-  // 2-4) Safety overrides → rejected
+  // 2) Safety overrides
   if (np != null && np < 0) {
     safety_overrides.push('negative_net_profit');
     reason_codes.push('negative_net_profit');
@@ -434,118 +565,142 @@ export function autoSuggestLabel(
     return {
       label: 'rejected_backtest',
       reason: `${why} (safety override).`,
-      confidence: trades < thresholds.min_trades ? 'low' : 'normal',
+      confidence: sampleW < 0.5 ? 'low' : 'normal',
       quality_score: qScore,
       reason_codes,
       positive_drivers,
       negative_drivers,
       safety_overrides,
       summary: `Rejected by safety override: ${safety_overrides.join(', ')}.`,
+      sample_bucket: bucket,
+      sample_confidence_weight: sampleW,
       config_version: LABEL_CONFIG_VERSION,
     };
   }
 
-  // Low trade count handling — never auto-rejects on its own; confidence drops
-  const lowSample = trades < thresholds.min_trades;
-  if (lowSample) reason_codes.push('low_trade_count');
-
-  // 5) Profitable+
+  // Drawdown control ratio (for diagnostics + Profitable+ gate)
   const { ratio: ddCtrlRatio, source: ddCtrlSrc } = drawdownControlRatio(input);
   if (ddCtrlRatio != null) {
     (ddCtrlRatio >= 1 ? positive_drivers : negative_drivers)[`drawdown_control_${ddCtrlSrc}`] =
       Number(ddCtrlRatio.toFixed(2));
   }
 
-  if (
+  // Helper: "meaningful" normalized net check that tolerates missing data
+  const normNetMeetsProfitable =
+    nNet != null
+      ? nNet >= thresholds.profitable_min_normalized_net_profit_pct
+      : np != null && np >= 0;
+  const normNetMeetsProfitablePlus =
+    nNet != null
+      ? nNet >= thresholds.profitable_plus_min_normalized_net_profit_pct
+      : np != null && np >= 20;
+
+  // 3) Profitable+ — strict
+  const meetsPlus =
+    trades >= thresholds.profitable_plus_min_trades &&
     pf != null && pf >= thresholds.profitable_plus_min_profit_factor &&
-    nNet != null && nNet >= thresholds.profitable_plus_min_normalized_net_profit_pct &&
+    wr != null && wr >= thresholds.profitable_plus_min_win_rate_pct &&
+    normNetMeetsProfitablePlus &&
     (lDd == null || lDd <= thresholds.max_leverage_adjusted_drawdown_profitable_plus) &&
     (lNet == null || lNet > 0) &&
-    (ddCtrlRatio == null || ddCtrlRatio >= 1.5)
-  ) {
+    (ddCtrlRatio == null || ddCtrlRatio >= thresholds.profitable_plus_min_drawdown_control_ratio);
+
+  if (meetsPlus) {
     reason_codes.push('profitable_plus_gates_met');
     return {
       label: 'profitable_plus',
-      reason: `PF ${pf.toFixed(2)}, normalized net ${nNet.toFixed(1)}%, leverage-adj DD ${lDd != null ? lDd.toFixed(1) + '%' : '—'}.`,
-      confidence: lowSample ? 'low' : 'normal',
+      reason: `PF ${pf!.toFixed(2)}, WR ${wr!.toFixed(0)}%, norm net ${nNet != null ? nNet.toFixed(1) + '%' : '—'}, lev-adj DD ${lDd != null ? lDd.toFixed(1) + '%' : '—'}, trades ${trades}.`,
+      confidence: sampleW < 0.75 ? 'low' : 'normal',
       quality_score: qScore,
       reason_codes,
       positive_drivers,
       negative_drivers,
       safety_overrides,
-      summary: `Profitable+ gates met${lowSample ? ` — confidence reduced (${trades} trades).` : '.'}`,
+      summary: `Profitable+ gates met (${SAMPLE_BUCKET_LABEL[bucket]}).`,
+      sample_bucket: bucket,
+      sample_confidence_weight: sampleW,
       config_version: LABEL_CONFIG_VERSION,
     };
   }
 
-  // 6) Profitable
-  if (
+  // 4) Profitable — selective-strategy friendly
+  const meetsProfitable =
+    trades >= thresholds.profitable_min_trades &&
     pf != null && pf >= thresholds.profitable_min_profit_factor &&
-    nNet != null && nNet >= thresholds.profitable_min_normalized_net_profit_pct &&
+    (wr == null || wr >= thresholds.profitable_min_win_rate_pct) &&
+    normNetMeetsProfitable &&
     (lDd == null || lDd <= thresholds.max_leverage_adjusted_drawdown_profitable) &&
-    (np == null || np >= 0)
-  ) {
+    (np == null || np >= 0);
+
+  if (meetsProfitable) {
     reason_codes.push('profitable_gates_met');
     return {
       label: 'profitable',
-      reason: `PF ${pf.toFixed(2)}, normalized net ${nNet.toFixed(1)}% meets Profitable gates.`,
-      confidence: lowSample ? 'low' : 'normal',
+      reason: `PF ${pf!.toFixed(2)}${wr != null ? `, WR ${wr.toFixed(0)}%` : ''}${nNet != null ? `, norm net ${nNet.toFixed(1)}%` : ''} — meets Profitable gates (${trades} trades).`,
+      confidence: sampleW < 0.5 ? 'low' : 'normal',
       quality_score: qScore,
       reason_codes,
       positive_drivers,
       negative_drivers,
       safety_overrides,
-      summary: `Profitable gates met${lowSample ? ` — confidence reduced (${trades} trades).` : '.'}`,
+      summary: `Profitable gates met (${SAMPLE_BUCKET_LABEL[bucket]}).`,
+      sample_bucket: bucket,
+      sample_confidence_weight: sampleW,
       config_version: LABEL_CONFIG_VERSION,
     };
   }
 
-  // PF below marginal floor → rejected
+  // 5) PF below marginal floor → rejected
   if (pf != null && pf < thresholds.marginal_min_profit_factor) {
     reason_codes.push('profit_factor_below_marginal_floor');
     return {
       label: 'rejected_backtest',
       reason: `Profit factor ${pf.toFixed(2)} < ${thresholds.marginal_min_profit_factor}.`,
-      confidence: lowSample ? 'low' : 'normal',
+      confidence: sampleW < 0.5 ? 'low' : 'normal',
       quality_score: qScore,
       reason_codes,
       positive_drivers,
       negative_drivers,
       safety_overrides,
       summary: `Profit factor below marginal floor.`,
+      sample_bucket: bucket,
+      sample_confidence_weight: sampleW,
       config_version: LABEL_CONFIG_VERSION,
     };
   }
 
-  // 7) Marginal (weak positive)
+  // 6) Marginal
   reason_codes.push('marginal_weak_positive');
   const bits: string[] = [];
   if (pf != null) bits.push(`PF ${pf.toFixed(2)}`);
+  if (wr != null) bits.push(`WR ${wr.toFixed(0)}%`);
   if (nNet != null) bits.push(`norm net ${nNet.toFixed(1)}%`);
   if (lDd != null) bits.push(`lev-adj DD ${lDd.toFixed(1)}%`);
   return {
     label: 'marginal',
-    reason: `Doesn't meet Profitable gates (${bits.join(', ') || 'weak metrics'}).`,
-    confidence: lowSample ? 'low' : 'normal',
+    reason: `Doesn't meet Profitable gates (${bits.join(', ') || 'weak metrics'}, ${trades} trades).`,
+    confidence: sampleW < 0.5 ? 'low' : 'normal',
     quality_score: qScore,
     reason_codes,
     positive_drivers,
     negative_drivers,
     safety_overrides,
-    summary: `Marginal — weak positive metrics${lowSample ? `, low trade count (${trades}).` : '.'}`,
+    summary: `Marginal — weak positive metrics (${SAMPLE_BUCKET_LABEL[bucket]}).`,
+    sample_bucket: bucket,
+    sample_confidence_weight: sampleW,
     config_version: LABEL_CONFIG_VERSION,
   };
 }
 
-/** Back-compat shim: legacy callers that just want a label. */
+/** Back-compat shim. */
 export function autoSuggestLabelOnly(input: AutoSuggestInput): BacktestLabel {
   return autoSuggestLabel(input).label;
 }
 
 /**
- * Detects rows that should be flagged for review when the suggested label
- * disagrees with the confirmed label (or shows red flags vs. the chosen label).
- * Returns null when no review is needed.
+ * Flags rows for review when the suggestion disagrees with the confirmed
+ * label or when the confirmed label looks suspiciously strict given the
+ * positive drivers.
  */
 export function detectNeedsReview(
   confirmedLabel: BacktestLabel,
@@ -557,9 +712,8 @@ export function detectNeedsReview(
       reason: `Suggested label "${suggestion.label}" differs from confirmed "${confirmedLabel}".`,
     };
   }
-  // Confirmed marginal/rejected but drivers look positive → flag for review
   if ((confirmedLabel === 'marginal' || confirmedLabel === 'rejected_backtest') &&
-      Object.keys(suggestion.positive_drivers).length >= 3 &&
+      Object.keys(suggestion.positive_drivers).length >= 4 &&
       suggestion.safety_overrides.length === 0) {
     return {
       needs_review: true,
