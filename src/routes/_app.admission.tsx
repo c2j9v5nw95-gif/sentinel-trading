@@ -248,7 +248,40 @@ function AdmissionPage() {
                 {m === 'strict' ? 'Strict Robustness' : 'Trend Adjusted'}
               </button>
             ))}
+
+            <span className="text-xs text-muted-foreground ml-4 mr-1">HTQ Lookback:</span>
+            {([5, 10, 14, 30, 90] as Lookback[]).map((d) => (
+              <button
+                key={d}
+                onClick={() => { setLookback(d); if (d !== 90) setConfirmLongRun(false); }}
+                className={`rounded px-2 py-1 text-xs ${
+                  lookback === d ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                }`}
+                title={d < 14 ? 'Emerging mode — informativ only, ingen approval' : `${d} dager historisk lookback`}
+              >
+                {d}d{d < 14 ? '*' : ''}
+              </button>
+            ))}
           </div>
+
+          {lookback === 90 && (
+            <div className="rounded border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-700">
+              ⚠ 90d lookback henter ~2160 1h-bars per symbol (3 sider). Forventet
+              kjøretid: 5-10× lengre enn 30d. Bekreft før start.
+              <label className="ml-3 inline-flex items-center gap-1">
+                <input type="checkbox" checked={confirmLongRun} onChange={(e) => setConfirmLongRun(e.target.checked)} />
+                Jeg forstår
+              </label>
+            </div>
+          )}
+          {lookback < 14 && (
+            <div className="rounded border border-purple-500/40 bg-purple-500/10 p-2 text-xs text-purple-700">
+              ℹ Emerging mode ({lookback}d): HTQ er informativ. Trend-adjusted
+              status promoteres ikke til Approved/Trend Candidate uten egen
+              robusthet.
+            </div>
+          )}
+
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
