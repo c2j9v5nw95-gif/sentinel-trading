@@ -138,7 +138,7 @@ export const recomputeSuggestedLabels = createServerFn({ method: 'POST' })
       const nextLabel = isManual ? (row.label as BacktestLabel) : auto.label;
       const review = detectNeedsReview(nextLabel, auto);
 
-      const patch: Record<string, unknown> = {
+      const patch: Record<string, any> = {
         auto_suggested_label: auto.label,
         backtest_quality_score: auto.quality_score,
         classification_reason_codes: auto.reason_codes,
@@ -200,7 +200,7 @@ export const overrideBacktestLabel = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const patch: Record<string, unknown> = {
+    const patch: Record<string, any> = {
       label: data.label,
       label_source: 'manual_override',
       label_overridden_at: new Date().toISOString(),

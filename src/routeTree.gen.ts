@@ -26,6 +26,7 @@ import { Route as AppPositionsRouteImport } from './routes/_app.positions'
 import { Route as AppOverviewRouteImport } from './routes/_app.overview'
 import { Route as AppKontrollsenterRouteImport } from './routes/_app.kontrollsenter'
 import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
+import { Route as AppCalibrationRouteImport } from './routes/_app.calibration'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAnalyticsDebugRouteImport } from './routes/_app.analytics-debug'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
@@ -120,6 +121,11 @@ const AppInvariantsRoute = AppInvariantsRouteImport.update({
   path: '/invariants',
   getParentRoute: () => AppRoute,
 } as any)
+const AppCalibrationRoute = AppCalibrationRouteImport.update({
+  id: '/calibration',
+  path: '/calibration',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAuditRoute = AppAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
@@ -177,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
+  '/calibration': typeof AppCalibrationRoute
   '/invariants': typeof AppInvariantsRoute
   '/kontrollsenter': typeof AppKontrollsenterRoute
   '/overview': typeof AppOverviewRoute
@@ -203,6 +210,7 @@ export interface FileRoutesByTo {
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
+  '/calibration': typeof AppCalibrationRoute
   '/invariants': typeof AppInvariantsRoute
   '/kontrollsenter': typeof AppKontrollsenterRoute
   '/overview': typeof AppOverviewRoute
@@ -232,6 +240,7 @@ export interface FileRoutesById {
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
   '/_app/audit': typeof AppAuditRoute
+  '/_app/calibration': typeof AppCalibrationRoute
   '/_app/invariants': typeof AppInvariantsRoute
   '/_app/kontrollsenter': typeof AppKontrollsenterRoute
   '/_app/overview': typeof AppOverviewRoute
@@ -261,6 +270,7 @@ export interface FileRouteTypes {
     | '/alerts'
     | '/analytics-debug'
     | '/audit'
+    | '/calibration'
     | '/invariants'
     | '/kontrollsenter'
     | '/overview'
@@ -287,6 +297,7 @@ export interface FileRouteTypes {
     | '/alerts'
     | '/analytics-debug'
     | '/audit'
+    | '/calibration'
     | '/invariants'
     | '/kontrollsenter'
     | '/overview'
@@ -315,6 +326,7 @@ export interface FileRouteTypes {
     | '/_app/alerts'
     | '/_app/analytics-debug'
     | '/_app/audit'
+    | '/_app/calibration'
     | '/_app/invariants'
     | '/_app/kontrollsenter'
     | '/_app/overview'
@@ -466,6 +478,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppInvariantsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/calibration': {
+      id: '/_app/calibration'
+      path: '/calibration'
+      fullPath: '/calibration'
+      preLoaderRoute: typeof AppCalibrationRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/audit': {
       id: '/_app/audit'
       path: '/audit'
@@ -537,6 +556,7 @@ interface AppRouteChildren {
   AppAlertsRoute: typeof AppAlertsRoute
   AppAnalyticsDebugRoute: typeof AppAnalyticsDebugRoute
   AppAuditRoute: typeof AppAuditRoute
+  AppCalibrationRoute: typeof AppCalibrationRoute
   AppInvariantsRoute: typeof AppInvariantsRoute
   AppKontrollsenterRoute: typeof AppKontrollsenterRoute
   AppOverviewRoute: typeof AppOverviewRoute
@@ -554,6 +574,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAlertsRoute: AppAlertsRoute,
   AppAnalyticsDebugRoute: AppAnalyticsDebugRoute,
   AppAuditRoute: AppAuditRoute,
+  AppCalibrationRoute: AppCalibrationRoute,
   AppInvariantsRoute: AppInvariantsRoute,
   AppKontrollsenterRoute: AppKontrollsenterRoute,
   AppOverviewRoute: AppOverviewRoute,
