@@ -443,6 +443,15 @@ export function BacktestResultDialog({
         extracted_raw_text: extraction?.raw_text ?? null,
         extracted_metrics: extraction?.metrics ?? null,
         field_confidences: extraction?.field_confidences ?? null,
+        // Strategy sizing assumptions (defaults reflect live bot)
+        initial_capital_usd: Number(sizing.initial_capital_usd) || 10000,
+        position_size_type: 'percent_of_equity' as const,
+        position_size_pct: sizingNumeric.position_size_pct,
+        leverage: sizingNumeric.leverage,
+        leverage_enabled: sizingNumeric.leverage_enabled,
+        sizing_assumption_source: (sizingTouched ? 'manual_override' : 'user_confirmed') as
+          | 'manual_override'
+          | 'user_confirmed',
       };
       return await createBacktestResult({ data: payload as any });
     },
