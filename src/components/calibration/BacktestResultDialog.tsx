@@ -143,6 +143,7 @@ export function BacktestResultDialog({
   const [tab, setTab] = useState<'manual' | 'screenshot'>('manual');
   const [form, setForm] = useState<FormFields>(emptyForm);
   const [labelTouched, setLabelTouched] = useState(false);
+  const [noTrades, setNoTrades] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Screenshot/OCR state
@@ -177,6 +178,7 @@ export function BacktestResultDialog({
     if (prefill?.candles_tested) fresh.candles_tested = String(prefill.candles_tested);
     setForm(fresh);
     setLabelTouched(false);
+    setNoTrades(false);
     setError(null);
     setStage('idle');
     setStoragePath(null);
@@ -305,6 +307,9 @@ export function BacktestResultDialog({
       const intish = (s: string) => (s.trim() === '' ? null : Math.round(Number(s)));
       const extractionSource = ocrUsed ? 'screenshot_ocr' : 'manual';
       const extractionStatus = 'confirmed';
+      const notesFinal = noTrades
+        ? `No trades in test period.${form.notes ? ` ${form.notes}` : ''}`
+        : form.notes || null;
       const payload = {
         symbol: form.symbol.trim().toUpperCase(),
         test_date: form.test_date,
@@ -315,23 +320,23 @@ export function BacktestResultDialog({
         timeframe: form.timeframe,
         candles_tested: parseInt(form.candles_tested, 10) || 9000,
         lookback_equivalent_days: lookbackDays,
-        net_profit_pct: numeric(form.net_profit_pct),
-        net_profit_usd: numeric(form.net_profit_usd),
-        max_drawdown_pct: numeric(form.max_drawdown_pct),
-        max_drawdown_usd: numeric(form.max_drawdown_usd),
-        profit_factor: numeric(form.profit_factor),
-        win_rate_pct: numeric(form.win_rate_pct),
-        num_trades: intish(form.num_trades),
-        avg_pnl_pct: numeric(form.avg_pnl_pct),
-        avg_bars_in_trade: numeric(form.avg_bars_in_trade),
-        expected_payoff_usd: numeric(form.expected_payoff_usd),
-        sharpe_ratio: numeric(form.sharpe_ratio),
-        largest_profit_usd: numeric(form.largest_profit_usd),
-        largest_loss_usd: numeric(form.largest_loss_usd),
-        profitable_trades_count: intish(form.profitable_trades_count),
-        losing_trades_count: intish(form.losing_trades_count),
-        label: form.label,
-        notes: form.notes || null,
+        net_profit_pct: noTrades ? 0 : numeric(form.net_profit_pct),
+        net_profit_usd: noTrades ? 0 : numeric(form.net_profit_usd),
+        max_drawdown_pct: noTrades ? 0 : numeric(form.max_drawdown_pct),
+        max_drawdown_usd: noTrades ? 0 : numeric(form.max_drawdown_usd),
+        profit_factor: noTrades ? 0 : numeric(form.profit_factor),
+        win_rate_pct: noTrades ? null : numeric(form.win_rate_pct),
+        num_trades: noTrades ? 0 : intish(form.num_trades),
+        avg_pnl_pct: noTrades ? null : numeric(form.avg_pnl_pct),
+        avg_bars_in_trade: noTrades ? null : numeric(form.avg_bars_in_trade),
+        expected_payoff_usd: noTrades ? null : numeric(form.expected_payoff_usd),
+        sharpe_ratio: noTrades ? null : numeric(form.sharpe_ratio),
+        largest_profit_usd: noTrades ? null : numeric(form.largest_profit_usd),
+        largest_loss_usd: noTrades ? null : numeric(form.largest_loss_usd),
+        profitable_trades_count: noTrades ? 0 : intish(form.profitable_trades_count),
+        losing_trades_count: noTrades ? 0 : intish(form.losing_trades_count),
+        label: noTrades ? ('rejected_backtest' as Label) : form.label,
+        notes: notesFinal,
         screenshot_storage_path: storagePath,
         extraction_source: extractionSource as 'manual' | 'screenshot_ocr',
         extraction_status: extractionStatus as 'manual' | 'confirmed',
@@ -483,9 +488,33 @@ export function BacktestResultDialog({
           </Field>
         </div>
 
+        <div className="mt-3 rounded border border-border bg-muted/30 p-2">
+          <label className="flex items-start gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={noTrades}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setNoTrades(v);
+                if (v) {
+                  setLabelTouched(true);
+                  setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+                }
+              }}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium">No trades in test period</span>
+              <span className="block text-muted-foreground">
+                Strategien åpnet ingen posisjoner i perioden. Lagres som <code>rejected_backtest</code> med <code>num_trades = 0</code>; metrics-feltene under ignoreres.
+              </span>
+            </span>
+          </label>
+        </div>
+
         <div className="mt-3">
           <h4 className="text-xs font-semibold text-muted-foreground mb-2">Backtest metrics</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className={`grid grid-cols-2 md:grid-cols-3 gap-3 ${noTrades ? 'opacity-40 pointer-events-none' : ''}`}>
             {OCR_FIELDS.map((k) => (
               <Field key={k} label={prettyLabel(k)} confidence={fc[k as string]}>
                 <Input
@@ -493,6 +522,7 @@ export function BacktestResultDialog({
                   onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
                   className={confidenceClass(fc[k as string])}
                   inputMode="decimal"
+                  disabled={noTrades}
                 />
               </Field>
             ))}
