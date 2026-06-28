@@ -397,7 +397,7 @@ function RecommendationsPage() {
     <div className="space-y-4">
       <PageHeader
         title="Recommendation Center"
-        subtitle="Decision support · sorts coins into Add / Keep / Watch / Red flag. No changes to execution or active symbols."
+        description="Decision support · sorts coins into Add / Keep / Watch / Red flag. No changes to execution or active symbols."
       />
 
       {/* Summary strip */}
@@ -417,14 +417,14 @@ function RecommendationsPage() {
       </div>
 
       {runStale && (
-        <Card className="border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-900">
+        <div className="rounded-lg border border-border bg-card shadow-sm border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-900">
           Admission data may be stale — run the screener again from the{' '}
           <Link to="/admission" className="underline">Admission page</Link>.
-        </Card>
+        </div>
       )}
 
       {/* Filters */}
-      <Card className="flex flex-wrap items-end gap-3 px-3 py-3 text-xs">
+      <div className="rounded-lg border border-border bg-card shadow-sm flex flex-wrap items-end gap-3 px-3 py-3 text-xs">
         <div>
           <div className="mb-0.5 text-muted-foreground">Show</div>
           <select className="rounded border border-border bg-background px-2 py-1" value={showFilter} onChange={(e) => setShowFilter(e.target.value as any)}>
@@ -454,7 +454,7 @@ function RecommendationsPage() {
             <option value={9999}>All</option>
           </select>
         </div>
-      </Card>
+      </div>
 
       {(resultsQ.isLoading || activeQ.isLoading) ? (
         <Card><EmptyState title="Loading recommendations…" /></Card>
@@ -531,7 +531,7 @@ function Section({
   tone?: 'red';
 }) {
   return (
-    <Card className="overflow-hidden">
+    <div className="rounded-lg border border-border bg-card shadow-sm overflow-hidden">
       <div className={`flex items-baseline justify-between border-b border-border px-3 py-2 ${tone === 'red' ? 'bg-red-500/5' : ''}`}>
         <div>
           <div className="text-sm font-semibold">{title}</div>
@@ -620,7 +620,7 @@ function Section({
           </tbody>
         </table>
       )}
-    </Card>
+    </div>
   );
 }
 
