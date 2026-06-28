@@ -26,6 +26,31 @@ import {
 
 type Label = 'no_trades' | 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
+type SortKey =
+  | 'symbol'
+  | 'test_date'
+  | 'label'
+  | 'auto_suggested_label'
+  | 'label_source'
+  | 'backtest_quality_score'
+  | 'num_trades'
+  | 'win_rate_pct'
+  | 'net_profit_pct'
+  | 'normalized_net_profit_pct'
+  | 'net_profit_usd'
+  | 'max_drawdown_pct'
+  | 'profit_factor'
+  | 'needs_review'
+  | 'strategy_version';
+
+const LABEL_RANK: Record<Label | string, number> = {
+  profitable_plus: 5,
+  profitable: 4,
+  marginal: 3,
+  rejected_backtest: 2,
+  no_trades: 1,
+};
+
 const LABELS: Array<{ value: Label | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'no_trades', label: 'No Trades' },
