@@ -286,6 +286,21 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
       const trendCandidate = rows.filter((r) => r.status === 'trend_candidate').length;
       const rejected = rows.filter((r) => r.status === 'rejected').length;
 
+      // Best-effort calibration: never blocks admission completion.
+      const includeCalibration = data.includeCalibration ?? true;
+      let calibrationSummary: { ok: number; unavailable: number; used: number } | null = null;
+      let calibrationError: string | null = null;
+      if (includeCalibration && rows.length > 0) {
+        try {
+          const { runCalibrationForRunInline } = await import('@/lib/calibration/run-inline.server');
+          const res = await runCalibrationForRunInline(supabase, runId, data.calibrationStrategyVersion ?? null);
+          calibrationSummary = { ok: res.rows_ok, unavailable: res.rows_unavailable, used: res.observations_used };
+        } catch (err) {
+          calibrationError = err instanceof Error ? err.message : String(err);
+          console.warn('[admission] calibration failed:', calibrationError);
+        }
+      }
+
       await supabase
         .from('coin_admission_runs')
         .update({
@@ -305,6 +320,8 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         watchlist,
         trend_candidate: trendCandidate,
         rejected,
+        calibration: calibrationSummary,
+        calibration_error: calibrationError,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err);
