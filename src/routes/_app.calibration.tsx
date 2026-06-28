@@ -201,24 +201,29 @@ function CalibrationPage() {
 
   const rows = useMemo(() => {
     const all = (reviewQ.data?.rows ?? []) as any[];
-    const filtered = showNoTrades ? all : all.filter((r) => r.label !== 'no_trades');
+    const noTradeFiltered = showNoTrades ? all : all.filter((r) => r.label !== 'no_trades');
+    const bucketFiltered =
+      bucketFilter === 'all'
+        ? noTradeFiltered
+        : noTradeFiltered.filter((r) => (r.sample_bucket ?? null) === bucketFilter);
+    const filtered = bucketFiltered.filter((r) => passesQuickFilter(r, quickFilter));
     return [...filtered].sort((a, b) => {
       const av = sortValue(a, sortKey);
       const bv = sortValue(b, sortKey);
       const aNull = av === null;
       const bNull = bv === null;
       if (aNull && bNull) return 0;
-      if (aNull) return 1; // nulls sink to bottom
-      if (bNull) return -1; // nulls sink to bottom
+      if (aNull) return 1;
+      if (bNull) return -1;
       if (av < bv) return sortDirection === 'desc' ? 1 : -1;
       if (av > bv) return sortDirection === 'desc' ? -1 : 1;
-      // stable tie-break: newest test_date first, then symbol
       const ta = a.test_date ? new Date(a.test_date).getTime() : 0;
       const tb = b.test_date ? new Date(b.test_date).getTime() : 0;
       if (ta !== tb) return tb - ta;
       return (a.symbol ?? '').localeCompare(b.symbol ?? '');
     });
-  }, [reviewQ.data?.rows, showNoTrades, sortKey, sortDirection]);
+  }, [reviewQ.data?.rows, showNoTrades, bucketFilter, quickFilter, sortKey, sortDirection]);
+
 
   const dryRun = useMutation({
     mutationFn: () =>
