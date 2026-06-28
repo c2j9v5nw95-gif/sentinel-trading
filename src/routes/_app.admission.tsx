@@ -514,6 +514,17 @@ function AdmissionPage() {
               <strong>{startRun.data.watchlist}</strong> watchlist /{' '}
               <strong>{startRun.data.trend_candidate}</strong> trend candidate /{' '}
               <strong>{startRun.data.rejected}</strong> rejected
+              {startRun.data.calibration && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Calibration: {startRun.data.calibration.ok} ok / {startRun.data.calibration.unavailable} unavailable ·{' '}
+                  {startRun.data.calibration.used} observations brukt
+                </div>
+              )}
+              {startRun.data.calibration_error && (
+                <div className="mt-1 text-xs text-yellow-700">
+                  Calibration feilet (admission fullført): {startRun.data.calibration_error}
+                </div>
+              )}
             </div>
           )}
         </div>
