@@ -36,7 +36,11 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'Last BT Date': 'Test-dato på siste registrerte backtest (kan være satt manuelt).',
   'Last BT Ver': 'Strategy version brukt på siste registrerte backtest.',
   '# BT': 'Antall backtest-observasjoner registrert for dette symbolet (append-only).',
-
+  'BT Score': 'Backtest Quality Score (0–100) for siste backtest av dette symbolet. no_trades → N/A. Marker med ⚠ hvis needs_review.',
+  'BT Class': 'Klassifisering av siste backtest. no_trades vises som "No Setup".',
+  'BT Summary': 'Kort menneskelig oppsummering av siste backtest (drivers/safety).',
+  'Calib Score': 'Calibration Score: hvor mye dagens coin-profil ligner historiske profitable observasjoner (kNN).',
+  'Priority': 'Candidate Priority Score (0–100) — kombinert prioriteringsscore for videre vurdering. Endrer IKKE admission-status.',
 };
 
 function HeaderCell({
