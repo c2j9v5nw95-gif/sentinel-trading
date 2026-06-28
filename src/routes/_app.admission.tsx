@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { startAdmissionRun } from '@/lib/admission/admission.functions';
 import { PageHeader, Card, EmptyState } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { BacktestResultDialog, type BacktestDialogPrefill } from '@/components/calibration/BacktestResultDialog';
 
 const COLUMN_TOOLTIPS: Record<string, string> = {
   Symbol: 'Bybit perp-symbol (LinearPerpetual USDT).',
