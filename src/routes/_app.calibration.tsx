@@ -158,7 +158,7 @@ function CalibrationPage() {
       }),
   });
 
-  const [sortKey, setSortKey] = useState<SortKey>('backtest_quality_score');
+  const [sortKey, setSortKey] = useState<SortKey>('net_profit_pct');
   const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
 
   const handleSort = useCallback((key: SortKey) => {
@@ -176,9 +176,18 @@ function CalibrationPage() {
     return [...filtered].sort((a, b) => {
       const av = sortValue(a, sortKey);
       const bv = sortValue(b, sortKey);
+      const aNull = av === null;
+      const bNull = bv === null;
+      if (aNull && bNull) return 0;
+      if (aNull) return 1; // nulls sink to bottom
+      if (bNull) return -1; // nulls sink to bottom
       if (av < bv) return sortDirection === 'desc' ? 1 : -1;
       if (av > bv) return sortDirection === 'desc' ? -1 : 1;
-      return 0;
+      // stable tie-break: newest test_date first, then symbol
+      const ta = a.test_date ? new Date(a.test_date).getTime() : 0;
+      const tb = b.test_date ? new Date(b.test_date).getTime() : 0;
+      if (ta !== tb) return tb - ta;
+      return (a.symbol ?? '').localeCompare(b.symbol ?? '');
     });
   }, [reviewQ.data?.rows, showNoTrades, sortKey, sortDirection]);
 
