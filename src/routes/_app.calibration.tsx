@@ -303,22 +303,22 @@ function CalibrationPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-muted-foreground border-b">
-                  <th className="py-1 pr-2">Symbol</th>
-                  <th className="py-1 pr-2">Test Date</th>
-                  <th className="py-1 pr-2">Label</th>
-                  <th className="py-1 pr-2">Suggested</th>
-                  <th className="py-1 pr-2">Source</th>
-                  <th className="py-1 pr-2 text-right">Quality</th>
-                  <th className="py-1 pr-2 text-right">Trades</th>
+                  <SortHeader label="Symbol" sortKey="symbol" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Test Date" sortKey="test_date" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Label" sortKey="label" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Suggested" sortKey="auto_suggested_label" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Source" sortKey="label_source" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Quality" sortKey="backtest_quality_score" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Trades" sortKey="num_trades" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
                   <th className="py-1 pr-2 text-right" title="Wins / Losses">W / L</th>
-                  <th className="py-1 pr-2 text-right">Win%</th>
-                  <th className="py-1 pr-2 text-right">Net%</th>
-                  <th className="py-1 pr-2 text-right" title="Position-size normalized net profit">Norm Net%</th>
-                  <th className="py-1 pr-2 text-right" title="Net profit in USD">Net $</th>
-                  <th className="py-1 pr-2 text-right" title="Max drawdown %">MaxDD%</th>
-                  <th className="py-1 pr-2 text-right">PF</th>
-                  <th className="py-1 pr-2">Review</th>
-                  <th className="py-1 pr-2 text-right">Strategy</th>
+                  <SortHeader label="Win%" sortKey="win_rate_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Net%" sortKey="net_profit_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Norm Net%" sortKey="normalized_net_profit_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" title="Position-size normalized net profit" />
+                  <SortHeader label="Net $" sortKey="net_profit_usd" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" title="Net profit in USD" />
+                  <SortHeader label="MaxDD%" sortKey="max_drawdown_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" title="Max drawdown %" />
+                  <SortHeader label="PF" sortKey="profit_factor" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Review" sortKey="needs_review" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Strategy" sortKey="strategy_version" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
                 </tr>
               </thead>
               <tbody>
