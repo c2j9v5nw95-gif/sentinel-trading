@@ -32,6 +32,11 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'Hard Kills': 'Brudd som ALDRI kan overstyres (f.eks. for ny, for lav likviditet, ekstreme wicks). Trigger automatisk Rejected.',
   Soft: 'Krav som KAN lempes ved høy HTQ i Trend Adjusted-modus (f.eks. lavere rank/turnover-grenser).',
   Reason: 'Kort menneskelig forklaring på statusen (hvilke regler som slo inn / hvorfor lempet).',
+  'Last BT Class': 'Siste registrerte backtest-label for symbolet (test_date desc, deretter created_at desc).',
+  'Last BT Date': 'Test-dato på siste registrerte backtest (kan være satt manuelt).',
+  'Last BT Ver': 'Strategy version brukt på siste registrerte backtest.',
+  '# BT': 'Antall backtest-observasjoner registrert for dette symbolet (append-only).',
+
 };
 
 function HeaderCell({
