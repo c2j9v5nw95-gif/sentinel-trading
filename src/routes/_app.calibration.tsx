@@ -23,6 +23,7 @@ import {
   overrideBacktestLabel,
   clearNeedsReview,
 } from '@/lib/calibration/label-review.functions';
+import { LabelDiagnosticsPanel } from '@/components/calibration/LabelDiagnosticsPanel';
 
 type Label = 'no_trades' | 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
@@ -226,6 +227,8 @@ function CalibrationPage() {
         title="Calibration · Label Review"
         description="Phase 0 — kontroller backtest-labels før calibration læres tungt. Endrer ikke execution, dispatcher, risk eller signaler."
       />
+
+      <LabelDiagnosticsPanel />
 
       <Card>
         <div className="space-y-3">

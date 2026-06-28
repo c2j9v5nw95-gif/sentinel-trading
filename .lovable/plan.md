@@ -1,136 +1,105 @@
 
-# Backtest Calibration v1 — final (insert-only observations, configurable decay, OCR review)
+# Label Review Support — Diagnose + Safe Batch Recompute
 
-Mål: feedback-loop Admission Screener → TradingView backtest → rask manuell rapportering (manuell ELLER screenshot+OCR med review) → kalibrert prioritering. Ingen endringer i execution-stacken.
+Mål: hjelpe deg fullføre Label Review før Fase A. To leveranser, i rekkefølge.
+Ingen endringer i execution-stacken, ingen endringer i kalibreringsvekter, ingen endringer i bestående confirmed labels eller TradingView-tall.
 
-## 1. Avklaringer (bekreftet)
+---
 
-- **Strategy version**: fritekst v1 + autocomplete fra tidligere brukte verdier.
-- **Calibration trigger**: `include_calibration` default ON, kan skrus av.
-- **Default strategy version i dialog**: siste brukt av innlogget bruker (`user_id = auth.uid()` order by `created_at desc`), fallback siste brukt globalt. Aldri MAX leksikalsk.
+## Leveranse 1 — Read-only Diagnose Report
 
-## 2. Datamodell
+### Plassering
+Nytt panel øverst på `/calibration` (kollapsbart, default åpent): **"Label Health Diagnostics"**.
 
-### Ny tabell `coin_backtest_results` (append-only observasjoner)
+### Data
+En ny server-function `getLabelDiagnostics` (`requireSupabaseAuth`, GET) som kjører ett enkelt aggregert SQL-spørring mot `coin_backtest_results` og returnerer:
 
-Kjerne:
-- `id uuid pk`, `user_id uuid`, `created_at`, `updated_at`
-- `symbol text`, `test_date date`, `strategy_version text`
-- `admission_result_id uuid` (nullable), `admission_run_id uuid` (nullable)
-- `screener_snapshot jsonb` (frosset profil-features: HTQ/htq_components, persistence, flips, smoothness_efficiency, mtf_alignment, wick_penalty, robustness, liquidity_tier, turnover_24h/7d, OI, spread, listing_age, current_momentum)
-- `timeframe text default '5m'`, `candles_tested int default 9000`, `lookback_equivalent_days numeric`
+1. **Distribusjon — confirmed label**: antall rader per `label` (alle 5 verdier inkl. `no_trades`).
+2. **Distribusjon — auto-suggested label**: antall rader per `auto_suggested_label`.
+3. **Disagreement matrix**: antall rader der `label != auto_suggested_label`, brutt ned per `(confirmed, suggested)`-par.
+4. **No-trades count**: `count(*) where num_trades = 0`.
+5. **Review-status**: `count(*) where needs_review = true`, fordelt på `label_source` (`auto` vs `manual_override`).
+6. **kNN exclusion breakdown** — speiler eksakt filteret i `run-inline.server.ts`:
+   - excluded: `label = 'no_trades'`
+   - excluded: `needs_review = true AND label_source = 'auto'`
+   - included: alt annet
+   - viser også included-tallet per `label`.
+7. **Per strategy_version**: antall rader, fordelt per `label`.
+8. **Mistenkelige rader** (4 separate counts + topp-10 liste per kategori):
+   - `marginal` / `rejected_backtest` med `net_profit_pct > 0`
+   - `marginal` / `rejected_backtest` med `profit_factor > 1`
+   - `marginal` / `rejected_backtest` med `win_rate_pct >= 50`
+   - rader merket `marginal` / `rejected_backtest` men hvor ny `autoSuggestLabel` ville foreslått `profitable` eller `profitable_plus` (krever client-side recompute fra screener_snapshot + sizing-derived fields — kjøres i samme server-function, kun lesing).
 
-Backtest-tall (confirmed):
-- `net_profit_pct`, `net_profit_usd`, `max_drawdown_pct`, `max_drawdown_usd`, `profit_factor`, `win_rate_pct`, `num_trades`, `avg_pnl_pct`, `avg_bars_in_trade`, `expected_payoff_usd`, `sharpe_ratio`, `largest_profit_usd`, `largest_loss_usd`, `profitable_trades_count`, `losing_trades_count`
+### UI
+- Tall vises i compact grid (samme stil som eksisterende dashboard-kort).
+- Hver mistenkelig kategori har en "Vis rader"-knapp som åpner et drawer med symbolene, test_date, label, suggested og knapp som linker til allerede eksisterende Label Review-modal.
+- "Eksporter CSV" for hver tabell (client-side).
+- Read-only. Ingen mutasjoner.
 
-Klassifisering:
-- `label text check in ('rejected_backtest','marginal','profitable','profitable_plus')`
-- `auto_suggested_label text`, `notes text`
+---
 
-Screenshot/OCR:
-- `screenshot_storage_path text` (permanent), **ingen permanent signed URL** — signert URL genereres on-demand
-- `extraction_source text check in ('manual','screenshot_ocr')`
-- `extraction_status text check in ('manual','pending_review','confirmed','failed')`
-- `extraction_confidence numeric`, `extracted_raw_text text`, `extracted_metrics jsonb`, `field_confidences jsonb`
+## Leveranse 2 — Safe Batch Recompute
 
-**Append-only**: `createBacktestResult` ALLTID INSERT. Samme symbol/strategy_version på ulike datoer = flere observasjoner (begge inngår i læring). `updateBacktestResult` brukes kun ved eksplisitt redigering av eksisterende rad.
+### Plassering
+Egen seksjon under Diagnostics: **"Recompute auto-suggested labels"**.
 
-**Soft-dedupe** (hindrer kun ekte dobbeltklikk): unique-constraint på `(user_id, symbol, strategy_version, test_date, COALESCE(admission_result_id, '00000000-…'))`. Tester samme symbol på ulike `test_date` eller uten admission_result_id blokkeres ikke.
+### Sekvens (alltid 2 trinn — aldri direkte skriv)
 
-Indekser: `(symbol, test_date desc)`, `(user_id, created_at desc)`, `(strategy_version)`, `(label)`.
+**Trinn A — Dry-run preview (default, ingen skrive-effekt):**
+Ny server-function `recomputeAutoLabels({ dry_run: true, strategy_version?: string, only_unreviewed?: boolean })`:
+1. Henter alle (eller filtrerte) rader inkl. screener_snapshot, sizing-felter og bestående TradingView-tall.
+2. For hver rad: kjør `withSizingDefaults` → `computeSizingDerived` → `autoSuggestLabel` med gjeldende thresholds fra `app_settings`.
+3. Returner per rad: `id, symbol, test_date, confirmed_label, current_auto, new_auto, new_quality_score, new_reason_codes, will_set_needs_review (boolean), changed (boolean)`.
+4. UI viser summary (X endringer av Y rader, fordelt på label-shift) + tabell med diff per rad + filter (kun endrede / kun no_trades-korreksjoner / etc.).
 
-GRANTs: `authenticated` insert/select/update/delete egne rader; `service_role` all. Ingen `anon`. RLS owner-only.
+**Trinn B — Commit (krever eksplisitt knapp + bekreftelses-modal):**
+Samme server-function med `dry_run: false`. Skriver KUN følgende kolonner:
+- `auto_suggested_label`
+- `backtest_quality_score`
+- `classification_reason_codes`
+- `classification_diagnostics` (positive/negative_drivers, safety_overrides, summary)
+- `classification_config_version`
+- `needs_review = true` HVIS `confirmed_label != new_auto_suggested_label` OG `label_source != 'manual_override'`
 
-### Utvidelse `coin_admission_results`
-`calibration_score numeric`, `calibration_confidence text`, `calibration_label text`, `calibration_neighbors jsonb`, `calibrated_strategy_fit numeric`, `calibration_strategy_version text`, `calibration_status text ('ok'|'unavailable')`, `calibration_reason text`, `calibration_computed_at timestamptz`.
+Hardkodede garantier:
+- Aldri rør `label` (confirmed)
+- Aldri rør `label_source` (manual_override beskyttes 100%)
+- Aldri rør TradingView-tall (`net_profit_pct`, `max_drawdown_pct`, `num_trades`, etc.)
+- Aldri rør `screener_snapshot`
+- `num_trades = 0` → `auto_suggested_label` settes alltid til `no_trades` (allerede slik `autoSuggestLabel` er implementert; vi legger en assertion i tillegg for å fail-fast hvis det noensinne skulle drifte)
+- Rader med `label_source = 'manual_override'` får aldri `needs_review = true` automatisk fra denne recompute-jobben
 
-### Utvidelse `app_settings` (calibration config)
-- `calibration_half_life_days int default 180`
-- `calibration_k int default 5`
-- `calibration_min_neighbors_medium int default 3`
-- `calibration_min_neighbors_high int default 6`
-- `calibration_default_strategy_version text` (nullable, fallback)
+### Audit
+Hver commit-kjøring skriver én rad til `audit_log` (action: `label_recompute_batch`) med summary av endringene (antall per label-shift, filter brukt, hvem som kjørte).
 
-### Storage
-Bucket `backtest-screenshots` (private). Path `{user_id}/{result_id}/{timestamp}.{ext}`. RLS: owner-only read/insert/delete. Signed URL genereres on-demand i `getBacktestScreenshotUrl(result_id)`-serverfunksjon (kort TTL, f.eks. 1t).
+---
 
-## 3. Backend
+## Teknisk plan (kort)
 
-`src/lib/calibration/`:
-- `scoring.ts` — heuristisk kNN over stabile profil-features:
-  - **Vektet** (calibration v1): Robustness, HTQ + komponenter (persistence, mtf_alignment, smoothness_efficiency, flip_frequency, wick_penalty), liquidity_tier, turnover_24h/7d, OI, spread, listing_age.
-  - **Lav/ingen vekt**: current_momentum (lagres og vises, ikke driver).
-  - Vektet euklidsk distanse, time-decay med **konfigurerbar half-life** (default 180d), label-prior. Returnerer score 0–100, confidence-tier (Low/Medium/High via terskler fra `app_settings`), top-k neighbors.
-- `calibration.functions.ts`:
-  - `listBacktestResults({ symbol?, strategy_version?, label?, limit, offset })`
-  - `createBacktestResult(payload)` — **alltid INSERT**; krever `extraction_status in ('manual','confirmed')`; soft-dedupe via unique-constraint returnerer typed error klienten viser pent.
-  - `updateBacktestResult(id, patch)` — kun eksplisitt redigering.
-  - `deleteBacktestResult(id)`
-  - `listStrategyVersions()` — distinct + last-used-by-user metadata
-  - `runCalibrationForRun(run_id, strategy_version)` — best-effort per symbol; ved feil settes `calibration_status='unavailable'`, `calibration_reason='calibration_error'` og admission-run fullføres uansett.
-  - `extractScreenshot({ storage_path })` — kaller OCR-modell; returnerer parsed metrics + confidences + raw_text. **Skriver aldri** til `coin_backtest_results`.
-  - `getBacktestScreenshotUrl(id)` — on-demand signed URL.
+### Filer
+- `src/lib/calibration/label-diagnostics.functions.ts` — `getLabelDiagnostics`, `recomputeAutoLabels`. Begge `requireSupabaseAuth` + role-check (`has_role(auth.uid(), 'operator')`).
+- `src/components/calibration/LabelDiagnosticsPanel.tsx` — UI for Leveranse 1.
+- `src/components/calibration/BatchRecomputeSection.tsx` — UI for Leveranse 2 (dry-run preview + commit modal).
+- `src/routes/_app.calibration.tsx` — monter de to nye komponentene over eksisterende tabell.
 
-Alle bak `requireSupabaseAuth`. Null import fra execution-stacken.
+### Database
+Ingen migration. Alle felt finnes allerede (`auto_suggested_label`, `backtest_quality_score`, `classification_reason_codes`, `classification_diagnostics`, `classification_config_version`, `needs_review`, `label_source`).
 
-### OCR
-- Lovable AI Gateway via AI SDK. Modellnavn **konfigurerbart** i `app_settings.calibration_ocr_model` (default `google/gemini-3-flash-preview`, kan byttes til annen vision-modell). Provider-helper henter den ved kall.
-- Strukturert output (Zod) per felt `{ value, confidence, source_text }`.
-- Prompten skiller USD vs %, beholder fortegn, returnerer null ved tvil; raw_text returneres alltid.
-- Auto-suggested label fra terskler — kun forslag.
+### Hva som IKKE endres
+- Ingen endring i `scoring.ts` (autoSuggestLabel-logikk)
+- Ingen endring i `run-inline.server.ts` (kalibrerings-pipelinen)
+- Ingen endring i `app_settings`-thresholds
+- Ingen endring i kNN-vekter, k, half_life, confidence-grenser
+- Ingen endring i execution, dispatcher, sizing, risk
+- Ingen Fase A (feature importance) eller Fase C (Tradable Top-N) — venter til du har bekreftet label-kvaliteten
 
-### Calibration ved admission-run
-Toggle `include_calibration` (default true). Etter admission-resultater skrives, kalles `runCalibrationForRun` per symbol. Per-symbol best-effort: en feil markerer raden `calibration unavailable` og blokkerer aldri admission.
+---
 
-## 4. UI
+## Akseptkriterier
 
-### `/admission`
-- Toggle **Include calibration** (default on).
-- Nye kolonner (toggleable): `Calibration`, `Confidence`, `Calibrated Fit`. Tooltips forklarer kNN, half-life, k.
-- Expanded row: **Calibration**-seksjon med top-k neighbors og knapp **Add Backtest Result** (forhåndsutfylt fra rad).
-
-### `BacktestResultDialog`
-Tabs: **Manual Entry** | **Quick Add from Screenshot**.
-
-Felles header (prefilled fra rad når tilgjengelig): Symbol, Test date (i dag), Strategy version (autocomplete, default siste brukt av user), Timeframe (5m), Candles tested (9000), Lookback equivalent days (auto), Admission result/run id (read-only badge).
-
-**Manual Entry**: skjema for alle tall + label-dropdown med auto-forslag.
-
-**Quick Add from Screenshot**:
-1. Dropzone (PNG/JPG ≤8MB) → upload til `backtest-screenshots`.
-2. Kall `extractScreenshot` (Uploading → Extracting → Reviewing).
-3. Prefill + banner *"Auto-extracted — please review before saving."*
-4. Lav-confidence felter får gul/rød ramme; hover viser source_text.
-5. Auto-suggested label vises, kan overstyres.
-6. **Save (Confirm)** → setter `extraction_status='confirmed'`, lagrer både confirmed values og `extracted_metrics`.
-7. **OCR feiler + manuell utfylling**: bruker fyller inn tall i samme dialog og trykker Save → raden lagres med:
-   - `extraction_source='screenshot_ocr'`, `extraction_status='confirmed'`
-   - `extracted_metrics` viser at OCR feilet/lav confidence
-   - `screenshot_storage_path` beholdes som dokumentasjon
-   - Confirmed values brukes i calibration (raden inngår).
-8. Thumbnail i historikk → klikk genererer on-demand signed URL.
-
-### `/calibration` (ny, lazy)
-- Backtest history (filtre: symbol, label, strategy_version, dato). Kolonner: symbol, test_date, strategy_version, label, key metrics, source-badge, screenshot-thumb.
-- Strategy version performance summary.
-- Model diagnostics (k, half-life, antall observasjoner, sist kjørt) + redigerbare felter for `half_life_days`, `k`, OCR-modell.
-
-## 5. Datakvalitet & sikkerhet
-- Calibration Score bruker KUN confirmed values (`extraction_status in ('manual','confirmed')`).
-- OCR rådata beholdes for revisjon.
-- Screenshots beholdes uavhengig av screener-runs; ingen permanent signed URL i DB.
-- RLS strikt på tabell og bucket.
-- Ingen endringer i dispatcher, executor, bridge, risk, sizing, reconcile, order routing.
-
-## 6. Out of scope v1
-Embeddings/ML-modell, TradingView API, multi-image batch OCR, automatisk re-kalibrering på cron (kjøres on-demand i admission-run).
-
-## 7. Faseplan
-1. Migrering: `coin_backtest_results` (append-only, soft-dedupe constraint), `coin_admission_results`-utvidelse, `app_settings`-felter, bucket + RLS/GRANTs.
-2. `calibration/scoring.ts` + server functions (uten OCR).
-3. `BacktestResultDialog` Manual Entry + integrasjon i `/admission` expanded row.
-4. Calibration ved `runAdmissionScan` (`include_calibration`, best-effort, nye kolonner).
-5. OCR `extractScreenshot` + Quick Add tab + review-UI + on-demand signed URL.
-6. `/calibration`-side (historikk, diagnostikk, config).
-
-Planen godkjent for build med disse justeringene.
+1. Diagnose-panelet viser alle 8 tellinger og oppdateres når jeg endrer en label manuelt.
+2. Dry-run på recompute viser nøyaktig diff uten å skrive til DB.
+3. Commit endrer kun de 6 listede kolonnene, beviselig via før/etter-sammenligning av en rad med `label_source = 'manual_override'` (skal være uendret bortsett fra `auto_suggested_label` / quality / diagnostics — `label` og `needs_review` skal forbli som de var).
+4. Etter commit: rader med `num_trades = 0` har `auto_suggested_label = 'no_trades'`.
+5. `audit_log` har én rad per commit-kjøring med oppsummering.
