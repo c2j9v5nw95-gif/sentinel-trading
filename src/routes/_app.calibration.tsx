@@ -80,21 +80,21 @@ function rankOfLabel(l: string | null | undefined): number {
   return LABEL_RANK[l ?? ''] ?? 0;
 }
 
-function sortValue(row: any, key: SortKey): string | number | boolean {
+function sortValue(row: any, key: SortKey): string | number | boolean | null {
   switch (key) {
     case 'symbol': return (row.symbol ?? '').toUpperCase();
-    case 'test_date': return row.test_date ? new Date(row.test_date).getTime() : 0;
+    case 'test_date': return row.test_date ? new Date(row.test_date).getTime() : null;
     case 'label': return rankOfLabel(row.label);
     case 'auto_suggested_label': return rankOfLabel(row.auto_suggested_label);
     case 'label_source': return row.label_source ?? '';
-    case 'backtest_quality_score': return row.backtest_quality_score ?? -Infinity;
-    case 'num_trades': return row.num_trades ?? -Infinity;
-    case 'win_rate_pct': return row.win_rate_pct ?? -Infinity;
-    case 'net_profit_pct': return row.net_profit_pct ?? -Infinity;
-    case 'normalized_net_profit_pct': return row.normalized_net_profit_pct ?? -Infinity;
-    case 'net_profit_usd': return row.net_profit_usd ?? -Infinity;
-    case 'max_drawdown_pct': return row.max_drawdown_pct ?? Infinity;
-    case 'profit_factor': return row.profit_factor ?? -Infinity;
+    case 'backtest_quality_score': return row.backtest_quality_score ?? null;
+    case 'num_trades': return row.num_trades ?? null;
+    case 'win_rate_pct': return row.win_rate_pct ?? null;
+    case 'net_profit_pct': return row.net_profit_pct ?? null;
+    case 'normalized_net_profit_pct': return row.normalized_net_profit_pct ?? null;
+    case 'net_profit_usd': return row.net_profit_usd ?? null;
+    case 'max_drawdown_pct': return row.max_drawdown_pct ?? null;
+    case 'profit_factor': return row.profit_factor ?? null;
     case 'needs_review': return row.needs_review ? 1 : 0;
     case 'strategy_version': return row.strategy_version ?? '';
   }
