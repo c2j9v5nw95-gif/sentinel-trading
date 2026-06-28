@@ -29,6 +29,7 @@ import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAnalyticsDebugRouteImport } from './routes/_app.analytics-debug'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
+import { Route as AppAdmissionRouteImport } from './routes/_app.admission'
 import { Route as MPositionsSymbolRouteImport } from './routes/m.positions_.$symbol'
 import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$symbol'
 import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './routes/api/public/hooks/snapshot-signal-context'
@@ -134,6 +135,11 @@ const AppAlertsRoute = AppAlertsRouteImport.update({
   path: '/alerts',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdmissionRoute = AppAdmissionRouteImport.update({
+  id: '/admission',
+  path: '/admission',
+  getParentRoute: () => AppRoute,
+} as any)
 const MPositionsSymbolRoute = MPositionsSymbolRouteImport.update({
   id: '/positions_/$symbol',
   path: '/positions/$symbol',
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/m': typeof MRouteWithChildren
+  '/admission': typeof AppAdmissionRoute
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
@@ -192,6 +199,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/admission': typeof AppAdmissionRoute
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
@@ -220,6 +228,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/m': typeof MRouteWithChildren
+  '/_app/admission': typeof AppAdmissionRoute
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
   '/_app/audit': typeof AppAuditRoute
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/m'
+    | '/admission'
     | '/alerts'
     | '/analytics-debug'
     | '/audit'
@@ -273,6 +283,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/admission'
     | '/alerts'
     | '/analytics-debug'
     | '/audit'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/m'
+    | '/_app/admission'
     | '/_app/alerts'
     | '/_app/analytics-debug'
     | '/_app/audit'
@@ -475,6 +487,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAlertsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admission': {
+      id: '/_app/admission'
+      path: '/admission'
+      fullPath: '/admission'
+      preLoaderRoute: typeof AppAdmissionRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/m/positions_/$symbol': {
       id: '/m/positions_/$symbol'
       path: '/positions/$symbol'
@@ -514,6 +533,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppAdmissionRoute: typeof AppAdmissionRoute
   AppAlertsRoute: typeof AppAlertsRoute
   AppAnalyticsDebugRoute: typeof AppAnalyticsDebugRoute
   AppAuditRoute: typeof AppAuditRoute
@@ -530,6 +550,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAdmissionRoute: AppAdmissionRoute,
   AppAlertsRoute: AppAlertsRoute,
   AppAnalyticsDebugRoute: AppAnalyticsDebugRoute,
   AppAuditRoute: AppAuditRoute,

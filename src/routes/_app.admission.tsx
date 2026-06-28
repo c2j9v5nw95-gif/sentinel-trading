@@ -168,7 +168,7 @@ function AdmissionPage() {
     <div className="space-y-4">
       <PageHeader
         title="Coin Admission Screener"
-        subtitle="Pre-kvalifisering av Bybit USDT perpetuals før de legges inn i botens univers. Påvirker IKKE pågående trading."
+        description="Pre-kvalifisering av Bybit USDT perpetuals før de legges inn i botens univers. Påvirker IKKE pågående trading."
       />
 
       <Card>
@@ -252,7 +252,7 @@ function AdmissionPage() {
         {runsQ.isLoading ? (
           <p className="text-sm text-muted-foreground">Laster…</p>
         ) : (runsQ.data ?? []).length === 0 ? (
-          <EmptyState title="Ingen kjøringer enda" description="Start en screener over for å lage den første rapporten." />
+          <EmptyState title="Ingen kjøringer enda" hint="Start en screener over for å lage den første rapporten." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -339,11 +339,11 @@ function AdmissionPage() {
         </div>
 
         {!activeRunId ? (
-          <EmptyState title="Velg en kjøring" description="Trykk 'vis' på en kjøring over for å se resultatene." />
+          <EmptyState title="Velg en kjøring" hint="Trykk vis på en kjøring over for å se resultatene." />
         ) : resultsQ.isLoading ? (
           <p className="text-sm text-muted-foreground">Laster resultater…</p>
         ) : filteredResults.length === 0 ? (
-          <EmptyState title="Ingen treff" description="Endre filter eller søkeord." />
+          <EmptyState title="Ingen treff" hint="Endre filter eller søkeord." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
