@@ -25,6 +25,10 @@ const StartInput = z.object({
   includeTrendQuality: z.boolean().optional(),
   /** Historical Trend Quality lookback in days. 14 / 30 / 90, or 5/10 for emerging. */
   htqLookbackDays: z.number().int().min(5).max(90).optional(),
+  /** When true (default), run kNN calibration after admission scoring. */
+  includeCalibration: z.boolean().optional(),
+  /** Strategy version to use as the calibration cohort. */
+  calibrationStrategyVersion: z.string().max(80).optional(),
 });
 
 function strategyFitLabel(score: number | null | undefined): string {
