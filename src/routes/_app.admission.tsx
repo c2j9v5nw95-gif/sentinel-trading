@@ -736,11 +736,30 @@ function AdmissionPage() {
         last_num_trades: m?.last_num_trades ?? null,
       };
       merged.candidate_priority_score = computeCandidatePriority(merged);
+      // Resolve BT trust signal.
+      let btTrust: BtTrust;
+      if (merged.last_backtest_label === 'no_trades') btTrust = 'no_trades';
+      else if (merged.last_bt_score == null) btTrust = 'missing';
+      else if (merged.last_needs_review && merged.last_label_source === 'auto') btTrust = 'needs_review';
+      else btTrust = 'trusted';
+      merged.candidate_score = computeCandidateScore({
+        robustness: merged.score,
+        htq: merged.historical_trend_quality,
+        calibration: merged.calibration_score ?? null,
+        calibrationConfidence: (merged.calibration_confidence as any) ?? null,
+        btScore: btTrust === 'no_trades' ? null : (merged.last_bt_score ?? null),
+        btTrust,
+        momentum: merged.current_momentum_score,
+        hardKills: merged.hard_kill_rules ?? [],
+        fallbackStrategyFit: merged.strategy_fit_score ?? null,
+      });
       return merged;
     });
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
     const minBtN = parseFloat(minBtScore);
+    const minCandN = parseFloat(minCandidateScore);
+
     const filtered = all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
