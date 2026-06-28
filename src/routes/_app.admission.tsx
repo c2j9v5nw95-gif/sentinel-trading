@@ -1557,6 +1557,8 @@ function AdmissionPage() {
                             </div>
                             <CandidateScoreBreakdown r={r} />
                             <LastBacktestDetail r={r} />
+                            <CalibrationNeighborsTable r={r} />
+
 
                             <BacktestHistorySection symbol={r.symbol} />
                             <div className="mt-3 flex flex-wrap justify-end gap-2">
