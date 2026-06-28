@@ -36,7 +36,11 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'Last BT Date': 'Test-dato på siste registrerte backtest (kan være satt manuelt).',
   'Last BT Ver': 'Strategy version brukt på siste registrerte backtest.',
   '# BT': 'Antall backtest-observasjoner registrert for dette symbolet (append-only).',
-
+  'BT Score': 'Backtest Quality Score (0–100) for siste backtest av dette symbolet. no_trades → N/A. Marker med ⚠ hvis needs_review.',
+  'BT Class': 'Klassifisering av siste backtest. no_trades vises som "No Setup".',
+  'BT Summary': 'Kort menneskelig oppsummering av siste backtest (drivers/safety).',
+  'Calib Score': 'Calibration Score: hvor mye dagens coin-profil ligner historiske profitable observasjoner (kNN).',
+  'Priority': 'Candidate Priority Score (0–100) — kombinert prioriteringsscore for videre vurdering. Endrer IKKE admission-status.',
 };
 
 function HeaderCell({
@@ -107,7 +111,11 @@ type SortKey =
   | 'last_bt_class'
   | 'last_bt_date'
   | 'last_bt_ver'
-  | 'bt_count';
+  | 'bt_count'
+  | 'bt_score'
+  | 'calib_score'
+  | 'calibrated_fit'
+  | 'priority';
 
 const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
 const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
@@ -116,6 +124,7 @@ const LABEL_ORDER: Record<string, number> = {
   profitable: 1,
   marginal: 2,
   rejected_backtest: 3,
+  no_trades: 4,
 };
 
 function sortValue(r: Result, k: SortKey): number | string | null {
@@ -140,6 +149,12 @@ function sortValue(r: Result, k: SortKey): number | string | null {
     case 'last_bt_date': return r.last_backtest_date ?? '';
     case 'last_bt_ver': return r.last_backtest_strategy_version ?? '';
     case 'bt_count': return r.backtest_count ?? 0;
+    case 'bt_score':
+      // no_trades treated as null (sinks to bottom), so it never looks "weak".
+      return r.last_backtest_label === 'no_trades' ? null : (r.last_bt_score ?? null);
+    case 'calib_score': return r.calibration_score ?? null;
+    case 'calibrated_fit': return r.calibrated_strategy_fit ?? null;
+    case 'priority': return r.candidate_priority_score ?? null;
   }
 }
 
@@ -148,7 +163,259 @@ const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   htq: 'desc', momentum: 'desc', rank: 'asc', turnover_24h: 'desc', oi: 'desc',
   spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
   last_bt_class: 'asc', last_bt_date: 'desc', last_bt_ver: 'asc', bt_count: 'desc',
+  bt_score: 'desc', calib_score: 'desc', calibrated_fit: 'desc', priority: 'desc',
 };
+
+// ---- Backtest Quality + Candidate Priority helpers ---------------------------
+
+function btScoreBucket(score: number): 'strong' | 'good' | 'mixed' | 'weak' {
+  if (score >= 80) return 'strong';
+  if (score >= 65) return 'good';
+  if (score >= 40) return 'mixed';
+  return 'weak';
+}
+
+function btBucketBadgeClass(b: 'strong' | 'good' | 'mixed' | 'weak' | 'no_setup'): string {
+  switch (b) {
+    case 'strong': return 'bg-emerald-500/20 text-emerald-700';
+    case 'good': return 'bg-green-500/20 text-green-700';
+    case 'mixed': return 'bg-yellow-500/20 text-yellow-700';
+    case 'weak': return 'bg-red-500/20 text-red-700';
+    case 'no_setup': return 'bg-slate-400/20 text-slate-700';
+  }
+}
+
+function btClassDisplay(label: string | null | undefined): string {
+  if (!label) return '—';
+  if (label === 'no_trades') return 'No Setup';
+  return label;
+}
+
+/**
+ * Freshness / review-quality proxy used in Candidate Priority blend.
+ * Pure review trust signal — does not include calendar age in v1.
+ */
+function reviewQuality(r: Result): number {
+  if (r.last_label_source === 'manual_override') return 100;
+  if (r.last_needs_review) return 40;
+  if (r.last_label_source === 'auto') return 80;
+  return 60;
+}
+
+/**
+ * Candidate Priority Score (v1) — pure surfacing/sort metric.
+ * NEVER feeds into admission status or execution.
+ */
+function computeCandidatePriority(r: Result): number | null {
+  const fit = r.calibrated_strategy_fit ?? r.strategy_fit_score ?? null;
+  const calib = r.calibration_score ?? null;
+  const hasCalib = calib != null;
+  const isNoTrades = r.last_backtest_label === 'no_trades';
+  const btScore = isNoTrades ? null : (r.last_bt_score ?? null);
+  const hasBT = btScore != null;
+  const trusted = hasBT && !(r.last_needs_review && r.last_label_source === 'auto');
+  const rq = reviewQuality(r);
+
+  if (!hasCalib) {
+    return r.strategy_fit_score ?? null;
+  }
+  if (hasBT && trusted) {
+    if (fit == null) return null;
+    return 0.45 * fit + 0.30 * calib! + 0.15 * btScore! + 0.10 * rq;
+  }
+  if (hasBT && !trusted) {
+    if (fit == null) return null;
+    return 0.50 * fit + 0.35 * calib! + 0.075 * btScore! + 0.075 * rq;
+  }
+  // No backtest OR no_trades → use calibration + fit only
+  if (fit == null) return null;
+  return 0.60 * fit + 0.40 * calib!;
+}
+
+// ---- BT cell + detail components ---------------------------------------------
+
+function BtScoreCell({ r }: { r: Result }) {
+  const isNoTrades = r.last_backtest_label === 'no_trades';
+  if (isNoTrades) {
+    return (
+      <td className="py-1 pr-2 text-right">
+        <span
+          className={`inline-block rounded px-1.5 py-0.5 text-xs ${btBucketBadgeClass('no_setup')}`}
+          title="No trades during test period — strategy found no valid setup"
+        >
+          N/A
+        </span>
+      </td>
+    );
+  }
+  const s = r.last_bt_score;
+  if (s == null) {
+    return <td className="py-1 pr-2 text-right text-muted-foreground">—</td>;
+  }
+  const bucket = btScoreBucket(s);
+  const pct = Math.max(0, Math.min(100, s));
+  const warn = r.last_needs_review && r.last_label_source === 'auto';
+  return (
+    <td className="py-1 pr-2 text-right">
+      <div className="inline-flex flex-col items-end gap-0.5 min-w-[64px]">
+        <div className="flex items-center gap-1">
+          <span className={`rounded px-1.5 py-0.5 text-xs font-mono font-semibold ${btBucketBadgeClass(bucket)}`}>
+            {s.toFixed(0)}
+          </span>
+          {warn && (
+            <span className="text-yellow-600" title="Backtest label needs review — score may be unreliable.">⚠</span>
+          )}
+        </div>
+        <div className="h-1 w-16 rounded bg-muted overflow-hidden">
+          <div
+            className={
+              bucket === 'strong' ? 'h-full bg-emerald-500'
+              : bucket === 'good' ? 'h-full bg-green-500'
+              : bucket === 'mixed' ? 'h-full bg-yellow-500'
+              : 'h-full bg-red-500'
+            }
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    </td>
+  );
+}
+
+function BtClassCell({ r }: { r: Result }) {
+  const label = r.last_backtest_label;
+  if (!label) return <td className="py-1 pr-2 text-xs text-muted-foreground">—</td>;
+  const display = btClassDisplay(label);
+  const cls =
+    label === 'profitable_plus' ? 'bg-emerald-500/20 text-emerald-700'
+    : label === 'profitable' ? 'bg-green-500/20 text-green-700'
+    : label === 'marginal' ? 'bg-yellow-500/20 text-yellow-700'
+    : label === 'rejected_backtest' ? 'bg-red-500/20 text-red-700'
+    : 'bg-slate-400/20 text-slate-700';
+  return (
+    <td className="py-1 pr-2 text-xs">
+      <span className={`rounded px-1.5 py-0.5 ${cls}`}>{display}</span>
+      {r.last_label_source === 'manual_override' && (
+        <span className="ml-1 text-[10px] text-muted-foreground">✓</span>
+      )}
+    </td>
+  );
+}
+
+function LastBacktestDetail({ r }: { r: Result }) {
+  const hasAny =
+    r.last_backtest_label != null ||
+    r.last_bt_score != null ||
+    r.last_num_trades != null;
+  if (!hasAny) return null;
+  const isNoTrades = r.last_backtest_label === 'no_trades';
+  const warn = r.last_needs_review && r.last_label_source === 'auto';
+  const pos = Array.isArray(r.last_positive_drivers) ? r.last_positive_drivers : [];
+  const neg = Array.isArray(r.last_negative_drivers) ? r.last_negative_drivers : [];
+  const safety = Array.isArray(r.last_safety_overrides) ? r.last_safety_overrides : [];
+  const hasDiagnostics = pos.length > 0 || neg.length > 0 || safety.length > 0 || !!r.last_bt_summary;
+  return (
+    <div className="mt-3 rounded border bg-background p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <h4 className="font-semibold text-sm">Last Backtest</h4>
+        <span className="text-muted-foreground">{r.last_backtest_date ?? '—'}</span>
+        <span className="text-muted-foreground">{r.last_backtest_strategy_version ?? ''}</span>
+        {warn && (
+          <span className="rounded bg-yellow-500/20 text-yellow-700 px-1.5 py-0.5">
+            ⚠ Backtest label needs review — score may be unreliable.
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div>
+          <div className="text-muted-foreground">BT Score</div>
+          <div className="font-mono font-semibold">
+            {isNoTrades ? 'N/A' : (r.last_bt_score != null ? r.last_bt_score.toFixed(1) : '—')}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Confirmed Label</div>
+          <div>{btClassDisplay(r.last_backtest_label)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Auto Suggested</div>
+          <div>{btClassDisplay(r.last_auto_suggested_label)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Source / Review</div>
+          <div>
+            {r.last_label_source ?? '—'}
+            {r.last_needs_review ? <span className="ml-1 text-yellow-600">· needs review</span> : null}
+          </div>
+        </div>
+      </div>
+      {hasDiagnostics ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <div>
+            <div className="text-muted-foreground mb-1">Summary</div>
+            <div>{r.last_bt_summary ?? '—'}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-1">Positive drivers</div>
+            {pos.length === 0 ? <div className="text-muted-foreground">—</div> : (
+              <ul className="list-disc pl-4">
+                {pos.map((d: any, i: number) => (
+                  <li key={i}>{typeof d === 'string' ? d : (d?.label ?? d?.reason ?? JSON.stringify(d))}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-1">Negative drivers</div>
+            {neg.length === 0 ? <div className="text-muted-foreground">—</div> : (
+              <ul className="list-disc pl-4">
+                {neg.map((d: any, i: number) => (
+                  <li key={i}>{typeof d === 'string' ? d : (d?.label ?? d?.reason ?? JSON.stringify(d))}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {safety.length > 0 && (
+            <div className="md:col-span-3">
+              <div className="text-muted-foreground mb-1">Safety overrides</div>
+              <div className="flex flex-wrap gap-1">
+                {safety.map((s, i) => (
+                  <span key={i} className="rounded bg-red-500/15 text-red-700 px-1.5 py-0.5">{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-muted-foreground mb-3">No diagnostics available</div>
+      )}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Metric label="Net Profit %" value={r.last_net_profit_pct} dp={2} />
+        <Metric label="Normalized Net %" value={r.last_normalized_net_profit_pct} dp={2} />
+        <Metric label="Leverage-adj Net %" value={r.last_leverage_adjusted_net_profit_pct} dp={2} />
+        <Metric label="Profit Factor" value={r.last_profit_factor} dp={2} />
+        <Metric label="Win Rate %" value={r.last_win_rate_pct} dp={1} />
+        <Metric label="Max Drawdown %" value={r.last_max_drawdown_pct} dp={2} />
+        <Metric label="Trades" value={r.last_num_trades} dp={0} />
+        {r.last_needs_review_reason && (
+          <div>
+            <div className="text-muted-foreground">Review reason</div>
+            <div>{r.last_needs_review_reason}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, dp }: { label: string; value: number | null | undefined; dp: number }) {
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-mono">{value == null || !Number.isFinite(value) ? '—' : value.toFixed(dp)}</div>
+    </div>
+  );
+}
 
 
 export const Route = createFileRoute('/_app/admission')({
@@ -215,12 +482,34 @@ type Result = {
   // Calibration (best-effort, may be absent)
   calibration_score?: number | null;
   calibration_label?: string | null;
+  calibration_confidence?: string | null;
+  calibration_status?: string | null;
+  calibration_reason?: string | null;
+  calibrated_strategy_fit?: number | null;
   calibration_computed_at?: string | null;
   // Augmented client-side from listLatestBacktestPerSymbol
   last_backtest_label?: string | null;
   last_backtest_date?: string | null;
   last_backtest_strategy_version?: string | null;
   backtest_count?: number;
+  last_bt_score?: number | null;
+  last_auto_suggested_label?: string | null;
+  last_label_source?: string | null;
+  last_needs_review?: boolean | null;
+  last_needs_review_reason?: string | null;
+  last_bt_summary?: string | null;
+  last_positive_drivers?: any;
+  last_negative_drivers?: any;
+  last_safety_overrides?: string[] | null;
+  last_net_profit_pct?: number | null;
+  last_normalized_net_profit_pct?: number | null;
+  last_leverage_adjusted_net_profit_pct?: number | null;
+  last_profit_factor?: number | null;
+  last_win_rate_pct?: number | null;
+  last_max_drawdown_pct?: number | null;
+  last_num_trades?: number | null;
+  // Computed client-side
+  candidate_priority_score?: number | null;
 };
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
@@ -280,6 +569,12 @@ function AdmissionPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
   const [includeCalibration, setIncludeCalibration] = useState(true);
   const [backtestPrefill, setBacktestPrefill] = useState<BacktestDialogPrefill | null>(null);
+  // BT-related filters
+  const [minBtScore, setMinBtScore] = useState<string>('');
+  const [hideNoTrades, setHideNoTrades] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<'any' | 'only' | 'hide'>('any');
+  const [sourceFilter, setSourceFilter] = useState<'any' | 'manual_override' | 'auto'>('any');
+  const [btClassFilter, setBtClassFilter] = useState<string>('all');
 
   const toggleSort = (k: SortKey) => {
     setSort((prev) => prev.key === k
@@ -391,16 +686,35 @@ function AdmissionPage() {
     const map = latestBtQ.data?.per_symbol ?? {};
     const all = (resultsQ.data ?? []).map((r) => {
       const m = map[r.symbol];
-      return {
+      const merged: Result = {
         ...r,
         last_backtest_label: m?.last_label ?? null,
         last_backtest_date: m?.last_test_date ?? null,
         last_backtest_strategy_version: m?.last_strategy_version ?? null,
         backtest_count: m?.count ?? 0,
-      } as Result;
+        last_bt_score: m?.last_bt_score ?? null,
+        last_auto_suggested_label: m?.last_auto_suggested_label ?? null,
+        last_label_source: m?.last_label_source ?? null,
+        last_needs_review: m?.last_needs_review ?? null,
+        last_needs_review_reason: m?.last_needs_review_reason ?? null,
+        last_bt_summary: m?.last_summary ?? null,
+        last_positive_drivers: m?.last_positive_drivers ?? null,
+        last_negative_drivers: m?.last_negative_drivers ?? null,
+        last_safety_overrides: m?.last_safety_overrides ?? null,
+        last_net_profit_pct: m?.last_net_profit_pct ?? null,
+        last_normalized_net_profit_pct: m?.last_normalized_net_profit_pct ?? null,
+        last_leverage_adjusted_net_profit_pct: m?.last_leverage_adjusted_net_profit_pct ?? null,
+        last_profit_factor: m?.last_profit_factor ?? null,
+        last_win_rate_pct: m?.last_win_rate_pct ?? null,
+        last_max_drawdown_pct: m?.last_max_drawdown_pct ?? null,
+        last_num_trades: m?.last_num_trades ?? null,
+      };
+      merged.candidate_priority_score = computeCandidatePriority(merged);
+      return merged;
     });
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
+    const minBtN = parseFloat(minBtScore);
     const filtered = all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
@@ -409,6 +723,16 @@ function AdmissionPage() {
       if (search && !r.symbol.toLowerCase().includes(search.toLowerCase())) return false;
       if (Number.isFinite(minTrendN) && (r.historical_trend_quality ?? -1) < minTrendN) return false;
       if (Number.isFinite(minFitN) && (r.strategy_fit_score ?? -1) < minFitN) return false;
+      if (Number.isFinite(minBtN)) {
+        // no_trades has no BT score; exclude when threshold is set
+        if (r.last_backtest_label === 'no_trades' || r.last_bt_score == null) return false;
+        if (r.last_bt_score < minBtN) return false;
+      }
+      if (hideNoTrades && r.last_backtest_label === 'no_trades') return false;
+      if (reviewFilter === 'only' && !r.last_needs_review) return false;
+      if (reviewFilter === 'hide' && r.last_needs_review) return false;
+      if (sourceFilter !== 'any' && r.last_label_source !== sourceFilter) return false;
+      if (btClassFilter !== 'all' && r.last_backtest_label !== btClassFilter) return false;
       return true;
     });
     const dir = sort.dir === 'desc' ? -1 : 1;
@@ -424,7 +748,7 @@ function AdmissionPage() {
       return String(av).localeCompare(String(bv)) * dir;
     });
     return sorted;
-  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, sort]);
+  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, minBtScore, hideNoTrades, reviewFilter, sourceFilter, btClassFilter, sort]);
 
 
   const counts = useMemo(() => {
@@ -723,6 +1047,57 @@ function AdmissionPage() {
             </button>
           ))}
         </div>
+        <div className="flex flex-wrap items-center gap-3 mb-3 text-xs">
+          <span className="text-muted-foreground">Backtest:</span>
+          <label className="flex items-center gap-1">
+            Min BT Score
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="w-16 rounded border bg-background px-1 py-0.5"
+              value={minBtScore}
+              onChange={(e) => setMinBtScore(e.target.value)}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={hideNoTrades} onChange={(e) => setHideNoTrades(e.target.checked)} />
+            Skjul no_trades
+          </label>
+          <span className="ml-2 text-muted-foreground">Review:</span>
+          {(['any', 'only', 'hide'] as const).map((v) => (
+            <button
+              key={v}
+              className={`rounded px-2 py-0.5 ${reviewFilter === v ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              onClick={() => setReviewFilter(v)}
+            >
+              {v === 'any' ? 'alle' : v === 'only' ? 'needs review' : 'hide review'}
+            </button>
+          ))}
+          <span className="ml-2 text-muted-foreground">Source:</span>
+          {(['any', 'manual_override', 'auto'] as const).map((v) => (
+            <button
+              key={v}
+              className={`rounded px-2 py-0.5 ${sourceFilter === v ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              onClick={() => setSourceFilter(v)}
+            >
+              {v === 'any' ? 'alle' : v}
+            </button>
+          ))}
+          <span className="ml-2 text-muted-foreground">BT Class:</span>
+          <select
+            className="rounded border bg-background px-1 py-0.5"
+            value={btClassFilter}
+            onChange={(e) => setBtClassFilter(e.target.value)}
+          >
+            <option value="all">alle</option>
+            <option value="profitable_plus">profitable_plus</option>
+            <option value="profitable">profitable</option>
+            <option value="marginal">marginal</option>
+            <option value="rejected_backtest">rejected_backtest</option>
+            <option value="no_trades">no_trades</option>
+          </select>
+        </div>
 
 
         {!activeRunId ? (
@@ -753,7 +1128,11 @@ function AdmissionPage() {
                   <HeaderCell label="Hard Kills" sortKey="hard_kills" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Soft" sortKey="soft" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Reason" sortKey="reason" activeSort={sort} onSort={toggleSort} />
-                  <HeaderCell label="Last BT Class" sortKey="last_bt_class" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="BT Score" align="right" sortKey="bt_score" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="BT Class" sortKey="last_bt_class" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="BT Summary" />
+                  <HeaderCell label="Calib Score" align="right" sortKey="calib_score" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Priority" align="right" sortKey="priority" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Last BT Date" sortKey="last_bt_date" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Last BT Ver" sortKey="last_bt_ver" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="# BT" align="right" sortKey="bt_count" activeSort={sort} onSort={toggleSort} />
@@ -812,10 +1191,19 @@ function AdmissionPage() {
                         <td className="py-1 pr-2 text-xs max-w-[200px] truncate" title={r.admission_reason ?? ''}>
                           {r.admission_reason ?? '—'}
                         </td>
-                        <td className="py-1 pr-2 text-xs">
-                          {r.last_backtest_label ? (
-                            <span className="rounded bg-muted px-1.5 py-0.5">{r.last_backtest_label}</span>
-                          ) : '—'}
+                        <BtScoreCell r={r} />
+                        <BtClassCell r={r} />
+                        <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[220px] truncate" title={r.last_bt_summary ?? ''}>
+                          {r.last_bt_summary ?? '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right font-mono">
+                          {r.calibration_score != null ? fmtNum(r.calibration_score, 1) : '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right font-mono font-semibold">
+                          {r.candidate_priority_score != null ? fmtNum(r.candidate_priority_score, 1) : '—'}
+                          {r.last_needs_review && r.last_label_source === 'auto' && (
+                            <span className="ml-1 text-yellow-600" title="Backtest label needs review — BT contribution reduced.">⚠</span>
+                          )}
                         </td>
                         <td className="py-1 pr-2 text-xs font-mono text-muted-foreground">{r.last_backtest_date ?? '—'}</td>
                         <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.last_backtest_strategy_version ?? ''}>
@@ -826,7 +1214,7 @@ function AdmissionPage() {
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={20} className="p-3">
+                          <td colSpan={24} className="p-3">
 
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
@@ -886,6 +1274,7 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
+                            <LastBacktestDetail r={r} />
                             <BacktestHistorySection symbol={r.symbol} />
                             <div className="mt-3 flex flex-wrap justify-end gap-2">
                               {activeRunId && (

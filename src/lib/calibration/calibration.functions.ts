@@ -672,24 +672,47 @@ export const listLatestBacktestPerSymbol = createServerFn({ method: 'POST' })
     const { supabase, userId } = context;
     const { data: rows, error } = await supabase
       .from('coin_backtest_results')
-      .select('symbol, test_date, label, strategy_version, created_at')
+      .select(
+        'id, symbol, test_date, label, strategy_version, created_at, ' +
+          'auto_suggested_label, label_source, needs_review, needs_review_reason, ' +
+          'backtest_quality_score, classification_summary, ' +
+          'classification_positive_drivers, classification_negative_drivers, ' +
+          'classification_safety_overrides, ' +
+          'net_profit_pct, normalized_net_profit_pct, leverage_adjusted_net_profit_pct, ' +
+          'profit_factor, win_rate_pct, max_drawdown_pct, num_trades',
+      )
       .eq('user_id', userId)
       .in('symbol', data.symbols)
       .order('test_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(5000);
     if (error) throw new Error(error.message);
-    const map: Record<
-      string,
-      {
-        symbol: string;
-        last_test_date: string | null;
-        last_label: string | null;
-        last_strategy_version: string | null;
-        count: number;
-      }
-    > = {};
-    for (const r of rows ?? []) {
+    type Entry = {
+      symbol: string;
+      last_test_date: string | null;
+      last_label: string | null;
+      last_strategy_version: string | null;
+      count: number;
+      last_auto_suggested_label: string | null;
+      last_label_source: string | null;
+      last_needs_review: boolean | null;
+      last_needs_review_reason: string | null;
+      last_bt_score: number | null;
+      last_summary: string | null;
+      // jsonb shape varies (string | array | object); typed loose for the serializer.
+      last_positive_drivers: any;
+      last_negative_drivers: any;
+      last_safety_overrides: string[] | null;
+      last_net_profit_pct: number | null;
+      last_normalized_net_profit_pct: number | null;
+      last_leverage_adjusted_net_profit_pct: number | null;
+      last_profit_factor: number | null;
+      last_win_rate_pct: number | null;
+      last_max_drawdown_pct: number | null;
+      last_num_trades: number | null;
+    };
+    const map: Record<string, Entry> = {};
+    for (const r of (rows ?? []) as any[]) {
       const cur = map[r.symbol];
       if (!cur) {
         map[r.symbol] = {
@@ -698,6 +721,26 @@ export const listLatestBacktestPerSymbol = createServerFn({ method: 'POST' })
           last_label: r.label,
           last_strategy_version: r.strategy_version,
           count: 1,
+          last_auto_suggested_label: r.auto_suggested_label ?? null,
+          last_label_source: r.label_source ?? null,
+          last_needs_review: r.needs_review ?? null,
+          last_needs_review_reason: r.needs_review_reason ?? null,
+          last_bt_score: r.backtest_quality_score != null ? Number(r.backtest_quality_score) : null,
+          last_summary: r.classification_summary ?? null,
+      last_positive_drivers: (r.classification_positive_drivers ?? null) as any,
+      last_negative_drivers: (r.classification_negative_drivers ?? null) as any,
+      last_safety_overrides: (r.classification_safety_overrides ?? null) as string[] | null,
+          last_net_profit_pct: r.net_profit_pct != null ? Number(r.net_profit_pct) : null,
+          last_normalized_net_profit_pct:
+            r.normalized_net_profit_pct != null ? Number(r.normalized_net_profit_pct) : null,
+          last_leverage_adjusted_net_profit_pct:
+            r.leverage_adjusted_net_profit_pct != null
+              ? Number(r.leverage_adjusted_net_profit_pct)
+              : null,
+          last_profit_factor: r.profit_factor != null ? Number(r.profit_factor) : null,
+          last_win_rate_pct: r.win_rate_pct != null ? Number(r.win_rate_pct) : null,
+          last_max_drawdown_pct: r.max_drawdown_pct != null ? Number(r.max_drawdown_pct) : null,
+          last_num_trades: r.num_trades ?? null,
         };
       } else {
         cur.count += 1;
