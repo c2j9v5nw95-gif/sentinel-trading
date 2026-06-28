@@ -212,6 +212,15 @@ type Result = {
   current_momentum_score: number | null;
   current_momentum_components: Record<string, number> | null;
   fetch_error: string | null;
+  // Calibration (best-effort, may be absent)
+  calibration_score?: number | null;
+  calibration_label?: string | null;
+  calibration_computed_at?: string | null;
+  // Augmented client-side from listLatestBacktestPerSymbol
+  last_backtest_label?: string | null;
+  last_backtest_date?: string | null;
+  last_backtest_strategy_version?: string | null;
+  backtest_count?: number;
 };
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
