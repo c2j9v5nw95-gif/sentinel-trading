@@ -801,7 +801,7 @@ function AdmissionPage() {
       return String(av).localeCompare(String(bv)) * dir;
     });
     return sorted;
-  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, minBtScore, hideNoTrades, reviewFilter, sourceFilter, btClassFilter, sort]);
+  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, minBtScore, hideNoTrades, reviewFilter, sourceFilter, btClassFilter, minCandidateScore, bucketFilter, hideCapped, tradeEligibleOnly, sort]);
 
 
   const counts = useMemo(() => {
