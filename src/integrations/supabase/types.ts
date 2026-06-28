@@ -937,6 +937,8 @@ export type Database = {
           position_size_usd: number | null
           profit_factor: number | null
           profitable_trades_count: number | null
+          sample_bucket: string | null
+          sample_confidence_weight: number | null
           screener_snapshot: Json | null
           screenshot_storage_path: string | null
           sharpe_ratio: number | null
@@ -1002,6 +1004,8 @@ export type Database = {
           position_size_usd?: number | null
           profit_factor?: number | null
           profitable_trades_count?: number | null
+          sample_bucket?: string | null
+          sample_confidence_weight?: number | null
           screener_snapshot?: Json | null
           screenshot_storage_path?: string | null
           sharpe_ratio?: number | null
@@ -1067,6 +1071,8 @@ export type Database = {
           position_size_usd?: number | null
           profit_factor?: number | null
           profitable_trades_count?: number | null
+          sample_bucket?: string | null
+          sample_confidence_weight?: number | null
           screener_snapshot?: Json | null
           screenshot_storage_path?: string | null
           sharpe_ratio?: number | null
