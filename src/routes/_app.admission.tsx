@@ -311,6 +311,7 @@ function AdmissionPage() {
           mode,
           includeTrendQuality: includeTrend,
           htqLookbackDays: lookback,
+          includeCalibration,
         },
       });
     },
