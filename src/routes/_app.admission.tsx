@@ -1186,6 +1186,8 @@ function AdmissionPage() {
                   <HeaderCell label="BT Summary" />
                   <HeaderCell label="Calib Score" align="right" sortKey="calib_score" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Priority" align="right" sortKey="priority" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Candidate" align="right" sortKey="candidate_score" activeSort={sort} onSort={toggleSort} />
+
                   <HeaderCell label="Last BT Date" sortKey="last_bt_date" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Last BT Ver" sortKey="last_bt_ver" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="# BT" align="right" sortKey="bt_count" activeSort={sort} onSort={toggleSort} />
