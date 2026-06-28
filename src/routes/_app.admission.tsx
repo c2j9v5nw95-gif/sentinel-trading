@@ -237,6 +237,13 @@ function AdmissionPage() {
   const [confirmLongRun, setConfirmLongRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
+
+  const toggleSort = (k: SortKey) => {
+    setSort((prev) => prev.key === k
+      ? { key: k, dir: prev.dir === 'desc' ? 'asc' : 'desc' }
+      : { key: k, dir: DEFAULT_DIR[k] });
+  };
 
 
   const profilesQ = useQuery({
