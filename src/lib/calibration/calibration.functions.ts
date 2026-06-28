@@ -16,12 +16,15 @@ import {
   computeFeatureMedians,
   computeFeatureStds,
   autoSuggestLabel,
+  DEFAULT_CLASSIFICATION_THRESHOLDS,
   type BacktestLabel,
   type CalibrationConfig,
   type CalibrationResult,
+  type ClassificationThresholds,
   type Observation,
   type ScreenerSnapshot,
 } from './scoring';
+import { computeSizingDerived, withSizingDefaults } from './sizing';
 
 // ── Validators ────────────────────────────────────────────────────────────
 
@@ -63,6 +66,17 @@ const BacktestPayload = z.object({
   profitable_trades_count: IntNullable.optional(),
   losing_trades_count: IntNullable.optional(),
 
+  // Sizing & leverage assumptions (defaults applied server-side if missing)
+  initial_capital_usd: NumericNullable.optional(),
+  position_size_type: z.enum(['percent_of_equity']).optional(),
+  position_size_pct: NumericNullable.optional(),
+  position_size_usd: NumericNullable.optional(),
+  leverage: NumericNullable.optional(),
+  leverage_enabled: z.boolean().optional(),
+  sizing_assumption_source: z
+    .enum(['default_backfill', 'user_confirmed', 'imported_from_screenshot', 'manual_override'])
+    .optional(),
+
   label: LabelEnum,
   notes: z.string().max(2000).nullable().optional(),
 
@@ -94,6 +108,40 @@ async function loadCalibrationConfig(
     min_neighbors_high: data?.calibration_min_neighbors_high ?? 6,
     ocr_model: data?.calibration_ocr_model ?? 'google/gemini-3-flash-preview',
     default_strategy_version: data?.calibration_default_strategy_version ?? null,
+  };
+}
+
+async function loadClassificationThresholds(
+  supabase: SupabaseClient,
+): Promise<ClassificationThresholds> {
+  const { data } = await supabase
+    .from('app_settings')
+    .select(
+      'backtest_min_trades, backtest_marginal_min_profit_factor, backtest_profitable_min_profit_factor, backtest_profitable_plus_min_profit_factor, backtest_profitable_min_normalized_net_profit_pct, backtest_profitable_plus_min_normalized_net_profit_pct, backtest_max_leverage_adjusted_drawdown_profitable, backtest_max_leverage_adjusted_drawdown_profitable_plus',
+    )
+    .eq('singleton', true)
+    .maybeSingle();
+  const d = DEFAULT_CLASSIFICATION_THRESHOLDS;
+  return {
+    min_trades: data?.backtest_min_trades ?? d.min_trades,
+    marginal_min_profit_factor:
+      data?.backtest_marginal_min_profit_factor ?? d.marginal_min_profit_factor,
+    profitable_min_profit_factor:
+      data?.backtest_profitable_min_profit_factor ?? d.profitable_min_profit_factor,
+    profitable_plus_min_profit_factor:
+      data?.backtest_profitable_plus_min_profit_factor ?? d.profitable_plus_min_profit_factor,
+    profitable_min_normalized_net_profit_pct:
+      data?.backtest_profitable_min_normalized_net_profit_pct ??
+      d.profitable_min_normalized_net_profit_pct,
+    profitable_plus_min_normalized_net_profit_pct:
+      data?.backtest_profitable_plus_min_normalized_net_profit_pct ??
+      d.profitable_plus_min_normalized_net_profit_pct,
+    max_leverage_adjusted_drawdown_profitable:
+      data?.backtest_max_leverage_adjusted_drawdown_profitable ??
+      d.max_leverage_adjusted_drawdown_profitable,
+    max_leverage_adjusted_drawdown_profitable_plus:
+      data?.backtest_max_leverage_adjusted_drawdown_profitable_plus ??
+      d.max_leverage_adjusted_drawdown_profitable_plus,
   };
 }
 
@@ -195,18 +243,62 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
   .inputValidator((i: unknown) => BacktestPayload.parse(i))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    // Auto-suggested label for parity with UI (stored for transparency).
-    const auto = autoSuggestLabel({
+
+    // Apply sizing defaults & compute derived metrics. Originals untouched.
+    const sizing = withSizingDefaults({
+      position_size_type: data.position_size_type ?? null,
+      position_size_pct: data.position_size_pct ?? null,
+      leverage: data.leverage ?? null,
+      leverage_enabled: data.leverage_enabled ?? null,
+    });
+    const derived = computeSizingDerived(sizing, {
       net_profit_pct: data.net_profit_pct,
       max_drawdown_pct: data.max_drawdown_pct,
-      profit_factor: data.profit_factor,
-      win_rate_pct: data.win_rate_pct,
-      num_trades: data.num_trades,
+      avg_pnl_pct: data.avg_pnl_pct,
     });
+
+    const thresholds = await loadClassificationThresholds(supabase);
+    const auto = autoSuggestLabel(
+      {
+        net_profit_pct: data.net_profit_pct,
+        max_drawdown_pct: data.max_drawdown_pct,
+        profit_factor: data.profit_factor,
+        win_rate_pct: data.win_rate_pct,
+        num_trades: data.num_trades,
+        normalized_net_profit_pct: derived.normalized_net_profit_pct,
+        normalized_drawdown_pct: derived.normalized_drawdown_pct,
+        leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+        leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+      },
+      thresholds,
+    );
+
+    // Strip helper-only sizing fields from `data` so we can re-add merged sizing
+    const {
+      position_size_type: _pst,
+      position_size_pct: _psp,
+      leverage: _lev,
+      leverage_enabled: _le,
+      ...rest
+    } = data;
+
     const row = {
       user_id: userId,
-      ...data,
-      auto_suggested_label: auto,
+      ...rest,
+      initial_capital_usd: data.initial_capital_usd ?? 10000,
+      position_size_type: sizing.position_size_type,
+      position_size_pct: sizing.position_size_pct,
+      position_size_usd: data.position_size_usd ?? null,
+      leverage: sizing.leverage,
+      leverage_enabled: sizing.leverage_enabled,
+      notional_exposure_pct: derived.notional_exposure_pct,
+      normalized_net_profit_pct: derived.normalized_net_profit_pct,
+      normalized_drawdown_pct: derived.normalized_drawdown_pct,
+      normalized_avg_trade_pct: derived.normalized_avg_trade_pct,
+      leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+      leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+      sizing_assumption_source: data.sizing_assumption_source ?? 'user_confirmed',
+      auto_suggested_label: auto.label,
     };
     const { data: inserted, error } = await supabase
       .from('coin_backtest_results')
@@ -214,7 +306,6 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       .select('*')
       .single();
     if (error) {
-      // Soft-dedupe via unique constraint
       const isDupe = /duplicate key|unique constraint/i.test(error.message);
       throw new Error(
         isDupe
@@ -222,7 +313,7 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
           : error.message,
       );
     }
-    return { row: inserted };
+    return { row: inserted, suggested: auto };
   });
 
 export const updateBacktestResult = createServerFn({ method: 'POST' })
@@ -239,12 +330,91 @@ export const updateBacktestResult = createServerFn({ method: 'POST' })
     const { supabase } = context;
     const { data: updated, error } = await supabase
       .from('coin_backtest_results')
-      .update(data.patch)
+      .update(data.patch as any)
       .eq('id', data.id)
       .select('*')
       .single();
     if (error) throw new Error(error.message);
     return { row: updated };
+  });
+
+/**
+ * Update sizing/leverage assumptions only. Recomputes derived metrics.
+ * Never touches the original TradingView numbers. Sets sizing source to
+ * `manual_override` unless the caller specifies otherwise.
+ */
+export const updateBacktestSizing = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        sizing: z.object({
+          initial_capital_usd: NumericNullable.optional(),
+          position_size_type: z.enum(['percent_of_equity']).optional(),
+          position_size_pct: NumericNullable.optional(),
+          position_size_usd: NumericNullable.optional(),
+          leverage: NumericNullable.optional(),
+          leverage_enabled: z.boolean().optional(),
+          sizing_assumption_source: z
+            .enum([
+              'default_backfill',
+              'user_confirmed',
+              'imported_from_screenshot',
+              'manual_override',
+            ])
+            .optional(),
+        }),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const { data: row, error: rErr } = await supabase
+      .from('coin_backtest_results')
+      .select('net_profit_pct, max_drawdown_pct, avg_pnl_pct')
+      .eq('id', data.id)
+      .single();
+    if (rErr) throw new Error(rErr.message);
+
+    const sizing = withSizingDefaults({
+      position_size_type: data.sizing.position_size_type ?? null,
+      position_size_pct: data.sizing.position_size_pct ?? null,
+      leverage: data.sizing.leverage ?? null,
+      leverage_enabled: data.sizing.leverage_enabled ?? null,
+    });
+    const derived = computeSizingDerived(sizing, {
+      net_profit_pct: row.net_profit_pct,
+      max_drawdown_pct: row.max_drawdown_pct,
+      avg_pnl_pct: row.avg_pnl_pct,
+    });
+
+    const patch: Record<string, unknown> = {
+      initial_capital_usd: data.sizing.initial_capital_usd ?? undefined,
+      position_size_type: sizing.position_size_type,
+      position_size_pct: sizing.position_size_pct,
+      position_size_usd: data.sizing.position_size_usd ?? null,
+      leverage: sizing.leverage,
+      leverage_enabled: sizing.leverage_enabled,
+      notional_exposure_pct: derived.notional_exposure_pct,
+      normalized_net_profit_pct: derived.normalized_net_profit_pct,
+      normalized_drawdown_pct: derived.normalized_drawdown_pct,
+      normalized_avg_trade_pct: derived.normalized_avg_trade_pct,
+      leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+      leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+      sizing_assumption_source: data.sizing.sizing_assumption_source ?? 'manual_override',
+    };
+    // Drop undefined keys so we don't blank columns by mistake
+    for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
+
+    const { data: updated, error } = await supabase
+      .from('coin_backtest_results')
+      .update(patch as any)
+      .eq('id', data.id)
+      .select('*')
+      .single();
+    if (error) throw new Error(error.message);
+    return { row: updated, warnings: derived.warnings };
   });
 
 export const deleteBacktestResult = createServerFn({ method: 'POST' })

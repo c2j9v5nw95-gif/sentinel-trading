@@ -287,23 +287,158 @@ export function calibrateCandidate(
   };
 }
 
-/** Auto-suggest a label from raw backtest metrics. Caller can override. */
-export function autoSuggestLabel(input: {
+// ── Auto-classification ───────────────────────────────────────────────────
+
+export type ClassificationThresholds = {
+  min_trades: number;
+  marginal_min_profit_factor: number;
+  profitable_min_profit_factor: number;
+  profitable_plus_min_profit_factor: number;
+  profitable_min_normalized_net_profit_pct: number;
+  profitable_plus_min_normalized_net_profit_pct: number;
+  max_leverage_adjusted_drawdown_profitable: number;
+  max_leverage_adjusted_drawdown_profitable_plus: number;
+};
+
+export const DEFAULT_CLASSIFICATION_THRESHOLDS: ClassificationThresholds = {
+  min_trades: 20,
+  marginal_min_profit_factor: 1.05,
+  profitable_min_profit_factor: 1.2,
+  profitable_plus_min_profit_factor: 1.5,
+  profitable_min_normalized_net_profit_pct: 20,
+  profitable_plus_min_normalized_net_profit_pct: 40,
+  max_leverage_adjusted_drawdown_profitable: 30,
+  max_leverage_adjusted_drawdown_profitable_plus: 25,
+};
+
+export type AutoSuggestInput = {
   net_profit_pct?: number | null;
   max_drawdown_pct?: number | null;
   profit_factor?: number | null;
   win_rate_pct?: number | null;
   num_trades?: number | null;
-}): BacktestLabel {
-  const pnl = input.net_profit_pct ?? 0;
-  const dd = Math.abs(input.max_drawdown_pct ?? 0);
-  const pf = input.profit_factor ?? 0;
-  const trades = input.num_trades ?? 0;
+  /** Derived (sizing-normalized) — used by classifier when present. */
+  normalized_net_profit_pct?: number | null;
+  normalized_drawdown_pct?: number | null;
+  leverage_adjusted_net_profit_pct?: number | null;
+  leverage_adjusted_drawdown_pct?: number | null;
+};
 
-  // Rejected if losing, too-few trades, or PF < 1
-  if (pnl <= 0 || pf < 1 || trades < 10) return 'rejected_backtest';
-  // Profitable+ requires strong PF, healthy PnL, controlled DD
-  if (pf >= 1.5 && pnl >= 15 && dd <= 15) return 'profitable_plus';
-  if (pf >= 1.2 && pnl >= 5 && dd <= 25) return 'profitable';
-  return 'marginal';
+export type AutoSuggestResult = {
+  label: BacktestLabel;
+  reason: string;
+  confidence: 'low' | 'normal';
+};
+
+/**
+ * Auto-suggest a label. Always a SUGGESTION — caller can override.
+ *
+ * Priority order: Profitable+ → Profitable → Marginal → Rejected. A backtest
+ * that satisfies Profitable+ gates also satisfies Profitable; we return the
+ * best valid label.
+ *
+ * Trade-count handling (low data quality is NOT automatic rejection):
+ *   num_trades = 0                              → rejected (no trades)
+ *   num_trades < min and net_profit_pct < 0     → rejected (negative + low N)
+ *   num_trades < min and net_profit_pct >= 0    → marginal (low confidence)
+ *   num_trades >= min                           → standard classification
+ */
+export function autoSuggestLabel(
+  input: AutoSuggestInput,
+  thresholds: ClassificationThresholds = DEFAULT_CLASSIFICATION_THRESHOLDS,
+): AutoSuggestResult {
+  const np = input.net_profit_pct ?? null;
+  const dd = input.max_drawdown_pct == null ? null : Math.abs(input.max_drawdown_pct);
+  const pf = input.profit_factor ?? null;
+  const trades = input.num_trades ?? 0;
+  const nNet = input.normalized_net_profit_pct ?? null;
+  const nDd =
+    input.normalized_drawdown_pct == null ? null : Math.abs(input.normalized_drawdown_pct);
+  const lNet = input.leverage_adjusted_net_profit_pct ?? null;
+  const lDd =
+    input.leverage_adjusted_drawdown_pct == null
+      ? null
+      : Math.abs(input.leverage_adjusted_drawdown_pct);
+
+  // ─ Trade-count short-circuits ─
+  if (trades === 0) {
+    return { label: 'rejected_backtest', reason: 'No trades in test period.', confidence: 'normal' };
+  }
+  if (trades < thresholds.min_trades) {
+    if (np != null && np < 0) {
+      return {
+        label: 'rejected_backtest',
+        reason: `Negative result with low trade count (${trades} < ${thresholds.min_trades}).`,
+        confidence: 'low',
+      };
+    }
+    return {
+      label: 'marginal',
+      reason: `Low trade count (${trades} < ${thresholds.min_trades}) — classification confidence reduced.`,
+      confidence: 'low',
+    };
+  }
+
+  // ─ Standard classification (Profitable+ first) ─
+  const ratioOk = nNet != null && nDd != null && nNet > 0 ? nDd / nNet : null;
+
+  // Profitable+
+  if (
+    pf != null && pf >= thresholds.profitable_plus_min_profit_factor &&
+    nNet != null && nNet >= thresholds.profitable_plus_min_normalized_net_profit_pct &&
+    (lDd == null || lDd <= thresholds.max_leverage_adjusted_drawdown_profitable_plus) &&
+    (lNet == null || lNet > 0) &&
+    (ratioOk == null || ratioOk <= 0.5)
+  ) {
+    return {
+      label: 'profitable_plus',
+      reason: `PF ${pf.toFixed(2)}, normalized net ${nNet.toFixed(1)}%, leverage-adj DD ${lDd != null ? lDd.toFixed(1) + '%' : '—'} within Profitable+ gates.`,
+      confidence: 'normal',
+    };
+  }
+
+  // Profitable
+  if (
+    pf != null && pf >= thresholds.profitable_min_profit_factor &&
+    nNet != null && nNet >= thresholds.profitable_min_normalized_net_profit_pct &&
+    (lDd == null || lDd <= thresholds.max_leverage_adjusted_drawdown_profitable) &&
+    (np == null || np >= 0)
+  ) {
+    return {
+      label: 'profitable',
+      reason: `PF ${pf.toFixed(2)}, normalized net ${nNet.toFixed(1)}% meets Profitable gates.`,
+      confidence: 'normal',
+    };
+  }
+
+  // Rejected (clear losses or PF below marginal floor or extreme leverage-adj DD)
+  if (
+    (np != null && np < 0) ||
+    (pf != null && pf < thresholds.marginal_min_profit_factor) ||
+    (lDd != null && lDd > 40)
+  ) {
+    const why = np != null && np < 0
+      ? `Net profit ${np.toFixed(2)}% < 0.`
+      : pf != null && pf < thresholds.marginal_min_profit_factor
+      ? `Profit factor ${pf.toFixed(2)} < ${thresholds.marginal_min_profit_factor}.`
+      : `Leverage-adjusted DD ${lDd?.toFixed(1)}% above 40%.`;
+    return { label: 'rejected_backtest', reason: why, confidence: 'normal' };
+  }
+
+  // Marginal — weak positive, or normalized below profitable floor, or DD/profit ratio poor
+  const bits: string[] = [];
+  if (pf != null) bits.push(`PF ${pf.toFixed(2)}`);
+  if (nNet != null) bits.push(`norm net ${nNet.toFixed(1)}%`);
+  if (lDd != null) bits.push(`lev-adj DD ${lDd.toFixed(1)}%`);
+  if (ratioOk != null && ratioOk > 0.75) bits.push(`DD/profit ${ratioOk.toFixed(2)}`);
+  return {
+    label: 'marginal',
+    reason: `Doesn't meet Profitable gates (${bits.join(', ') || 'weak metrics'}).`,
+    confidence: 'normal',
+  };
+}
+
+/** Back-compat shim: legacy callers that just want a label. */
+export function autoSuggestLabelOnly(input: AutoSuggestInput): BacktestLabel {
+  return autoSuggestLabel(input).label;
 }

@@ -16,6 +16,12 @@ import {
   listStrategyVersions,
 } from '@/lib/calibration/calibration.functions';
 import type { OcrExtraction } from '@/lib/calibration/ocr.server';
+import {
+  autoSuggestLabel,
+  DEFAULT_CLASSIFICATION_THRESHOLDS,
+  type AutoSuggestResult,
+} from '@/lib/calibration/scoring';
+import { computeSizingDerived, SIZING_DEFAULTS } from '@/lib/calibration/sizing';
 
 type Label = 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
@@ -26,20 +32,45 @@ const LABEL_OPTIONS: Array<{ value: Label; label: string }> = [
   { value: 'profitable_plus', label: 'Profitable+' },
 ];
 
-function autoSuggest(input: {
-  net_profit_pct: string;
-  max_drawdown_pct: string;
-  profit_factor: string;
-  num_trades: string;
-}): Label {
-  const pnl = parseFloat(input.net_profit_pct);
-  const dd = Math.abs(parseFloat(input.max_drawdown_pct));
-  const pf = parseFloat(input.profit_factor);
-  const tr = parseInt(input.num_trades, 10);
-  if (!Number.isFinite(pnl) || pnl <= 0 || !(pf >= 1) || !(tr >= 10)) return 'rejected_backtest';
-  if (pf >= 1.5 && pnl >= 15 && (Number.isFinite(dd) ? dd <= 15 : true)) return 'profitable_plus';
-  if (pf >= 1.2 && pnl >= 5 && (Number.isFinite(dd) ? dd <= 25 : true)) return 'profitable';
-  return 'marginal';
+function autoSuggestUI(
+  metrics: {
+    net_profit_pct: string;
+    max_drawdown_pct: string;
+    profit_factor: string;
+    num_trades: string;
+    avg_pnl_pct: string;
+  },
+  sizing: { position_size_pct: number; leverage: number; leverage_enabled: boolean },
+): AutoSuggestResult {
+  const numOr = (s: string): number | null => {
+    if (!s || s.trim() === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+  const np = numOr(metrics.net_profit_pct);
+  const dd = numOr(metrics.max_drawdown_pct);
+  const derived = computeSizingDerived(
+    {
+      position_size_type: 'percent_of_equity',
+      position_size_pct: sizing.position_size_pct,
+      leverage: sizing.leverage,
+      leverage_enabled: sizing.leverage_enabled,
+    },
+    { net_profit_pct: np, max_drawdown_pct: dd, avg_pnl_pct: numOr(metrics.avg_pnl_pct) },
+  );
+  return autoSuggestLabel(
+    {
+      net_profit_pct: np,
+      max_drawdown_pct: dd,
+      profit_factor: numOr(metrics.profit_factor),
+      num_trades: numOr(metrics.num_trades),
+      normalized_net_profit_pct: derived.normalized_net_profit_pct,
+      normalized_drawdown_pct: derived.normalized_drawdown_pct,
+      leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+      leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+    },
+    DEFAULT_CLASSIFICATION_THRESHOLDS,
+  );
 }
 
 export type BacktestDialogPrefill = {
@@ -145,6 +176,16 @@ export function BacktestResultDialog({
   const [labelTouched, setLabelTouched] = useState(false);
   const [noTrades, setNoTrades] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<AutoSuggestResult | null>(null);
+
+  // Sizing & leverage assumptions (defaults reflect live bot configuration)
+  const [sizing, setSizing] = useState({
+    initial_capital_usd: String(SIZING_DEFAULTS.initial_capital_usd),
+    position_size_pct: String(SIZING_DEFAULTS.position_size_pct),
+    leverage: String(SIZING_DEFAULTS.leverage),
+    leverage_enabled: SIZING_DEFAULTS.leverage_enabled,
+  });
+  const [sizingTouched, setSizingTouched] = useState(false);
 
   // Screenshot/OCR state
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -180,12 +221,20 @@ export function BacktestResultDialog({
     setLabelTouched(false);
     setNoTrades(false);
     setError(null);
+    setSuggestion(null);
     setStage('idle');
     setStoragePath(null);
     setExtraction(null);
     setOcrUsed(false);
     setOcrError(null);
     setTab('manual');
+    setSizing({
+      initial_capital_usd: String(SIZING_DEFAULTS.initial_capital_usd),
+      position_size_pct: String(SIZING_DEFAULTS.position_size_pct),
+      leverage: String(SIZING_DEFAULTS.leverage),
+      leverage_enabled: SIZING_DEFAULTS.leverage_enabled,
+    });
+    setSizingTouched(false);
   }, [open, prefill?.symbol]);
 
   // Global paste handler: while dialog is open, Ctrl/Cmd+V with an image on the
@@ -228,17 +277,48 @@ export function BacktestResultDialog({
     if (def) setForm((f) => ({ ...f, strategy_version: def }));
   }, [open, versionsQ.data, form.strategy_version]);
 
-  // Auto-suggest label as user types numbers — unless they manually changed it
+  // Sizing-aware suggestion, always recomputed; auto-applied unless user touched the label
+  const sizingNumeric = useMemo(
+    () => ({
+      position_size_pct: Number(sizing.position_size_pct) || SIZING_DEFAULTS.position_size_pct,
+      leverage: Number(sizing.leverage) || SIZING_DEFAULTS.leverage,
+      leverage_enabled: sizing.leverage_enabled,
+    }),
+    [sizing.position_size_pct, sizing.leverage, sizing.leverage_enabled],
+  );
+
+  const notionalExposurePct = useMemo(() => {
+    return sizingNumeric.leverage_enabled
+      ? sizingNumeric.position_size_pct * sizingNumeric.leverage
+      : sizingNumeric.position_size_pct;
+  }, [sizingNumeric]);
+
   useEffect(() => {
-    if (labelTouched) return;
-    const lbl = autoSuggest({
-      net_profit_pct: form.net_profit_pct,
-      max_drawdown_pct: form.max_drawdown_pct,
-      profit_factor: form.profit_factor,
-      num_trades: form.num_trades,
-    });
-    setForm((f) => (f.label === lbl ? f : { ...f, label: lbl }));
-  }, [form.net_profit_pct, form.max_drawdown_pct, form.profit_factor, form.num_trades, labelTouched]);
+    if (noTrades) return;
+    const s = autoSuggestUI(
+      {
+        net_profit_pct: form.net_profit_pct,
+        max_drawdown_pct: form.max_drawdown_pct,
+        profit_factor: form.profit_factor,
+        num_trades: form.num_trades,
+        avg_pnl_pct: form.avg_pnl_pct,
+      },
+      sizingNumeric,
+    );
+    setSuggestion(s);
+    if (!labelTouched) {
+      setForm((f) => (f.label === s.label ? f : { ...f, label: s.label }));
+    }
+  }, [
+    form.net_profit_pct,
+    form.max_drawdown_pct,
+    form.profit_factor,
+    form.num_trades,
+    form.avg_pnl_pct,
+    sizingNumeric,
+    labelTouched,
+    noTrades,
+  ]);
 
   const lookbackDays = useMemo(() => {
     const candles = parseInt(form.candles_tested, 10);
@@ -363,6 +443,15 @@ export function BacktestResultDialog({
         extracted_raw_text: extraction?.raw_text ?? null,
         extracted_metrics: extraction?.metrics ?? null,
         field_confidences: extraction?.field_confidences ?? null,
+        // Strategy sizing assumptions (defaults reflect live bot)
+        initial_capital_usd: Number(sizing.initial_capital_usd) || 10000,
+        position_size_type: 'percent_of_equity' as const,
+        position_size_pct: sizingNumeric.position_size_pct,
+        leverage: sizingNumeric.leverage,
+        leverage_enabled: sizingNumeric.leverage_enabled,
+        sizing_assumption_source: (sizingTouched ? 'manual_override' : 'user_confirmed') as
+          | 'manual_override'
+          | 'user_confirmed',
       };
       return await createBacktestResult({ data: payload as any });
     },
@@ -548,6 +637,70 @@ export function BacktestResultDialog({
           </div>
         </div>
 
+        <div className="mt-3 rounded border border-border bg-muted/20 p-3">
+          <h4 className="text-xs font-semibold mb-2">
+            Strategy sizing assumptions
+            <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+              Defaults reflect live bot. Edits override per row.
+            </span>
+          </h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Field label="Initial capital (USD)">
+              <Input
+                value={sizing.initial_capital_usd}
+                inputMode="decimal"
+                onChange={(e) => {
+                  setSizing((s) => ({ ...s, initial_capital_usd: e.target.value }));
+                  setSizingTouched(true);
+                }}
+              />
+            </Field>
+            <Field label="Position size type">
+              <Input value="percent_of_equity" disabled />
+            </Field>
+            <Field label="Position size %">
+              <Input
+                value={sizing.position_size_pct}
+                inputMode="decimal"
+                onChange={(e) => {
+                  setSizing((s) => ({ ...s, position_size_pct: e.target.value }));
+                  setSizingTouched(true);
+                }}
+              />
+            </Field>
+            <Field label="Leverage enabled">
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={sizing.leverage_enabled}
+                  onChange={(e) => {
+                    setSizing((s) => ({ ...s, leverage_enabled: e.target.checked }));
+                    setSizingTouched(true);
+                  }}
+                />
+                {sizing.leverage_enabled ? 'On' : 'Off'}
+              </label>
+            </Field>
+            <Field label="Leverage">
+              <Input
+                value={sizing.leverage}
+                inputMode="decimal"
+                disabled={!sizing.leverage_enabled}
+                onChange={(e) => {
+                  setSizing((s) => ({ ...s, leverage: e.target.value }));
+                  setSizingTouched(true);
+                }}
+              />
+            </Field>
+            <Field label="Notional exposure %" hint="position_size % × leverage">
+              <Input value={`${notionalExposurePct.toFixed(1)}%`} disabled />
+            </Field>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Leverage-adjusted values are estimates based on configured position size and leverage. They do not include funding, slippage, liquidation risk, margin rules or execution differences.
+          </p>
+        </div>
+
         <div className="mt-3">
           <Label className="text-xs">Label (auto-suggested — overstyrbar)</Label>
           <div className="mt-1 flex flex-wrap gap-2">
@@ -563,9 +716,21 @@ export function BacktestResultDialog({
                 }`}
               >
                 {opt.label}
+                {suggestion?.label === opt.value && !labelTouched && (
+                  <span className="ml-1 text-[10px] opacity-80">· suggested</span>
+                )}
               </button>
             ))}
           </div>
+          {suggestion && !noTrades && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              <span className="font-medium">Suggested:</span> {suggestion.label}
+              {suggestion.confidence === 'low' && (
+                <span className="ml-1 rounded bg-yellow-500/15 px-1 text-yellow-700">low confidence</span>
+              )}
+              <span className="ml-1">— {suggestion.reason}</span>
+            </p>
+          )}
         </div>
 
         <div className="mt-3">

@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -1017,32 +1017,124 @@ function BacktestHistorySection({ symbol }: { symbol: string }) {
           </thead>
           <tbody>
             {rows.map((row: any) => (
-              <tr key={row.id} className="border-b last:border-b-0">
-                <td className="py-0.5 pr-2 font-mono">{row.test_date}</td>
-                <td className="py-0.5 pr-2">
-                  <span className="rounded bg-muted px-1.5 py-0.5">{row.label}</span>
-                </td>
-                <td className="py-0.5 pr-2 text-muted-foreground">{row.strategy_version}</td>
-                <td className="py-0.5 pr-2 text-right">{fmtNum(row.net_profit_pct, 1)}</td>
-                <td className="py-0.5 pr-2 text-right">{fmtNum(row.max_drawdown_pct, 1)}</td>
-                <td className="py-0.5 pr-2 text-right">{fmtNum(row.profit_factor, 2)}</td>
-                <td className="py-0.5 pr-2 text-right">{row.num_trades ?? '—'}</td>
-                <td className="py-0.5 pr-2">
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${row.extraction_source === 'screenshot_ocr' ? 'bg-blue-500/15 text-blue-700' : 'bg-muted'}`}>
-                    {row.extraction_source === 'screenshot_ocr' ? 'OCR' : 'manual'}
-                  </span>
-                </td>
-                <td className="py-0.5 pr-2 text-muted-foreground">{fmtTs(row.created_at)}</td>
-                <td className="py-0.5 pr-2">
-                  {row.screenshot_storage_path ? (
-                    <ScreenshotLink id={row.id} />
-                  ) : '—'}
-                </td>
-              </tr>
+              <BacktestHistoryRow key={row.id} row={row} />
             ))}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function BacktestHistoryRow({ row }: { row: any }) {
+  const [open, setOpen] = useState(false);
+  const lev = row.leverage_enabled ? row.leverage ?? null : null;
+  return (
+    <>
+      <tr className="border-b last:border-b-0">
+        <td className="py-0.5 pr-2 font-mono">
+          <button
+            className="mr-1 text-muted-foreground hover:text-foreground"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="toggle details"
+          >
+            {open ? '▾' : '▸'}
+          </button>
+          {row.test_date}
+        </td>
+        <td className="py-0.5 pr-2">
+          <span className="rounded bg-muted px-1.5 py-0.5">{row.label}</span>
+        </td>
+        <td className="py-0.5 pr-2 text-muted-foreground">{row.strategy_version}</td>
+        <td className="py-0.5 pr-2 text-right">{fmtNum(row.net_profit_pct, 1)}</td>
+        <td className="py-0.5 pr-2 text-right">{fmtNum(row.max_drawdown_pct, 1)}</td>
+        <td className="py-0.5 pr-2 text-right">{fmtNum(row.profit_factor, 2)}</td>
+        <td className="py-0.5 pr-2 text-right">{row.num_trades ?? '—'}</td>
+        <td className="py-0.5 pr-2">
+          <span className={`rounded px-1.5 py-0.5 text-[10px] ${row.extraction_source === 'screenshot_ocr' ? 'bg-blue-500/15 text-blue-700' : 'bg-muted'}`}>
+            {row.extraction_source === 'screenshot_ocr' ? 'OCR' : 'manual'}
+          </span>
+        </td>
+        <td className="py-0.5 pr-2 text-muted-foreground">{fmtTs(row.created_at)}</td>
+        <td className="py-0.5 pr-2">
+          {row.screenshot_storage_path ? <ScreenshotLink id={row.id} /> : '—'}
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-b last:border-b-0 bg-muted/20">
+          <td colSpan={10} className="px-2 py-2">
+            <div className="mb-1 text-[10px] text-muted-foreground">
+              Sizing: {row.position_size_pct ?? '—'}% of equity
+              {lev != null ? ` · ${lev}x leverage` : ' · no leverage'}
+              {' · notional '}
+              {row.notional_exposure_pct != null ? `${fmtNum(row.notional_exposure_pct, 1)}%` : '—'}
+              {' · capital '}
+              {row.initial_capital_usd != null ? `$${row.initial_capital_usd}` : '—'}
+              {row.sizing_assumption_source ? ` · src: ${row.sizing_assumption_source}` : ''}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <MetricsCard
+                title="Account (TradingView)"
+                items={[
+                  ['Net profit %', fmtNum(row.net_profit_pct, 2)],
+                  ['Max drawdown %', fmtNum(row.max_drawdown_pct, 2)],
+                  ['Avg PnL %', fmtNum(row.avg_pnl_pct, 2)],
+                  ['Profit factor', fmtNum(row.profit_factor, 2)],
+                  ['Win rate %', fmtNum(row.win_rate_pct, 1)],
+                  ['Trades', row.num_trades ?? '—'],
+                ]}
+              />
+              <MetricsCard
+                title="Position-size normalized"
+                hint="per-unit (÷ position %)"
+                items={[
+                  ['Norm. net %', fmtNum(row.normalized_net_profit_pct, 2)],
+                  ['Norm. drawdown %', fmtNum(row.normalized_drawdown_pct, 2)],
+                  ['Norm. avg trade %', fmtNum(row.normalized_avg_trade_pct, 3)],
+                ]}
+              />
+              <MetricsCard
+                title={`Leverage-adjusted${lev ? ` (${lev}x)` : ''}`}
+                hint="estimate; excludes funding/slippage/liq"
+                items={[
+                  ['Lev. net %', fmtNum(row.leverage_adjusted_net_profit_pct, 2)],
+                  ['Lev. drawdown %', fmtNum(row.leverage_adjusted_drawdown_pct, 2)],
+                ]}
+              />
+            </div>
+            {row.notes && (
+              <p className="mt-2 text-[11px] text-muted-foreground whitespace-pre-wrap">
+                <span className="font-medium">Notes:</span> {row.notes}
+              </p>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function MetricsCard({
+  title,
+  hint,
+  items,
+}: {
+  title: string;
+  hint?: string;
+  items: Array<[string, React.ReactNode]>;
+}) {
+  return (
+    <div className="rounded border bg-background p-2">
+      <div className="text-[11px] font-semibold">{title}</div>
+      {hint && <div className="text-[10px] text-muted-foreground mb-1">{hint}</div>}
+      <dl className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+        {items.map(([k, v]) => (
+          <Fragment key={k}>
+            <dt className="text-muted-foreground">{k}</dt>
+            <dd className="text-right font-mono">{v ?? '—'}</dd>
+          </Fragment>
+        ))}
+      </dl>
     </div>
   );
 }

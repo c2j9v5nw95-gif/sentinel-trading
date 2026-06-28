@@ -84,6 +84,14 @@ export type Database = {
         Row: {
           auto_pause_on_critical_invariant: boolean
           auto_snapshot_signal_context_enabled: boolean
+          backtest_marginal_min_profit_factor: number | null
+          backtest_max_leverage_adjusted_drawdown_profitable: number | null
+          backtest_max_leverage_adjusted_drawdown_profitable_plus: number | null
+          backtest_min_trades: number | null
+          backtest_profitable_min_normalized_net_profit_pct: number | null
+          backtest_profitable_min_profit_factor: number | null
+          backtest_profitable_plus_min_normalized_net_profit_pct: number | null
+          backtest_profitable_plus_min_profit_factor: number | null
           calibration_default_strategy_version: string | null
           calibration_half_life_days: number
           calibration_include_default: boolean
@@ -134,6 +142,16 @@ export type Database = {
         Insert: {
           auto_pause_on_critical_invariant?: boolean
           auto_snapshot_signal_context_enabled?: boolean
+          backtest_marginal_min_profit_factor?: number | null
+          backtest_max_leverage_adjusted_drawdown_profitable?: number | null
+          backtest_max_leverage_adjusted_drawdown_profitable_plus?:
+            | number
+            | null
+          backtest_min_trades?: number | null
+          backtest_profitable_min_normalized_net_profit_pct?: number | null
+          backtest_profitable_min_profit_factor?: number | null
+          backtest_profitable_plus_min_normalized_net_profit_pct?: number | null
+          backtest_profitable_plus_min_profit_factor?: number | null
           calibration_default_strategy_version?: string | null
           calibration_half_life_days?: number
           calibration_include_default?: boolean
@@ -184,6 +202,16 @@ export type Database = {
         Update: {
           auto_pause_on_critical_invariant?: boolean
           auto_snapshot_signal_context_enabled?: boolean
+          backtest_marginal_min_profit_factor?: number | null
+          backtest_max_leverage_adjusted_drawdown_profitable?: number | null
+          backtest_max_leverage_adjusted_drawdown_profitable_plus?:
+            | number
+            | null
+          backtest_min_trades?: number | null
+          backtest_profitable_min_normalized_net_profit_pct?: number | null
+          backtest_profitable_min_profit_factor?: number | null
+          backtest_profitable_plus_min_normalized_net_profit_pct?: number | null
+          backtest_profitable_plus_min_profit_factor?: number | null
           calibration_default_strategy_version?: string | null
           calibration_half_life_days?: number
           calibration_include_default?: boolean
@@ -863,22 +891,35 @@ export type Database = {
           extraction_status: string
           field_confidences: Json | null
           id: string
+          initial_capital_usd: number | null
           label: string
           largest_loss_usd: number | null
           largest_profit_usd: number | null
+          leverage: number | null
+          leverage_adjusted_drawdown_pct: number | null
+          leverage_adjusted_net_profit_pct: number | null
+          leverage_enabled: boolean | null
           lookback_equivalent_days: number | null
           losing_trades_count: number | null
           max_drawdown_pct: number | null
           max_drawdown_usd: number | null
           net_profit_pct: number | null
           net_profit_usd: number | null
+          normalized_avg_trade_pct: number | null
+          normalized_drawdown_pct: number | null
+          normalized_net_profit_pct: number | null
           notes: string | null
+          notional_exposure_pct: number | null
           num_trades: number | null
+          position_size_pct: number | null
+          position_size_type: string | null
+          position_size_usd: number | null
           profit_factor: number | null
           profitable_trades_count: number | null
           screener_snapshot: Json | null
           screenshot_storage_path: string | null
           sharpe_ratio: number | null
+          sizing_assumption_source: string | null
           strategy_version: string
           symbol: string
           test_date: string
@@ -903,22 +944,35 @@ export type Database = {
           extraction_status?: string
           field_confidences?: Json | null
           id?: string
+          initial_capital_usd?: number | null
           label: string
           largest_loss_usd?: number | null
           largest_profit_usd?: number | null
+          leverage?: number | null
+          leverage_adjusted_drawdown_pct?: number | null
+          leverage_adjusted_net_profit_pct?: number | null
+          leverage_enabled?: boolean | null
           lookback_equivalent_days?: number | null
           losing_trades_count?: number | null
           max_drawdown_pct?: number | null
           max_drawdown_usd?: number | null
           net_profit_pct?: number | null
           net_profit_usd?: number | null
+          normalized_avg_trade_pct?: number | null
+          normalized_drawdown_pct?: number | null
+          normalized_net_profit_pct?: number | null
           notes?: string | null
+          notional_exposure_pct?: number | null
           num_trades?: number | null
+          position_size_pct?: number | null
+          position_size_type?: string | null
+          position_size_usd?: number | null
           profit_factor?: number | null
           profitable_trades_count?: number | null
           screener_snapshot?: Json | null
           screenshot_storage_path?: string | null
           sharpe_ratio?: number | null
+          sizing_assumption_source?: string | null
           strategy_version: string
           symbol: string
           test_date?: string
@@ -943,22 +997,35 @@ export type Database = {
           extraction_status?: string
           field_confidences?: Json | null
           id?: string
+          initial_capital_usd?: number | null
           label?: string
           largest_loss_usd?: number | null
           largest_profit_usd?: number | null
+          leverage?: number | null
+          leverage_adjusted_drawdown_pct?: number | null
+          leverage_adjusted_net_profit_pct?: number | null
+          leverage_enabled?: boolean | null
           lookback_equivalent_days?: number | null
           losing_trades_count?: number | null
           max_drawdown_pct?: number | null
           max_drawdown_usd?: number | null
           net_profit_pct?: number | null
           net_profit_usd?: number | null
+          normalized_avg_trade_pct?: number | null
+          normalized_drawdown_pct?: number | null
+          normalized_net_profit_pct?: number | null
           notes?: string | null
+          notional_exposure_pct?: number | null
           num_trades?: number | null
+          position_size_pct?: number | null
+          position_size_type?: string | null
+          position_size_usd?: number | null
           profit_factor?: number | null
           profitable_trades_count?: number | null
           screener_snapshot?: Json | null
           screenshot_storage_path?: string | null
           sharpe_ratio?: number | null
+          sizing_assumption_source?: string | null
           strategy_version?: string
           symbol?: string
           test_date?: string
