@@ -16,6 +16,9 @@ import {
   computeFeatureMedians,
   computeFeatureStds,
   autoSuggestLabel,
+  computeBacktestQualityScore,
+  detectNeedsReview,
+  LABEL_CONFIG_VERSION,
   DEFAULT_CLASSIFICATION_THRESHOLDS,
   type BacktestLabel,
   type CalibrationConfig,
@@ -28,7 +31,7 @@ import { computeSizingDerived, withSizingDefaults } from './sizing';
 
 // ── Validators ────────────────────────────────────────────────────────────
 
-const LabelEnum = z.enum(['rejected_backtest', 'marginal', 'profitable', 'profitable_plus']);
+const LabelEnum = z.enum(['no_trades', 'rejected_backtest', 'marginal', 'profitable', 'profitable_plus']);
 
 const NumericNullable = z
   .union([z.number(), z.string(), z.null(), z.undefined()])
@@ -93,21 +96,30 @@ const BacktestPayload = z.object({
 
 async function loadCalibrationConfig(
   supabase: SupabaseClient,
-): Promise<CalibrationConfig & { ocr_model: string; default_strategy_version: string | null }> {
+): Promise<
+  CalibrationConfig & {
+    ocr_model: string;
+    default_strategy_version: string | null;
+    exclude_no_trades: boolean;
+    exclude_needs_review: boolean;
+  }
+> {
   const { data } = await supabase
     .from('app_settings')
     .select(
-      'calibration_half_life_days, calibration_k, calibration_min_neighbors_medium, calibration_min_neighbors_high, calibration_default_strategy_version, calibration_ocr_model',
+      'calibration_half_life_days, calibration_k, calibration_min_neighbors_medium, calibration_min_neighbors_high, calibration_default_strategy_version, calibration_ocr_model, calibration_exclude_no_trades, calibration_exclude_needs_review',
     )
     .eq('singleton', true)
     .maybeSingle();
   return {
-    k: data?.calibration_k ?? 5,
+    k: data?.calibration_k ?? 10,
     half_life_days: data?.calibration_half_life_days ?? 180,
-    min_neighbors_medium: data?.calibration_min_neighbors_medium ?? 3,
-    min_neighbors_high: data?.calibration_min_neighbors_high ?? 6,
+    min_neighbors_medium: data?.calibration_min_neighbors_medium ?? 4,
+    min_neighbors_high: data?.calibration_min_neighbors_high ?? 10,
     ocr_model: data?.calibration_ocr_model ?? 'google/gemini-3-flash-preview',
     default_strategy_version: data?.calibration_default_strategy_version ?? null,
+    exclude_no_trades: data?.calibration_exclude_no_trades ?? true,
+    exclude_needs_review: data?.calibration_exclude_needs_review ?? true,
   };
 }
 
@@ -154,24 +166,34 @@ function ageDays(testDate: string, now: Date = new Date()): number {
 async function loadObservations(
   supabase: SupabaseClient,
   strategyVersion: string | null,
+  opts?: { exclude_no_trades?: boolean; exclude_needs_review?: boolean },
 ): Promise<Observation[]> {
   let q = supabase
     .from('coin_backtest_results')
-    .select('id, symbol, test_date, label, screener_snapshot, strategy_version')
+    .select('id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source')
     .in('extraction_status', ['manual', 'confirmed'])
     .order('test_date', { ascending: false })
     .limit(2000);
   if (strategyVersion) q = q.eq('strategy_version', strategyVersion);
   const { data, error } = await q;
   if (error) throw new Error(`load_observations:${error.message}`);
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    symbol: r.symbol,
-    test_date: r.test_date,
-    label: r.label as BacktestLabel,
-    age_days: ageDays(r.test_date),
-    features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
-  }));
+  const excludeNoTrades = opts?.exclude_no_trades ?? true;
+  const excludeNeedsReview = opts?.exclude_needs_review ?? true;
+  return (data ?? [])
+    .filter((r: any) => {
+      if (excludeNoTrades && r.label === 'no_trades') return false;
+      // Only exclude when the row was auto-labeled AND flagged for review
+      if (excludeNeedsReview && r.needs_review === true && r.label_source !== 'manual_override') return false;
+      return true;
+    })
+    .map((r: any) => ({
+      id: r.id,
+      symbol: r.symbol,
+      test_date: r.test_date,
+      label: r.label as BacktestLabel,
+      age_days: ageDays(r.test_date),
+      features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
+    }));
 }
 
 // ── Functions ─────────────────────────────────────────────────────────────
@@ -282,6 +304,10 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       ...rest
     } = data;
 
+    // Detect whether user confirmed a label that disagrees with the suggestion
+    const review = detectNeedsReview(data.label as BacktestLabel, auto);
+    const labelSource = data.label === auto.label ? 'auto' : 'manual_override';
+
     const row = {
       user_id: userId,
       ...rest,
@@ -299,6 +325,18 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
       sizing_assumption_source: data.sizing_assumption_source ?? 'user_confirmed',
       auto_suggested_label: auto.label,
+      backtest_quality_score: auto.quality_score,
+      classification_reason_codes: auto.reason_codes,
+      classification_positive_drivers: auto.positive_drivers,
+      classification_negative_drivers: auto.negative_drivers,
+      classification_safety_overrides: auto.safety_overrides,
+      classification_summary: auto.summary,
+      label_source: labelSource,
+      label_overridden_at: labelSource === 'manual_override' ? new Date().toISOString() : null,
+      label_overridden_by: labelSource === 'manual_override' ? userId : null,
+      label_config_version: LABEL_CONFIG_VERSION,
+      needs_review: review.needs_review,
+      needs_review_reason: review.reason,
     };
     const { data: inserted, error } = await supabase
       .from('coin_backtest_results')

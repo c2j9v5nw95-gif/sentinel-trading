@@ -23,9 +23,10 @@ import {
 } from '@/lib/calibration/scoring';
 import { computeSizingDerived, SIZING_DEFAULTS } from '@/lib/calibration/sizing';
 
-type Label = 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
+type Label = 'no_trades' | 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
 const LABEL_OPTIONS: Array<{ value: Label; label: string }> = [
+  { value: 'no_trades', label: 'No Trades / No Setup' },
   { value: 'rejected_backtest', label: 'Rejected Backtest' },
   { value: 'marginal', label: 'Marginal' },
   { value: 'profitable', label: 'Profitable' },
@@ -368,7 +369,7 @@ export function BacktestResultDialog({
       if (markerHit || allNull) {
         setNoTrades(true);
         setLabelTouched(true);
-        setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+        setForm((f) => ({ ...f, label: 'no_trades' }));
         setStage('review');
         return;
       }
@@ -434,7 +435,7 @@ export function BacktestResultDialog({
         largest_loss_usd: noTrades ? null : numeric(form.largest_loss_usd),
         profitable_trades_count: noTrades ? 0 : intish(form.profitable_trades_count),
         losing_trades_count: noTrades ? 0 : intish(form.losing_trades_count),
-        label: noTrades ? ('rejected_backtest' as Label) : form.label,
+        label: noTrades ? ('no_trades' as Label) : form.label,
         notes: notesFinal,
         screenshot_storage_path: storagePath,
         extraction_source: extractionSource as 'manual' | 'screenshot_ocr',
@@ -606,7 +607,7 @@ export function BacktestResultDialog({
                 setNoTrades(v);
                 if (v) {
                   setLabelTouched(true);
-                  setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+                  setForm((f) => ({ ...f, label: 'no_trades' }));
                 }
               }}
               className="mt-0.5"
@@ -614,7 +615,7 @@ export function BacktestResultDialog({
             <span>
               <span className="font-medium">No trades in test period</span>
               <span className="block text-muted-foreground">
-                Strategien åpnet ingen posisjoner i perioden. Lagres som <code>rejected_backtest</code> med <code>num_trades = 0</code>; metrics-feltene under ignoreres.
+                Strategien åpnet ingen posisjoner i perioden. Lagres som <code>no_trades</code> med <code>num_trades = 0</code>; metrics-feltene under ignoreres. Ekskluderes fra calibration som default.
               </span>
             </span>
           </label>

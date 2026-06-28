@@ -84,6 +84,7 @@ export type Database = {
         Row: {
           auto_pause_on_critical_invariant: boolean
           auto_snapshot_signal_context_enabled: boolean
+          backtest_label_config_version: string | null
           backtest_marginal_min_profit_factor: number | null
           backtest_max_leverage_adjusted_drawdown_profitable: number | null
           backtest_max_leverage_adjusted_drawdown_profitable_plus: number | null
@@ -93,6 +94,8 @@ export type Database = {
           backtest_profitable_plus_min_normalized_net_profit_pct: number | null
           backtest_profitable_plus_min_profit_factor: number | null
           calibration_default_strategy_version: string | null
+          calibration_exclude_needs_review: boolean | null
+          calibration_exclude_no_trades: boolean | null
           calibration_half_life_days: number
           calibration_include_default: boolean
           calibration_k: number
@@ -142,6 +145,7 @@ export type Database = {
         Insert: {
           auto_pause_on_critical_invariant?: boolean
           auto_snapshot_signal_context_enabled?: boolean
+          backtest_label_config_version?: string | null
           backtest_marginal_min_profit_factor?: number | null
           backtest_max_leverage_adjusted_drawdown_profitable?: number | null
           backtest_max_leverage_adjusted_drawdown_profitable_plus?:
@@ -153,6 +157,8 @@ export type Database = {
           backtest_profitable_plus_min_normalized_net_profit_pct?: number | null
           backtest_profitable_plus_min_profit_factor?: number | null
           calibration_default_strategy_version?: string | null
+          calibration_exclude_needs_review?: boolean | null
+          calibration_exclude_no_trades?: boolean | null
           calibration_half_life_days?: number
           calibration_include_default?: boolean
           calibration_k?: number
@@ -202,6 +208,7 @@ export type Database = {
         Update: {
           auto_pause_on_critical_invariant?: boolean
           auto_snapshot_signal_context_enabled?: boolean
+          backtest_label_config_version?: string | null
           backtest_marginal_min_profit_factor?: number | null
           backtest_max_leverage_adjusted_drawdown_profitable?: number | null
           backtest_max_leverage_adjusted_drawdown_profitable_plus?:
@@ -213,6 +220,8 @@ export type Database = {
           backtest_profitable_plus_min_normalized_net_profit_pct?: number | null
           backtest_profitable_plus_min_profit_factor?: number | null
           calibration_default_strategy_version?: string | null
+          calibration_exclude_needs_review?: boolean | null
+          calibration_exclude_no_trades?: boolean | null
           calibration_half_life_days?: number
           calibration_include_default?: boolean
           calibration_k?: number
@@ -881,7 +890,13 @@ export type Database = {
           auto_suggested_label: string | null
           avg_bars_in_trade: number | null
           avg_pnl_pct: number | null
+          backtest_quality_score: number | null
           candles_tested: number
+          classification_negative_drivers: Json | null
+          classification_positive_drivers: Json | null
+          classification_reason_codes: string[] | null
+          classification_safety_overrides: string[] | null
+          classification_summary: string | null
           created_at: string
           expected_payoff_usd: number | null
           extracted_metrics: Json | null
@@ -893,6 +908,10 @@ export type Database = {
           id: string
           initial_capital_usd: number | null
           label: string
+          label_config_version: string | null
+          label_overridden_at: string | null
+          label_overridden_by: string | null
+          label_source: string | null
           largest_loss_usd: number | null
           largest_profit_usd: number | null
           leverage: number | null
@@ -903,6 +922,8 @@ export type Database = {
           losing_trades_count: number | null
           max_drawdown_pct: number | null
           max_drawdown_usd: number | null
+          needs_review: boolean | null
+          needs_review_reason: string | null
           net_profit_pct: number | null
           net_profit_usd: number | null
           normalized_avg_trade_pct: number | null
@@ -934,7 +955,13 @@ export type Database = {
           auto_suggested_label?: string | null
           avg_bars_in_trade?: number | null
           avg_pnl_pct?: number | null
+          backtest_quality_score?: number | null
           candles_tested?: number
+          classification_negative_drivers?: Json | null
+          classification_positive_drivers?: Json | null
+          classification_reason_codes?: string[] | null
+          classification_safety_overrides?: string[] | null
+          classification_summary?: string | null
           created_at?: string
           expected_payoff_usd?: number | null
           extracted_metrics?: Json | null
@@ -946,6 +973,10 @@ export type Database = {
           id?: string
           initial_capital_usd?: number | null
           label: string
+          label_config_version?: string | null
+          label_overridden_at?: string | null
+          label_overridden_by?: string | null
+          label_source?: string | null
           largest_loss_usd?: number | null
           largest_profit_usd?: number | null
           leverage?: number | null
@@ -956,6 +987,8 @@ export type Database = {
           losing_trades_count?: number | null
           max_drawdown_pct?: number | null
           max_drawdown_usd?: number | null
+          needs_review?: boolean | null
+          needs_review_reason?: string | null
           net_profit_pct?: number | null
           net_profit_usd?: number | null
           normalized_avg_trade_pct?: number | null
@@ -987,7 +1020,13 @@ export type Database = {
           auto_suggested_label?: string | null
           avg_bars_in_trade?: number | null
           avg_pnl_pct?: number | null
+          backtest_quality_score?: number | null
           candles_tested?: number
+          classification_negative_drivers?: Json | null
+          classification_positive_drivers?: Json | null
+          classification_reason_codes?: string[] | null
+          classification_safety_overrides?: string[] | null
+          classification_summary?: string | null
           created_at?: string
           expected_payoff_usd?: number | null
           extracted_metrics?: Json | null
@@ -999,6 +1038,10 @@ export type Database = {
           id?: string
           initial_capital_usd?: number | null
           label?: string
+          label_config_version?: string | null
+          label_overridden_at?: string | null
+          label_overridden_by?: string | null
+          label_source?: string | null
           largest_loss_usd?: number | null
           largest_profit_usd?: number | null
           leverage?: number | null
@@ -1009,6 +1052,8 @@ export type Database = {
           losing_trades_count?: number | null
           max_drawdown_pct?: number | null
           max_drawdown_usd?: number | null
+          needs_review?: boolean | null
+          needs_review_reason?: string | null
           net_profit_pct?: number | null
           net_profit_usd?: number | null
           normalized_avg_trade_pct?: number | null
