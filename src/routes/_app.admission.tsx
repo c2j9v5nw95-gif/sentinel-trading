@@ -348,7 +348,17 @@ function AdmissionPage() {
   const latestBtQ = useQuery({
     enabled: symbolList.length > 0,
     queryKey: ['backtest-latest-map', activeRunId, symbolList.length],
-    queryFn: () => listLatestBacktestPerSymbol({ data: { symbols: symbolList } }),
+    queryFn: async () => {
+      // Chunk to stay safely under the server-side array cap and keep payloads small.
+      const CHUNK = 400;
+      const merged: Record<string, any> = {};
+      for (let i = 0; i < symbolList.length; i += CHUNK) {
+        const slice = symbolList.slice(i, i + CHUNK);
+        const part = await listLatestBacktestPerSymbol({ data: { symbols: slice } });
+        Object.assign(merged, part?.per_symbol ?? {});
+      }
+      return { per_symbol: merged };
+    },
   });
 
 
