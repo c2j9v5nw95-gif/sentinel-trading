@@ -586,7 +586,7 @@ function AdmissionPage() {
   const [confirmLongRun, setConfirmLongRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'candidate_score', dir: 'desc' });
   const [includeCalibration, setIncludeCalibration] = useState(true);
   const [backtestPrefill, setBacktestPrefill] = useState<BacktestDialogPrefill | null>(null);
   // BT-related filters
@@ -595,6 +595,12 @@ function AdmissionPage() {
   const [reviewFilter, setReviewFilter] = useState<'any' | 'only' | 'hide'>('any');
   const [sourceFilter, setSourceFilter] = useState<'any' | 'manual_override' | 'auto'>('any');
   const [btClassFilter, setBtClassFilter] = useState<string>('all');
+  // Candidate Score filters
+  const [minCandidateScore, setMinCandidateScore] = useState<string>('');
+  const [bucketFilter, setBucketFilter] = useState<'all' | CandidateBucket>('all');
+  const [hideCapped, setHideCapped] = useState(false);
+  const [tradeEligibleOnly, setTradeEligibleOnly] = useState(false);
+
 
   const toggleSort = (k: SortKey) => {
     setSort((prev) => prev.key === k
