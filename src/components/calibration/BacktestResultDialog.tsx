@@ -369,7 +369,7 @@ export function BacktestResultDialog({
       if (markerHit || allNull) {
         setNoTrades(true);
         setLabelTouched(true);
-        setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+        setForm((f) => ({ ...f, label: 'no_trades' }));
         setStage('review');
         return;
       }
