@@ -778,8 +778,16 @@ function AdmissionPage() {
       if (reviewFilter === 'hide' && r.last_needs_review) return false;
       if (sourceFilter !== 'any' && r.last_label_source !== sourceFilter) return false;
       if (btClassFilter !== 'all' && r.last_backtest_label !== btClassFilter) return false;
+      // Candidate score filters
+      if (Number.isFinite(minCandN)) {
+        if (r.candidate_score?.score == null || r.candidate_score.score < minCandN) return false;
+      }
+      if (bucketFilter !== 'all' && r.candidate_score?.bucket !== bucketFilter) return false;
+      if (hideCapped && r.candidate_score?.hardKillCapped) return false;
+      if (tradeEligibleOnly && r.candidate_score?.tradeEligible === false) return false;
       return true;
     });
+
     const dir = sort.dir === 'desc' ? -1 : 1;
     const sorted = [...filtered].sort((a, b) => {
       const av = sortValue(a, sort.key);
