@@ -105,14 +105,21 @@ function computeWickComponent(m: SymbolMetrics, t: AdmissionThresholds): number 
 
 export interface ScoreOptions {
   mode: AdmissionMode;
-  trendScore: number | null;
+  /** Historical Trend Quality v2 score (drives Strategy Fit + Trend Adjusted status). */
+  htqScore: number | null;
+  /** Current Momentum / live EMA alignment (informational only). */
+  momentumScore: number | null;
+  /** When HTQ was computed from <14d lookback: status decisions don't promote. */
+  htqMode?: 'standard' | 'emerging';
 }
+
+
 
 export function computeAdmissionScore(
   m: SymbolMetrics,
   t: AdmissionThresholds,
   w: AdmissionWeights,
-  opts: ScoreOptions = { mode: 'strict', trendScore: null },
+  opts: ScoreOptions = { mode: 'strict', htqScore: null, momentumScore: null },
 ): AdmissionScore {
   const hard: string[] = [];
   const soft: string[] = [];
@@ -215,11 +222,15 @@ export function computeAdmissionScore(
 
   const robustness = totalWeight > 0 ? weightedScore / totalWeight : 0;
 
-  // ---- Strategy Fit Score ----
+  // ---- Strategy Fit Score (uses HTQ, not current momentum) ----
   const wRob = t.strategy_fit_weight_robustness ?? 0.6;
   const wTrend = t.strategy_fit_weight_trend ?? 0.4;
-  const trendForFit = opts.trendScore ?? robustness;
-  const strategyFit = robustness * wRob + trendForFit * wTrend;
+  // If HTQ unavailable, fall back to pure robustness (don't let momentum sneak in).
+  const htq = opts.htqScore;
+  const strategyFit = htq != null
+    ? robustness * wRob + htq * wTrend
+    : robustness;
+  const emerging = opts.htqMode === 'emerging';
 
   // ---- Status decision ----
   let status: AdmissionStatus;
@@ -244,31 +255,35 @@ export function computeAdmissionScore(
       reason = 'Robustness below watchlist threshold';
     }
   } else {
-    // Trend Adjusted
-    const trend = opts.trendScore ?? 0;
+    // Trend Adjusted — drive trend decisions off HTQ
+    const trend = htq ?? 0;
     const minTrendCand = t.trend_candidate_min_trend ?? 75;
     const minRobCand = t.trend_candidate_min_robustness ?? 55;
 
     if (robustness >= 80) {
       status = 'approved';
-      reason = 'Strong robustness and good trend quality';
-    } else if (robustness >= 70 && trend >= 80) {
+      reason = 'Strong robustness';
+    } else if (!emerging && robustness >= 70 && trend >= 80) {
       status = 'approved';
-      reason = 'Acceptable robustness, strong trend quality';
+      reason = 'Acceptable robustness, trend-friendly history';
     } else if (robustness >= 65) {
       status = 'watchlist';
       reason = 'Borderline robustness';
-    } else if (robustness >= 55 && trend >= 75) {
+    } else if (!emerging && robustness >= 55 && trend >= 75) {
       status = 'watchlist';
-      reason = 'Acceptable robustness, strong trend quality';
-    } else if (robustness >= minRobCand && trend >= minTrendCand) {
+      reason = 'Acceptable robustness, trend-friendly history';
+    } else if (!emerging && robustness >= minRobCand && trend >= minTrendCand) {
       status = 'trend_candidate';
-      reason = 'Lower robustness, but strong trend profile and no hard kill rules';
+      reason = 'Lower robustness, but historically trend-friendly';
+    } else if (emerging && robustness >= minRobCand && trend >= minTrendCand) {
+      status = 'watchlist';
+      reason = 'Emerging coin: short history, informativ trend signal only';
     } else {
       status = 'rejected';
-      reason = 'Insufficient robustness and trend quality';
+      reason = 'Insufficient robustness and historical trend quality';
     }
   }
+
 
   const wickRiskScore = m.max_1h_drop_pct != null || m.extreme_wick_count != null
     ? Math.round((100 - c_wick) * 10) / 10
@@ -276,7 +291,7 @@ export function computeAdmissionScore(
 
   return {
     score: Math.round(robustness * 10) / 10,
-    trend_score: opts.trendScore != null ? Math.round(opts.trendScore * 10) / 10 : null,
+    trend_score: htq != null ? Math.round(htq * 10) / 10 : null,
     strategy_fit_score: Math.round(strategyFit * 10) / 10,
     status,
     components,
@@ -287,6 +302,7 @@ export function computeAdmissionScore(
     admission_reason: reason,
   };
 }
+
 
 export function median(values: number[]): number | null {
   if (!values.length) return null;

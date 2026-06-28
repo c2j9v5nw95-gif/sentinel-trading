@@ -555,6 +555,9 @@ export type Database = {
         Row: {
           created_at: string
           description: string | null
+          htq_default_lookback_days: number
+          htq_min_neutral: number
+          htq_min_trend_friendly: number
           id: string
           is_active: boolean
           name: string
@@ -565,6 +568,9 @@ export type Database = {
         Insert: {
           created_at?: string
           description?: string | null
+          htq_default_lookback_days?: number
+          htq_min_neutral?: number
+          htq_min_trend_friendly?: number
           id?: string
           is_active?: boolean
           name: string
@@ -575,6 +581,9 @@ export type Database = {
         Update: {
           created_at?: string
           description?: string | null
+          htq_default_lookback_days?: number
+          htq_min_neutral?: number
+          htq_min_trend_friendly?: number
           id?: string
           is_active?: boolean
           name?: string
@@ -591,10 +600,16 @@ export type Database = {
           coingecko_id: string | null
           components: Json | null
           created_at: string
+          current_momentum_score: number | null
           extreme_wick_count: number | null
           fetch_error: string | null
           funding_rate: number | null
           hard_kill_rules: string[] | null
+          historical_trend_quality: number | null
+          htq_components: Json | null
+          htq_lookback_days: number | null
+          htq_mode: string | null
+          htq_reason: string | null
           id: string
           kill_rules_triggered: string[] | null
           listing_age_days: number | null
@@ -607,8 +622,10 @@ export type Database = {
           soft_failures: string[] | null
           spread_bps: number | null
           status: string
+          strategy_fit_label: string | null
           strategy_fit_score: number | null
           symbol: string
+          trend_classification: string | null
           trend_components: Json | null
           trend_score: number | null
           turnover_24h: number | null
@@ -622,10 +639,16 @@ export type Database = {
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
+          current_momentum_score?: number | null
           extreme_wick_count?: number | null
           fetch_error?: string | null
           funding_rate?: number | null
           hard_kill_rules?: string[] | null
+          historical_trend_quality?: number | null
+          htq_components?: Json | null
+          htq_lookback_days?: number | null
+          htq_mode?: string | null
+          htq_reason?: string | null
           id?: string
           kill_rules_triggered?: string[] | null
           listing_age_days?: number | null
@@ -638,8 +661,10 @@ export type Database = {
           soft_failures?: string[] | null
           spread_bps?: number | null
           status: string
+          strategy_fit_label?: string | null
           strategy_fit_score?: number | null
           symbol: string
+          trend_classification?: string | null
           trend_components?: Json | null
           trend_score?: number | null
           turnover_24h?: number | null
@@ -653,10 +678,16 @@ export type Database = {
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
+          current_momentum_score?: number | null
           extreme_wick_count?: number | null
           fetch_error?: string | null
           funding_rate?: number | null
           hard_kill_rules?: string[] | null
+          historical_trend_quality?: number | null
+          htq_components?: Json | null
+          htq_lookback_days?: number | null
+          htq_mode?: string | null
+          htq_reason?: string | null
           id?: string
           kill_rules_triggered?: string[] | null
           listing_age_days?: number | null
@@ -669,8 +700,10 @@ export type Database = {
           soft_failures?: string[] | null
           spread_bps?: number | null
           status?: string
+          strategy_fit_label?: string | null
           strategy_fit_score?: number | null
           symbol?: string
+          trend_classification?: string | null
           trend_components?: Json | null
           trend_score?: number | null
           turnover_24h?: number | null
@@ -694,6 +727,8 @@ export type Database = {
           approved_n: number | null
           error: string | null
           finished_at: string | null
+          htq_lookback_days: number | null
+          htq_mode: string | null
           id: string
           include_trend_quality: boolean
           notes: string | null
@@ -713,6 +748,8 @@ export type Database = {
           approved_n?: number | null
           error?: string | null
           finished_at?: string | null
+          htq_lookback_days?: number | null
+          htq_mode?: string | null
           id?: string
           include_trend_quality?: boolean
           notes?: string | null
@@ -732,6 +769,8 @@ export type Database = {
           approved_n?: number | null
           error?: string | null
           finished_at?: string | null
+          htq_lookback_days?: number | null
+          htq_mode?: string | null
           id?: string
           include_trend_quality?: boolean
           notes?: string | null

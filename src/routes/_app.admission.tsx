@@ -40,6 +40,7 @@ type Result = {
   score: number | null;
   trend_score: number | null;
   strategy_fit_score: number | null;
+  strategy_fit_label: string | null;
   admission_reason: string | null;
   admission_mode: string | null;
   hard_kill_rules: string[] | null;
@@ -56,11 +57,21 @@ type Result = {
   kill_rules_triggered: string[] | null;
   components: Record<string, number> | null;
   trend_components: Record<string, number> | null;
+  historical_trend_quality: number | null;
+  htq_components: Record<string, number> | null;
+  htq_lookback_days: number | null;
+  htq_mode: string | null;
+  trend_classification: 'trend_friendly' | 'neutral' | 'choppy' | null;
+  htq_reason: string | null;
+  current_momentum_score: number | null;
   fetch_error: string | null;
 };
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
+type ClassFilter = 'all' | 'trend_friendly' | 'neutral' | 'choppy';
 type Mode = 'strict' | 'trend_adjusted';
+type Lookback = 5 | 10 | 14 | 30 | 90;
+
 
 function fmtUsd(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -83,6 +94,15 @@ function statusBadgeClass(s: Result['status']): string {
   }
 }
 
+function classBadgeClass(c: NonNullable<Result['trend_classification']>): string {
+  switch (c) {
+    case 'trend_friendly': return 'bg-emerald-500/20 text-emerald-700';
+    case 'neutral': return 'bg-slate-500/20 text-slate-700';
+    case 'choppy': return 'bg-orange-500/20 text-orange-700';
+  }
+}
+
+
 function AdmissionPage() {
   const qc = useQueryClient();
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -96,8 +116,12 @@ function AdmissionPage() {
   const [onlyTrendCandidates, setOnlyTrendCandidates] = useState(false);
   const [minTrend, setMinTrend] = useState<string>('');
   const [minFit, setMinFit] = useState<string>('');
+  const [classFilter, setClassFilter] = useState<ClassFilter>('all');
+  const [lookback, setLookback] = useState<Lookback>(30);
+  const [confirmLongRun, setConfirmLongRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+
 
   const profilesQ = useQuery({
     queryKey: ['admission-profiles'],
@@ -160,10 +184,12 @@ function AdmissionPage() {
           skipWickAnalysis: skipWick,
           mode,
           includeTrendQuality: includeTrend,
+          htqLookbackDays: lookback,
         },
       });
     },
     onSuccess: (res) => {
+
       setSelectedRunId(res.runId);
       qc.invalidateQueries({ queryKey: ['admission-runs'] });
       qc.invalidateQueries({ queryKey: ['admission-results'] });
@@ -176,14 +202,16 @@ function AdmissionPage() {
     const minFitN = parseFloat(minFit);
     return all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
       if (onlyTrendCandidates && r.status !== 'trend_candidate') return false;
       if (hideHardRejections && (r.hard_kill_rules?.length ?? 0) > 0) return false;
       if (search && !r.symbol.toLowerCase().includes(search.toLowerCase())) return false;
-      if (Number.isFinite(minTrendN) && (r.trend_score ?? -1) < minTrendN) return false;
+      if (Number.isFinite(minTrendN) && (r.historical_trend_quality ?? -1) < minTrendN) return false;
       if (Number.isFinite(minFitN) && (r.strategy_fit_score ?? -1) < minFitN) return false;
       return true;
     });
-  }, [resultsQ.data, statusFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit]);
+  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit]);
+
 
   const counts = useMemo(() => {
     const all = resultsQ.data ?? [];
@@ -229,7 +257,40 @@ function AdmissionPage() {
                 {m === 'strict' ? 'Strict Robustness' : 'Trend Adjusted'}
               </button>
             ))}
+
+            <span className="text-xs text-muted-foreground ml-4 mr-1">HTQ Lookback:</span>
+            {([5, 10, 14, 30, 90] as Lookback[]).map((d) => (
+              <button
+                key={d}
+                onClick={() => { setLookback(d); if (d !== 90) setConfirmLongRun(false); }}
+                className={`rounded px-2 py-1 text-xs ${
+                  lookback === d ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                }`}
+                title={d < 14 ? 'Emerging mode — informativ only, ingen approval' : `${d} dager historisk lookback`}
+              >
+                {d}d{d < 14 ? '*' : ''}
+              </button>
+            ))}
           </div>
+
+          {lookback === 90 && (
+            <div className="rounded border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-700">
+              ⚠ 90d lookback henter ~2160 1h-bars per symbol (3 sider). Forventet
+              kjøretid: 5-10× lengre enn 30d. Bekreft før start.
+              <label className="ml-3 inline-flex items-center gap-1">
+                <input type="checkbox" checked={confirmLongRun} onChange={(e) => setConfirmLongRun(e.target.checked)} />
+                Jeg forstår
+              </label>
+            </div>
+          )}
+          {lookback < 14 && (
+            <div className="rounded border border-purple-500/40 bg-purple-500/10 p-2 text-xs text-purple-700">
+              ℹ Emerging mode ({lookback}d): HTQ er informativ. Trend-adjusted
+              status promoteres ikke til Approved/Trend Candidate uten egen
+              robusthet.
+            </div>
+          )}
+
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
@@ -275,7 +336,7 @@ function AdmissionPage() {
             <div className="flex items-end">
               <button
                 className="rounded bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-                disabled={startRun.isPending || !selectedProfileId}
+                disabled={startRun.isPending || !selectedProfileId || (lookback === 90 && !confirmLongRun)}
                 onClick={() => startRun.mutate()}
               >
                 {startRun.isPending ? 'Kjører…' : 'Start screener'}
@@ -411,14 +472,25 @@ function AdmissionPage() {
             Skjul hard rejections
           </label>
           <label className="flex items-center gap-1">
-            Min Trend
+            Min HTQ
             <input type="number" min={0} max={100} className="w-16 rounded border bg-background px-1 py-0.5" value={minTrend} onChange={(e) => setMinTrend(e.target.value)} />
           </label>
           <label className="flex items-center gap-1">
             Min Strategy Fit
             <input type="number" min={0} max={100} className="w-16 rounded border bg-background px-1 py-0.5" value={minFit} onChange={(e) => setMinFit(e.target.value)} />
           </label>
+          <span className="ml-2 text-muted-foreground">Klassifisering:</span>
+          {(['all', 'trend_friendly', 'neutral', 'choppy'] as ClassFilter[]).map((c) => (
+            <button
+              key={c}
+              className={`rounded px-2 py-0.5 ${classFilter === c ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              onClick={() => setClassFilter(c)}
+            >
+              {c === 'all' ? 'alle' : c === 'trend_friendly' ? 'trend-friendly' : c}
+            </button>
+          ))}
         </div>
+
 
         {!activeRunId ? (
           <EmptyState title="Velg en kjøring" hint="Trykk vis på en kjøring over for å se resultatene." />
@@ -433,21 +505,23 @@ function AdmissionPage() {
                 <tr className="text-left text-xs text-muted-foreground border-b">
                   <th className="py-1 pr-2">Symbol</th>
                   <th className="py-1 pr-2">Status</th>
+                  <th className="py-1 pr-2">Class</th>
                   <th className="py-1 pr-2 text-right">Fit</th>
                   <th className="py-1 pr-2 text-right">Robust</th>
-                  <th className="py-1 pr-2 text-right">Trend</th>
+                  <th className="py-1 pr-2 text-right">HTQ</th>
+                  <th className="py-1 pr-2 text-right">Mom</th>
                   <th className="py-1 pr-2 text-right">Rank</th>
                   <th className="py-1 pr-2 text-right">24h TO</th>
-                  <th className="py-1 pr-2 text-right">7d med</th>
                   <th className="py-1 pr-2 text-right">OI</th>
                   <th className="py-1 pr-2 text-right">Spread</th>
                   <th className="py-1 pr-2 text-right">Age</th>
                   <th className="py-1 pr-2 text-right">Wick%</th>
                   <th className="py-1 pr-2">Hard Kills</th>
-                  <th className="py-1 pr-2">Soft Failures</th>
+                  <th className="py-1 pr-2">Soft</th>
                   <th className="py-1 pr-2">Reason</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredResults.map((r) => {
                   const isOpen = expanded === r.id;
@@ -464,12 +538,26 @@ function AdmissionPage() {
                             {r.status === 'trend_candidate' ? 'trend cand.' : r.status}
                           </span>
                         </td>
+                        <td className="py-1 pr-2">
+                          {r.trend_classification ? (
+                            <span className={`rounded px-1.5 py-0.5 text-xs ${classBadgeClass(r.trend_classification)}`}>
+                              {r.trend_classification === 'trend_friendly' ? 'trend' : r.trend_classification}
+                            </span>
+                          ) : '—'}
+                        </td>
                         <td className="py-1 pr-2 text-right font-mono font-semibold">{fmtNum(r.strategy_fit_score, 1)}</td>
                         <td className="py-1 pr-2 text-right font-mono">{fmtNum(r.score, 1)}</td>
-                        <td className="py-1 pr-2 text-right font-mono">{r.trend_score != null ? fmtNum(r.trend_score, 1) : '—'}</td>
+                        <td
+                          className="py-1 pr-2 text-right font-mono"
+                          title={r.htq_lookback_days ? `${r.htq_lookback_days}d · ${r.htq_mode ?? ''}` : ''}
+                        >
+                          {r.historical_trend_quality != null ? fmtNum(r.historical_trend_quality, 1) : '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right font-mono text-muted-foreground">
+                          {r.current_momentum_score != null ? fmtNum(r.current_momentum_score, 1) : '—'}
+                        </td>
                         <td className="py-1 pr-2 text-right">{r.rank ?? '—'}</td>
                         <td className="py-1 pr-2 text-right">{fmtUsd(r.turnover_24h)}</td>
-                        <td className="py-1 pr-2 text-right">{fmtUsd(r.turnover_7d_median)}</td>
                         <td className="py-1 pr-2 text-right">{fmtUsd(r.open_interest_value)}</td>
                         <td className="py-1 pr-2 text-right">{fmtNum(r.spread_bps, 2)}</td>
                         <td className="py-1 pr-2 text-right">{r.listing_age_days ?? '—'}</td>
@@ -484,10 +572,11 @@ function AdmissionPage() {
                           {r.admission_reason ?? '—'}
                         </td>
                       </tr>
+
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={15} className="p-3">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                          <td colSpan={17} className="p-3">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
                                 <h4 className="font-semibold mb-1">Robustness components</h4>
                                 <pre className="rounded bg-background p-2 overflow-auto">
@@ -495,9 +584,27 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                               <div>
-                                <h4 className="font-semibold mb-1">Trend components</h4>
+                                <h4 className="font-semibold mb-1">
+                                  HTQ v2 ({r.htq_lookback_days ?? '—'}d · {r.htq_mode ?? '—'})
+                                </h4>
                                 <pre className="rounded bg-background p-2 overflow-auto">
-                                  {JSON.stringify(r.trend_components ?? { note: 'not computed' }, null, 2)}
+                                  {JSON.stringify(r.htq_components ?? { note: 'not computed' }, null, 2)}
+                                </pre>
+                                {r.htq_reason && (
+                                  <p className="mt-1 text-muted-foreground">{r.htq_reason}</p>
+                                )}
+                              </div>
+                              <div>
+                                <h4 className="font-semibold mb-1">Current Momentum (live)</h4>
+                                <pre className="rounded bg-background p-2 overflow-auto">
+                                  {JSON.stringify(
+                                    {
+                                      momentum_score: r.current_momentum_score,
+                                      ...(r.trend_components ?? {}),
+                                    },
+                                    null,
+                                    2,
+                                  )}
                                 </pre>
                               </div>
                               <div>
@@ -506,6 +613,8 @@ function AdmissionPage() {
                                   {JSON.stringify({
                                     admission_reason: r.admission_reason,
                                     admission_mode: r.admission_mode,
+                                    strategy_fit_label: r.strategy_fit_label,
+                                    trend_classification: r.trend_classification,
                                     hard_kill_rules: r.hard_kill_rules,
                                     soft_failures: r.soft_failures,
                                     wick_risk_score: r.wick_risk_score,
@@ -515,6 +624,7 @@ function AdmissionPage() {
                               </div>
                             </div>
                           </td>
+
                         </tr>
                       )}
                     </>
