@@ -94,6 +94,15 @@ function statusBadgeClass(s: Result['status']): string {
   }
 }
 
+function classBadgeClass(c: NonNullable<Result['trend_classification']>): string {
+  switch (c) {
+    case 'trend_friendly': return 'bg-emerald-500/20 text-emerald-700';
+    case 'neutral': return 'bg-slate-500/20 text-slate-700';
+    case 'choppy': return 'bg-orange-500/20 text-orange-700';
+  }
+}
+
+
 function AdmissionPage() {
   const qc = useQueryClient();
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
