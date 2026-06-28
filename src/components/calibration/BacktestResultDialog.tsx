@@ -176,6 +176,16 @@ export function BacktestResultDialog({
   const [labelTouched, setLabelTouched] = useState(false);
   const [noTrades, setNoTrades] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<AutoSuggestResult | null>(null);
+
+  // Sizing & leverage assumptions (defaults reflect live bot configuration)
+  const [sizing, setSizing] = useState({
+    initial_capital_usd: String(SIZING_DEFAULTS.initial_capital_usd),
+    position_size_pct: String(SIZING_DEFAULTS.position_size_pct),
+    leverage: String(SIZING_DEFAULTS.leverage),
+    leverage_enabled: SIZING_DEFAULTS.leverage_enabled,
+  });
+  const [sizingTouched, setSizingTouched] = useState(false);
 
   // Screenshot/OCR state
   const fileRef = useRef<HTMLInputElement | null>(null);
