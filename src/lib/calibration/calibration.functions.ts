@@ -16,12 +16,15 @@ import {
   computeFeatureMedians,
   computeFeatureStds,
   autoSuggestLabel,
+  DEFAULT_CLASSIFICATION_THRESHOLDS,
   type BacktestLabel,
   type CalibrationConfig,
   type CalibrationResult,
+  type ClassificationThresholds,
   type Observation,
   type ScreenerSnapshot,
 } from './scoring';
+import { computeSizingDerived, withSizingDefaults } from './sizing';
 
 // ── Validators ────────────────────────────────────────────────────────────
 
