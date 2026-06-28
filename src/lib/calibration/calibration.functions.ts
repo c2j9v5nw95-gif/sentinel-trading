@@ -28,7 +28,7 @@ import { computeSizingDerived, withSizingDefaults } from './sizing';
 
 // ── Validators ────────────────────────────────────────────────────────────
 
-const LabelEnum = z.enum(['rejected_backtest', 'marginal', 'profitable', 'profitable_plus']);
+const LabelEnum = z.enum(['no_trades', 'rejected_backtest', 'marginal', 'profitable', 'profitable_plus']);
 
 const NumericNullable = z
   .union([z.number(), z.string(), z.null(), z.undefined()])
