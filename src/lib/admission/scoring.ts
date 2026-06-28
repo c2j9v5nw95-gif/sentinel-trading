@@ -1,6 +1,9 @@
 // Pure scoring helpers for Coin Admission Screener.
 // No I/O — easy to test.
 
+export type AdmissionMode = 'strict' | 'trend_adjusted';
+export type AdmissionStatus = 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
+
 export interface AdmissionThresholds {
   max_rank: number;
   min_turnover_24h_usd: number;
@@ -14,6 +17,13 @@ export interface AdmissionThresholds {
   order_size_usd_for_slippage: number;
   approved_min_score: number;
   watchlist_min_score: number;
+  // Trend Adjusted extras (optional in old data)
+  trend_adjusted_enabled?: boolean;
+  min_trend_score_for_soften?: number;
+  trend_candidate_min_robustness?: number;
+  trend_candidate_min_trend?: number;
+  strategy_fit_weight_robustness?: number;
+  strategy_fit_weight_trend?: number;
 }
 
 export interface AdmissionWeights {
@@ -51,14 +61,19 @@ export interface ScoreBreakdown {
 }
 
 export interface AdmissionScore {
-  score: number;
-  status: 'approved' | 'watchlist' | 'rejected';
+  score: number;                       // robustness 0..100
+  trend_score: number | null;
+  strategy_fit_score: number;
+  status: AdmissionStatus;
   components: ScoreBreakdown;
+  hard_kill_rules: string[];
+  soft_failures: string[];
+  /** Union of hard + soft for backward compatibility. */
   kill_rules_triggered: string[];
   wick_risk_score: number | null;
+  admission_reason: string;
 }
 
-/** Linear ramp: 0 below `lo`, 100 above `hi`, scaled in between. */
 function ramp(value: number | null, lo: number, hi: number): number {
   if (value == null || !Number.isFinite(value)) return 0;
   if (value <= lo) return 0;
@@ -66,76 +81,113 @@ function ramp(value: number | null, lo: number, hi: number): number {
   return ((value - lo) / (hi - lo)) * 100;
 }
 
-/** Inverse ramp: 100 below `lo`, 0 above `hi`. */
 function rampInv(value: number | null, lo: number, hi: number): number {
-  if (value == null || !Number.isFinite(value)) return 50; // unknown = neutral
+  if (value == null || !Number.isFinite(value)) return 50;
   if (value <= lo) return 100;
   if (value >= hi) return 0;
   return (1 - (value - lo) / (hi - lo)) * 100;
 }
 
-/** Rank scoring: top rank = 100, rank == max_rank = 30, beyond = 0. */
 function scoreRank(rank: number | null, maxRank: number): number {
-  if (rank == null) return 30; // unknown rank = below-average but not zero
+  if (rank == null) return 30;
   if (rank <= 1) return 100;
   if (rank > maxRank * 2) return 0;
-  if (rank <= maxRank) {
-    // 1 → 100, maxRank → 50
-    return 100 - ((rank - 1) / (maxRank - 1)) * 50;
-  }
-  // maxRank → 50, 2*maxRank → 0
+  if (rank <= maxRank) return 100 - ((rank - 1) / (maxRank - 1)) * 50;
   return 50 - ((rank - maxRank) / maxRank) * 50;
+}
+
+function computeWickComponent(m: SymbolMetrics, t: AdmissionThresholds): number {
+  if (m.max_1h_drop_pct == null && m.extreme_wick_count == null) return 50;
+  const dropComp = rampInv(m.max_1h_drop_pct, 5, t.max_1h_drop_pct_30d);
+  const wickComp = m.extreme_wick_count != null ? rampInv(m.extreme_wick_count, 0, 10) : 50;
+  return dropComp * 0.7 + wickComp * 0.3;
+}
+
+export interface ScoreOptions {
+  mode: AdmissionMode;
+  trendScore: number | null;
 }
 
 export function computeAdmissionScore(
   m: SymbolMetrics,
-  thresholds: AdmissionThresholds,
-  weights: AdmissionWeights,
+  t: AdmissionThresholds,
+  w: AdmissionWeights,
+  opts: ScoreOptions = { mode: 'strict', trendScore: null },
 ): AdmissionScore {
-  // Kill rules first
-  const kills: string[] = [];
-  if (m.listing_age_days != null && m.listing_age_days < thresholds.min_listing_age_days) {
-    kills.push(`age<${thresholds.min_listing_age_days}d`);
+  const hard: string[] = [];
+  const soft: string[] = [];
+
+  // ---- Hard kill rules (no Trend Score can rescue) ----
+  // Extremely young listing (<7d is dangerous regardless of profile).
+  if (m.listing_age_days != null && m.listing_age_days < 7) {
+    hard.push(`age<7d (very new listing)`);
   }
-  if (m.rank != null && m.rank > thresholds.max_rank) {
-    kills.push(`rank>${thresholds.max_rank}`);
+  // Extremely low 24h turnover (less than 10% of threshold)
+  if (m.turnover_24h != null && m.turnover_24h < t.min_turnover_24h_usd * 0.1) {
+    hard.push(`24h_turnover<${((t.min_turnover_24h_usd * 0.1) / 1e6).toFixed(1)}M (critically low liquidity)`);
   }
-  if (m.turnover_7d_median != null && m.turnover_7d_median < thresholds.min_turnover_7d_median_usd) {
-    kills.push(`7d_median<${(thresholds.min_turnover_7d_median_usd / 1e6).toFixed(0)}M`);
+  // Spread far above threshold
+  if (m.spread_bps != null && m.spread_bps > t.max_spread_bps * 2) {
+    hard.push(`spread>${(t.max_spread_bps * 2).toFixed(1)}bps (dangerous spread)`);
   }
-  if (m.turnover_24h != null && m.turnover_24h < thresholds.min_turnover_24h_usd) {
-    kills.push(`24h<${(thresholds.min_turnover_24h_usd / 1e6).toFixed(0)}M`);
+  // Extreme wick events
+  if (m.max_1h_drop_pct != null && m.max_1h_drop_pct > t.max_1h_drop_pct_30d * 2) {
+    hard.push(`1h_wick>${(t.max_1h_drop_pct_30d * 2).toFixed(0)}% (extreme spike risk)`);
   }
-  if (m.open_interest_value != null && m.open_interest_value < thresholds.min_open_interest_value_usd) {
-    kills.push(`OI<${(thresholds.min_open_interest_value_usd / 1e6).toFixed(0)}M`);
-  }
-  if (m.spread_bps != null && m.spread_bps > thresholds.max_spread_bps) {
-    kills.push(`spread>${thresholds.max_spread_bps}bps`);
-  }
-  if (m.funding_rate != null && Math.abs(m.funding_rate) > thresholds.max_funding_abs) {
-    kills.push(`|funding|>${(thresholds.max_funding_abs * 100).toFixed(3)}%`);
-  }
-  if (m.max_1h_drop_pct != null && m.max_1h_drop_pct > thresholds.max_1h_drop_pct_30d) {
-    kills.push(`1h_drop>${thresholds.max_1h_drop_pct_30d}%`);
+  // Missing critical data
+  if (m.turnover_24h == null && m.turnover_7d_median == null) {
+    hard.push('missing_market_data');
   }
 
-  // Score components 0..100
-  const c_rank = scoreRank(m.rank, thresholds.max_rank);
-  // turnover: blend 24h (40%) + 7d median (60%) against 4x the threshold
-  const minTurn = thresholds.min_turnover_24h_usd;
-  const c_turn24 = ramp(m.turnover_24h, minTurn * 0.5, minTurn * 4);
-  const c_turn7 = ramp(m.turnover_7d_median, thresholds.min_turnover_7d_median_usd * 0.5, thresholds.min_turnover_7d_median_usd * 4);
-  const c_turnover = m.turnover_7d_median != null
-    ? c_turn24 * 0.4 + c_turn7 * 0.6
-    : c_turn24;
-  const c_oi = ramp(m.open_interest_value, thresholds.min_open_interest_value_usd * 0.5, thresholds.min_open_interest_value_usd * 4);
-  const c_spread = rampInv(m.spread_bps, 1, thresholds.max_spread_bps);
-  const c_age = ramp(m.listing_age_days, thresholds.min_listing_age_days * 0.5, thresholds.min_listing_age_days * 4);
-  const c_wick = computeWickComponent(m, thresholds);
+  // ---- Soft requirements ----
+  if (m.rank != null && m.rank > t.max_rank) {
+    soft.push(`rank>${t.max_rank}`);
+  } else if (m.rank == null) {
+    soft.push('rank_unknown');
+  }
+  if (m.turnover_7d_median != null && m.turnover_7d_median < t.min_turnover_7d_median_usd) {
+    soft.push(`7d_median<${(t.min_turnover_7d_median_usd / 1e6).toFixed(0)}M`);
+  }
+  if (m.turnover_24h != null
+      && m.turnover_24h >= t.min_turnover_24h_usd * 0.1
+      && m.turnover_24h < t.min_turnover_24h_usd) {
+    soft.push(`24h<${(t.min_turnover_24h_usd / 1e6).toFixed(0)}M`);
+  }
+  if (m.open_interest_value != null && m.open_interest_value < t.min_open_interest_value_usd) {
+    soft.push(`OI<${(t.min_open_interest_value_usd / 1e6).toFixed(0)}M`);
+  }
+  if (m.spread_bps != null
+      && m.spread_bps > t.max_spread_bps
+      && m.spread_bps <= t.max_spread_bps * 2) {
+    soft.push(`spread>${t.max_spread_bps}bps`);
+  }
+  if (m.listing_age_days != null
+      && m.listing_age_days >= 7
+      && m.listing_age_days < t.min_listing_age_days) {
+    soft.push(`age<${t.min_listing_age_days}d`);
+  }
+  if (m.funding_rate != null && Math.abs(m.funding_rate) > t.max_funding_abs) {
+    soft.push(`|funding|>${(t.max_funding_abs * 100).toFixed(3)}%`);
+  }
+  if (m.max_1h_drop_pct != null
+      && m.max_1h_drop_pct > t.max_1h_drop_pct_30d
+      && m.max_1h_drop_pct <= t.max_1h_drop_pct_30d * 2) {
+    soft.push(`1h_drop>${t.max_1h_drop_pct_30d}%`);
+  }
+
+  // ---- Robustness components ----
+  const c_rank = scoreRank(m.rank, t.max_rank);
+  const c_turn24 = ramp(m.turnover_24h, t.min_turnover_24h_usd * 0.5, t.min_turnover_24h_usd * 4);
+  const c_turn7 = ramp(m.turnover_7d_median, t.min_turnover_7d_median_usd * 0.5, t.min_turnover_7d_median_usd * 4);
+  const c_turnover = m.turnover_7d_median != null ? c_turn24 * 0.4 + c_turn7 * 0.6 : c_turn24;
+  const c_oi = ramp(m.open_interest_value, t.min_open_interest_value_usd * 0.5, t.min_open_interest_value_usd * 4);
+  const c_spread = rampInv(m.spread_bps, 1, t.max_spread_bps);
+  const c_age = ramp(m.listing_age_days, t.min_listing_age_days * 0.5, t.min_listing_age_days * 4);
+  const c_wick = computeWickComponent(m, t);
   const c_funding = rampInv(
     m.funding_rate != null ? Math.abs(m.funding_rate) : null,
     0.0001,
-    thresholds.max_funding_abs,
+    t.max_funding_abs,
   );
 
   const components: ScoreBreakdown = {
@@ -149,50 +201,91 @@ export function computeAdmissionScore(
   };
 
   const weightedScore =
-    c_rank * weights.rank +
-    c_turnover * weights.turnover +
-    c_oi * weights.open_interest +
-    c_spread * weights.depth_slippage +
-    c_age * weights.listing_age +
-    c_wick * weights.wick_volatility +
-    c_funding * weights.funding_normality;
+    c_rank * w.rank +
+    c_turnover * w.turnover +
+    c_oi * w.open_interest +
+    c_spread * w.depth_slippage +
+    c_age * w.listing_age +
+    c_wick * w.wick_volatility +
+    c_funding * w.funding_normality;
 
   const totalWeight =
-    weights.rank + weights.turnover + weights.open_interest +
-    weights.depth_slippage + weights.listing_age + weights.wick_volatility + weights.funding_normality;
+    w.rank + w.turnover + w.open_interest +
+    w.depth_slippage + w.listing_age + w.wick_volatility + w.funding_normality;
 
-  const score = totalWeight > 0 ? weightedScore / totalWeight : 0;
+  const robustness = totalWeight > 0 ? weightedScore / totalWeight : 0;
 
-  let status: 'approved' | 'watchlist' | 'rejected';
-  if (kills.length > 0) {
+  // ---- Strategy Fit Score ----
+  const wRob = t.strategy_fit_weight_robustness ?? 0.6;
+  const wTrend = t.strategy_fit_weight_trend ?? 0.4;
+  const trendForFit = opts.trendScore ?? robustness;
+  const strategyFit = robustness * wRob + trendForFit * wTrend;
+
+  // ---- Status decision ----
+  let status: AdmissionStatus;
+  let reason: string;
+
+  if (hard.length > 0) {
     status = 'rejected';
-  } else if (score >= thresholds.approved_min_score) {
-    status = 'approved';
-  } else if (score >= thresholds.watchlist_min_score) {
-    status = 'watchlist';
+    reason = `Failed hard kill rule: ${hard[0]}`;
+  } else if (opts.mode === 'strict') {
+    // Strict: any soft failure also rejects (back-compat with original behaviour)
+    if (soft.length > 0) {
+      status = 'rejected';
+      reason = `Strict mode: failed requirement: ${soft[0]}`;
+    } else if (robustness >= t.approved_min_score) {
+      status = 'approved';
+      reason = 'Strong robustness across all metrics';
+    } else if (robustness >= t.watchlist_min_score) {
+      status = 'watchlist';
+      reason = 'Borderline robustness';
+    } else {
+      status = 'rejected';
+      reason = 'Robustness below watchlist threshold';
+    }
   } else {
-    status = 'rejected';
+    // Trend Adjusted
+    const trend = opts.trendScore ?? 0;
+    const minTrendCand = t.trend_candidate_min_trend ?? 75;
+    const minRobCand = t.trend_candidate_min_robustness ?? 55;
+
+    if (robustness >= 80) {
+      status = 'approved';
+      reason = 'Strong robustness and good trend quality';
+    } else if (robustness >= 70 && trend >= 80) {
+      status = 'approved';
+      reason = 'Acceptable robustness, strong trend quality';
+    } else if (robustness >= 65) {
+      status = 'watchlist';
+      reason = 'Borderline robustness';
+    } else if (robustness >= 55 && trend >= 75) {
+      status = 'watchlist';
+      reason = 'Acceptable robustness, strong trend quality';
+    } else if (robustness >= minRobCand && trend >= minTrendCand) {
+      status = 'trend_candidate';
+      reason = 'Lower robustness, but strong trend profile and no hard kill rules';
+    } else {
+      status = 'rejected';
+      reason = 'Insufficient robustness and trend quality';
+    }
   }
 
+  const wickRiskScore = m.max_1h_drop_pct != null || m.extreme_wick_count != null
+    ? Math.round((100 - c_wick) * 10) / 10
+    : null;
+
   return {
-    score: Math.round(score * 10) / 10,
+    score: Math.round(robustness * 10) / 10,
+    trend_score: opts.trendScore != null ? Math.round(opts.trendScore * 10) / 10 : null,
+    strategy_fit_score: Math.round(strategyFit * 10) / 10,
     status,
     components,
-    kill_rules_triggered: kills,
-    wick_risk_score: m.max_1h_drop_pct != null || m.extreme_wick_count != null
-      ? Math.round((100 - c_wick) * 10) / 10
-      : null,
+    hard_kill_rules: hard,
+    soft_failures: soft,
+    kill_rules_triggered: [...hard, ...soft],
+    wick_risk_score: wickRiskScore,
+    admission_reason: reason,
   };
-}
-
-function computeWickComponent(m: SymbolMetrics, thresholds: AdmissionThresholds): number {
-  // Combine max 1h drop and extreme wick count.
-  if (m.max_1h_drop_pct == null && m.extreme_wick_count == null) return 50; // unknown
-  const dropComp = rampInv(m.max_1h_drop_pct, 5, thresholds.max_1h_drop_pct_30d);
-  const wickComp = m.extreme_wick_count != null
-    ? rampInv(m.extreme_wick_count, 0, 10)
-    : 50;
-  return dropComp * 0.7 + wickComp * 0.3;
 }
 
 export function median(values: number[]): number | null {
