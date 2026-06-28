@@ -272,8 +272,27 @@ export function BacktestResultDialog({
       }
       setExtraction(res.extraction);
       setOcrUsed(true);
-      // Prefill form fields from extraction
+      // Detect "no trades in period" screenshots so the user does not get a
+      // misleading auto-label like "marginal". Triggers when the model returned
+      // the NO_TRADES_IN_PERIOD marker OR when every numeric metric is null.
       const m = res.extraction.metrics;
+      const rawText = (res.extraction.raw_text || '').toUpperCase();
+      const allNull = OCR_FIELDS.every((k) => {
+        const f = (m as any)[k];
+        return !f || f.value == null;
+      });
+      const markerHit =
+        rawText.includes('NO_TRADES_IN_PERIOD') ||
+        rawText.includes('REQUIRES TRADE DATA') ||
+        rawText.includes('NO TRADES');
+      if (markerHit || allNull) {
+        setNoTrades(true);
+        setLabelTouched(true);
+        setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+        setStage('review');
+        return;
+      }
+      // Prefill form fields from extraction
       setForm((f) => ({
         ...f,
         net_profit_usd: m.net_profit_usd.value != null ? String(m.net_profit_usd.value) : f.net_profit_usd,

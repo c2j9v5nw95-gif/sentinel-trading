@@ -48,6 +48,7 @@ CRITICAL RULES:
 4. Confidence is 0..1: 1.0 = certain, 0.5 = legible but ambiguous, 0.0 = not present / unreadable.
 5. Numbers only — no units, no commas, no currency symbols. Use dot as decimal separator.
 6. "Profitable trades" usually shown as "76.92%  10/13" → win_rate_pct=76.92, profitable_trades_count=10, num_trades=13, losing_trades_count=3.
+7. EMPTY REPORT: If the screenshot says "This report requires trade data", "The strategy report appears after the script makes even one trade", or otherwise shows NO metrics (a placeholder/empty state), return ALL fields with value=null and confidence=0, AND include the literal phrase "NO_TRADES_IN_PERIOD" inside raw_text. Do NOT invent zeros.
 
 Reply ONLY with a single JSON object matching the schema. No prose, no markdown.`;
 
