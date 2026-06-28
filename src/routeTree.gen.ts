@@ -22,6 +22,7 @@ import { Route as AppStrategiesRouteImport } from './routes/_app.strategies'
 import { Route as AppSimulatorRouteImport } from './routes/_app.simulator'
 import { Route as AppSignalsRouteImport } from './routes/_app.signals'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as AppRecommendationsRouteImport } from './routes/_app.recommendations'
 import { Route as AppPositionsRouteImport } from './routes/_app.positions'
 import { Route as AppOverviewRouteImport } from './routes/_app.overview'
 import { Route as AppKontrollsenterRouteImport } from './routes/_app.kontrollsenter'
@@ -99,6 +100,11 @@ const AppSignalsRoute = AppSignalsRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRecommendationsRoute = AppRecommendationsRouteImport.update({
+  id: '/recommendations',
+  path: '/recommendations',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPositionsRoute = AppPositionsRouteImport.update({
@@ -188,6 +194,7 @@ export interface FileRoutesByFullPath {
   '/kontrollsenter': typeof AppKontrollsenterRoute
   '/overview': typeof AppOverviewRoute
   '/positions': typeof AppPositionsRoute
+  '/recommendations': typeof AppRecommendationsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
   '/simulator': typeof AppSimulatorRoute
@@ -215,6 +222,7 @@ export interface FileRoutesByTo {
   '/kontrollsenter': typeof AppKontrollsenterRoute
   '/overview': typeof AppOverviewRoute
   '/positions': typeof AppPositionsRoute
+  '/recommendations': typeof AppRecommendationsRoute
   '/settings': typeof AppSettingsRoute
   '/signals': typeof AppSignalsRoute
   '/simulator': typeof AppSimulatorRoute
@@ -245,6 +253,7 @@ export interface FileRoutesById {
   '/_app/kontrollsenter': typeof AppKontrollsenterRoute
   '/_app/overview': typeof AppOverviewRoute
   '/_app/positions': typeof AppPositionsRoute
+  '/_app/recommendations': typeof AppRecommendationsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/signals': typeof AppSignalsRoute
   '/_app/simulator': typeof AppSimulatorRoute
@@ -275,6 +284,7 @@ export interface FileRouteTypes {
     | '/kontrollsenter'
     | '/overview'
     | '/positions'
+    | '/recommendations'
     | '/settings'
     | '/signals'
     | '/simulator'
@@ -302,6 +312,7 @@ export interface FileRouteTypes {
     | '/kontrollsenter'
     | '/overview'
     | '/positions'
+    | '/recommendations'
     | '/settings'
     | '/signals'
     | '/simulator'
@@ -331,6 +342,7 @@ export interface FileRouteTypes {
     | '/_app/kontrollsenter'
     | '/_app/overview'
     | '/_app/positions'
+    | '/_app/recommendations'
     | '/_app/settings'
     | '/_app/signals'
     | '/_app/simulator'
@@ -450,6 +462,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/recommendations': {
+      id: '/_app/recommendations'
+      path: '/recommendations'
+      fullPath: '/recommendations'
+      preLoaderRoute: typeof AppRecommendationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/positions': {
       id: '/_app/positions'
       path: '/positions'
@@ -561,6 +580,7 @@ interface AppRouteChildren {
   AppKontrollsenterRoute: typeof AppKontrollsenterRoute
   AppOverviewRoute: typeof AppOverviewRoute
   AppPositionsRoute: typeof AppPositionsRoute
+  AppRecommendationsRoute: typeof AppRecommendationsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSignalsRoute: typeof AppSignalsRoute
   AppSimulatorRoute: typeof AppSimulatorRoute
@@ -579,6 +599,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppKontrollsenterRoute: AppKontrollsenterRoute,
   AppOverviewRoute: AppOverviewRoute,
   AppPositionsRoute: AppPositionsRoute,
+  AppRecommendationsRoute: AppRecommendationsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSignalsRoute: AppSignalsRoute,
   AppSimulatorRoute: AppSimulatorRoute,

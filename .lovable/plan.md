@@ -1,105 +1,79 @@
+# Coin Recommendations (/recommendations)
 
-# Label Review Support — Diagnose + Safe Batch Recompute
+A new read-only decision-support page. No changes to execution, dispatcher, risk, bridge, orders, admission status logic, or `symbols.enabled` state — this page only reads existing data and classifies it.
 
-Mål: hjelpe deg fullføre Label Review før Fase A. To leveranser, i rekkefølge.
-Ingen endringer i execution-stacken, ingen endringer i kalibreringsvekter, ingen endringer i bestående confirmed labels eller TradingView-tall.
+## Data sources (existing, no schema changes)
 
----
+- **Latest admission result** per symbol → `coin_admission_results` joined with the most recent `coin_admission_runs` (same pattern `/admission` already uses). Provides candidate_score, raw_candidate_score, candidate_bucket, status, trade_eligible, hard_kill_capped, hard_kill_rules, soft_failures, robustness, HTQ/trend, momentum, calibration_score + confidence, BT score/class/summary, breakdown.
+- **Active symbols** → `symbols` table where `enabled = true` (same source Kontrollsenter uses at `/kontrollsenter`).
+- **Health alerts** → latest `health_snapshots` row per symbol (same source Kontrollsenter / SymbolHealthPanel use). Includes status + captured_at; stale = older than threshold.
+- **Latest admission run timestamp** → max(`coin_admission_runs.created_at`).
 
-## Leveranse 1 — Read-only Diagnose Report
+All reads through existing patterns (`supabase` browser client + RLS already permitting these tables for authenticated users).
 
-### Plassering
-Nytt panel øverst på `/calibration` (kollapsbart, default åpent): **"Label Health Diagnostics"**.
+## Route and structure
 
-### Data
-En ny server-function `getLabelDiagnostics` (`requireSupabaseAuth`, GET) som kjører ett enkelt aggregert SQL-spørring mot `coin_backtest_results` og returnerer:
+- New file `src/routes/_app.recommendations.tsx` under the existing authenticated `_app` layout.
+- Sidebar link added to `AppLayout.tsx` next to Admission.
+- Pure classification logic in a new `src/lib/recommendations/classify.ts` (no I/O, easy to test).
 
-1. **Distribusjon — confirmed label**: antall rader per `label` (alle 5 verdier inkl. `no_trades`).
-2. **Distribusjon — auto-suggested label**: antall rader per `auto_suggested_label`.
-3. **Disagreement matrix**: antall rader der `label != auto_suggested_label`, brutt ned per `(confirmed, suggested)`-par.
-4. **No-trades count**: `count(*) where num_trades = 0`.
-5. **Review-status**: `count(*) where needs_review = true`, fordelt på `label_source` (`auto` vs `manual_override`).
-6. **kNN exclusion breakdown** — speiler eksakt filteret i `run-inline.server.ts`:
-   - excluded: `label = 'no_trades'`
-   - excluded: `needs_review = true AND label_source = 'auto'`
-   - included: alt annet
-   - viser også included-tallet per `label`.
-7. **Per strategy_version**: antall rader, fordelt per `label`.
-8. **Mistenkelige rader** (4 separate counts + topp-10 liste per kategori):
-   - `marginal` / `rejected_backtest` med `net_profit_pct > 0`
-   - `marginal` / `rejected_backtest` med `profit_factor > 1`
-   - `marginal` / `rejected_backtest` med `win_rate_pct >= 50`
-   - rader merket `marginal` / `rejected_backtest` men hvor ny `autoSuggestLabel` ville foreslått `profitable` eller `profitable_plus` (krever client-side recompute fra screener_snapshot + sizing-derived fields — kjøres i samme server-function, kun lesing).
+## Classification (pure, deterministic)
 
-### UI
-- Tall vises i compact grid (samme stil som eksisterende dashboard-kort).
-- Hver mistenkelig kategori har en "Vis rader"-knapp som åpner et drawer med symbolene, test_date, label, suggested og knapp som linker til allerede eksisterende Label Review-modal.
-- "Eksporter CSV" for hver tabell (client-side).
-- Read-only. Ingen mutasjoner.
+`classifySymbol(latestAdmission, isActive, health)` returns one of:
+- `add_candidate` — not active, trade_eligible, no hard kills, status ∈ {approved, watchlist}, candidate_score ≥ 50, BT not "no_trades only".
+- `keep_active` — active, candidate_score ≥ 65, trade_eligible, no hard kills, no severe health alert, status ≠ rejected.
+- `watch_closely` — active, any of: 45 ≤ score < 65, status ∈ {watchlist, trend_candidate}, calibration_confidence = low, BT needs_review, soft_failures present, health warning, HTQ/robustness weakened, no_trades basis.
+- `consider_remove` — active, any of: hard_kill_rules present, trade_eligible = false, score < 45, status = rejected, severe/stale health alert, calibration warning + low score, very low reviewed BT.
 
----
+Sub-buckets for new candidates: Prime ≥ 80, Strong ≥ 65, Watch 50–65.
 
-## Leveranse 2 — Safe Batch Recompute
+Each result includes a short generated `reason` string built from the triggering rule(s) and 2–3 positive/negative drivers (reused from candidate-score components and admission soft/hard rules). No AI text generation.
 
-### Plassering
-Egen seksjon under Diagnostics: **"Recompute auto-suggested labels"**.
+## Page layout
 
-### Sekvens (alltid 2 trinn — aldri direkte skriv)
+Top summary strip (cards): New candidates, Active healthy, Watch closely, Red flags, Active total, Latest admission run timestamp, Stale/missing health alerts.
 
-**Trinn A — Dry-run preview (default, ingen skrive-effekt):**
-Ny server-function `recomputeAutoLabels({ dry_run: true, strategy_version?: string, only_unreviewed?: boolean })`:
-1. Henter alle (eller filtrerte) rader inkl. screener_snapshot, sizing-felter og bestående TradingView-tall.
-2. For hver rad: kjør `withSizingDefaults` → `computeSizingDerived` → `autoSuggestLabel` med gjeldende thresholds fra `app_settings`.
-3. Returner per rad: `id, symbol, test_date, confirmed_label, current_auto, new_auto, new_quality_score, new_reason_codes, will_set_needs_review (boolean), changed (boolean)`.
-4. UI viser summary (X endringer av Y rader, fordelt på label-shift) + tabell med diff per rad + filter (kun endrede / kun no_trades-korreksjoner / etc.).
+Four sections (collapsible), each with a compact row list:
+- A. Recommended New Coins (sorted candidate_score → calibration → BT → robustness → HTQ; default top 20 + "show more").
+- B. Active — Keep / Healthy.
+- C. Active — Watch Closely.
+- D. Active — Red Flag / Consider Remove.
 
-**Trinn B — Commit (krever eksplisitt knapp + bekreftelses-modal):**
-Samme server-function med `dry_run: false`. Skriver KUN følgende kolonner:
-- `auto_suggested_label`
-- `backtest_quality_score`
-- `classification_reason_codes`
-- `classification_diagnostics` (positive/negative_drivers, safety_overrides, summary)
-- `classification_config_version`
-- `needs_review = true` HVIS `confirmed_label != new_auto_suggested_label` OG `label_source != 'manual_override'`
+### Row (compact)
+Symbol · Recommendation badge · Candidate Score + bucket bar · Status · Active y/n · Trade eligible y/n · Calibration (score + conf) · BT (score + class) · Robustness · HTQ · Momentum · Health status + last alert time · One-line key reason.
 
-Hardkodede garantier:
-- Aldri rør `label` (confirmed)
-- Aldri rør `label_source` (manual_override beskyttes 100%)
-- Aldri rør TradingView-tall (`net_profit_pct`, `max_drawdown_pct`, `num_trades`, etc.)
-- Aldri rør `screener_snapshot`
-- `num_trades = 0` → `auto_suggested_label` settes alltid til `no_trades` (allerede slik `autoSuggestLabel` er implementert; vi legger en assertion i tillegg for å fail-fast hvis det noensinne skulle drifte)
-- Rader med `label_source = 'manual_override'` får aldri `needs_review = true` automatisk fra denne recompute-jobben
+### Expanded detail (reuses existing components)
+- Candidate Score breakdown (reuse `CandidateScoreBreakdown` from `/admission`).
+- Calibration neighbors (reuse the neighbors table component already used in `/admission`).
+- Last backtest summary (small read of `coin_backtest_results` latest row for symbol — same shape `/admission` uses).
+- Health/Control Center status: active y/n, latest health snapshot, stale/missing warning.
+- Recommendation explanation (deterministic).
 
-### Audit
-Hver commit-kjøring skriver én rad til `audit_log` (action: `label_recompute_batch`) med summary av endringene (antall per label-shift, filter brukt, hvem som kjørte).
+## Filters
 
----
+Top filter bar: Show (All / New / Active), Recommendation chips, Min Candidate Score slider, Bucket multi-select, Trade-eligible-only, Hide hard-kill-capped, Calibration confidence, BT reviewed only, Has health alert, Has hard kill, Has soft warnings, Active/Not. URL-backed via `validateSearch` so views are shareable.
 
-## Teknisk plan (kort)
+## Data freshness banners
 
-### Filer
-- `src/lib/calibration/label-diagnostics.functions.ts` — `getLabelDiagnostics`, `recomputeAutoLabels`. Begge `requireSupabaseAuth` + role-check (`has_role(auth.uid(), 'operator')`).
-- `src/components/calibration/LabelDiagnosticsPanel.tsx` — UI for Leveranse 1.
-- `src/components/calibration/BatchRecomputeSection.tsx` — UI for Leveranse 2 (dry-run preview + commit modal).
-- `src/routes/_app.calibration.tsx` — monter de to nye komponentene over eksisterende tabell.
+- If latest admission run > 24h old: "Admission data may be stale — run screener again."
+- Per-row: if active and no health snapshot in last N minutes (reuse Kontrollsenter's stale threshold): "Health alert stale/missing."
 
-### Database
-Ingen migration. Alle felt finnes allerede (`auto_suggested_label`, `backtest_quality_score`, `classification_reason_codes`, `classification_diagnostics`, `classification_config_version`, `needs_review`, `label_source`).
+## Files to add / touch
 
-### Hva som IKKE endres
-- Ingen endring i `scoring.ts` (autoSuggestLabel-logikk)
-- Ingen endring i `run-inline.server.ts` (kalibrerings-pipelinen)
-- Ingen endring i `app_settings`-thresholds
-- Ingen endring i kNN-vekter, k, half_life, confidence-grenser
-- Ingen endring i execution, dispatcher, sizing, risk
-- Ingen Fase A (feature importance) eller Fase C (Tradable Top-N) — venter til du har bekreftet label-kvaliteten
+- Add `src/routes/_app.recommendations.tsx` — route, queries, filters, sections, summary strip.
+- Add `src/lib/recommendations/classify.ts` — pure classifier + reason builder.
+- Add `src/components/recommendations/RecommendationRow.tsx` and `SectionBlock.tsx`.
+- Edit `src/components/AppLayout.tsx` — add sidebar nav entry.
 
----
+## Non-goals (explicit)
 
-## Akseptkriterier
+No writes anywhere. No mutation of `symbols.enabled`, no execution calls, no admission re-run trigger, no auto add/remove. No changes to dispatcher, executor, risk, bridge, orders, signal flow, or admission scoring code.
 
-1. Diagnose-panelet viser alle 8 tellinger og oppdateres når jeg endrer en label manuelt.
-2. Dry-run på recompute viser nøyaktig diff uten å skrive til DB.
-3. Commit endrer kun de 6 listede kolonnene, beviselig via før/etter-sammenligning av en rad med `label_source = 'manual_override'` (skal være uendret bortsett fra `auto_suggested_label` / quality / diagnostics — `label` og `needs_review` skal forbli som de var).
-4. Etter commit: rader med `num_trades = 0` har `auto_suggested_label = 'no_trades'`.
-5. `audit_log` har én rad per commit-kjøring med oppsummering.
+## Acceptance
+
+- `/recommendations` renders with the four sections and summary strip.
+- Active symbols never appear under "Recommended New Coins".
+- Classification matches the rules above and shows a reason per row.
+- Hard-kill symbols always land in Red Flag.
+- Health alert freshness shown for active symbols when data available.
+- Zero changes to execution/trading-related modules.
