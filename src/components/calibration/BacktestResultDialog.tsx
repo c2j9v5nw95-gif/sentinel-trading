@@ -175,6 +175,35 @@ export function BacktestResultDialog({
     setTab('manual');
   }, [open, prefill?.symbol]);
 
+  // Global paste handler: while dialog is open, Ctrl/Cmd+V with an image on the
+  // clipboard uploads it to the OCR pipeline regardless of which tab is active.
+  useEffect(() => {
+    if (!open) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (it.kind === 'file' && it.type.startsWith('image/')) {
+          const file = it.getAsFile();
+          if (!file) continue;
+          e.preventDefault();
+          // Switch to screenshot tab so the user sees status/feedback
+          setTab('screenshot');
+          // Wrap in a File with a sane name for storage
+          const named = new File([file], `paste-${Date.now()}.${(file.type.split('/')[1] || 'png')}`, {
+            type: file.type,
+          });
+          void handleUpload(named);
+          return;
+        }
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [open]);
+
+
   // Set strategy version once versions load and user hasn't typed
   useEffect(() => {
     if (!open || !versionsQ.data || form.strategy_version) return;
