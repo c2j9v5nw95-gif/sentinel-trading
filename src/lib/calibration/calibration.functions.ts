@@ -111,6 +111,40 @@ async function loadCalibrationConfig(
   };
 }
 
+async function loadClassificationThresholds(
+  supabase: SupabaseClient,
+): Promise<ClassificationThresholds> {
+  const { data } = await supabase
+    .from('app_settings')
+    .select(
+      'backtest_min_trades, backtest_marginal_min_profit_factor, backtest_profitable_min_profit_factor, backtest_profitable_plus_min_profit_factor, backtest_profitable_min_normalized_net_profit_pct, backtest_profitable_plus_min_normalized_net_profit_pct, backtest_max_leverage_adjusted_drawdown_profitable, backtest_max_leverage_adjusted_drawdown_profitable_plus',
+    )
+    .eq('singleton', true)
+    .maybeSingle();
+  const d = DEFAULT_CLASSIFICATION_THRESHOLDS;
+  return {
+    min_trades: data?.backtest_min_trades ?? d.min_trades,
+    marginal_min_profit_factor:
+      data?.backtest_marginal_min_profit_factor ?? d.marginal_min_profit_factor,
+    profitable_min_profit_factor:
+      data?.backtest_profitable_min_profit_factor ?? d.profitable_min_profit_factor,
+    profitable_plus_min_profit_factor:
+      data?.backtest_profitable_plus_min_profit_factor ?? d.profitable_plus_min_profit_factor,
+    profitable_min_normalized_net_profit_pct:
+      data?.backtest_profitable_min_normalized_net_profit_pct ??
+      d.profitable_min_normalized_net_profit_pct,
+    profitable_plus_min_normalized_net_profit_pct:
+      data?.backtest_profitable_plus_min_normalized_net_profit_pct ??
+      d.profitable_plus_min_normalized_net_profit_pct,
+    max_leverage_adjusted_drawdown_profitable:
+      data?.backtest_max_leverage_adjusted_drawdown_profitable ??
+      d.max_leverage_adjusted_drawdown_profitable,
+    max_leverage_adjusted_drawdown_profitable_plus:
+      data?.backtest_max_leverage_adjusted_drawdown_profitable_plus ??
+      d.max_leverage_adjusted_drawdown_profitable_plus,
+  };
+}
+
 function ageDays(testDate: string, now: Date = new Date()): number {
   const t = new Date(testDate + 'T00:00:00Z').getTime();
   const ms = now.getTime() - t;
