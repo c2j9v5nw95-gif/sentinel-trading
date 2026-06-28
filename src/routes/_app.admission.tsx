@@ -320,7 +320,96 @@ function BtClassCell({ r }: { r: Result }) {
   );
 }
 
+function CandidateScoreCell({ r }: { r: Result }) {
+  const cs = r.candidate_score;
+  if (!cs || cs.score == null) {
+    return <td className="py-1 pr-2 text-right text-muted-foreground">—</td>;
+  }
+  const badge = candidateBucketBadgeClass(cs.bucket);
+  const bar = candidateBucketBarClass(cs.bucket);
+  const showRaw = cs.hardKillCapped && cs.rawScore != null && cs.rawScore !== cs.score;
+  const tip = [
+    `Bucket: ${candidateBucketLabel(cs.bucket)}`,
+    showRaw ? `Raw: ${cs.rawScore}` : null,
+    cs.hardKillCapped ? 'Hard kill — score capped at 49.' : null,
+    !cs.tradeEligible ? 'Not trade-eligible' : null,
+    cs.usedFallback ? 'Fallback: Strategy Fit' : null,
+  ].filter(Boolean).join(' · ');
+  return (
+    <td className="py-1 pr-2 text-right" title={tip}>
+      <div className="flex items-center justify-end gap-2">
+        <div className="h-1.5 w-14 rounded bg-muted overflow-hidden">
+          <div className={`h-full ${bar}`} style={{ width: `${Math.max(2, Math.min(100, cs.score))}%` }} />
+        </div>
+        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-mono font-semibold ${badge}`}>
+          {fmtNum(cs.score, 1)}
+        </span>
+        {showRaw && (
+          <span className="text-[10px] text-muted-foreground">raw {fmtNum(cs.rawScore!, 0)}</span>
+        )}
+      </div>
+    </td>
+  );
+}
+
+function CandidateScoreBreakdown({ r }: { r: Result }) {
+  const cs = r.candidate_score;
+  if (!cs) return null;
+  return (
+    <div className="mt-3 rounded border bg-background p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <h4 className="font-semibold text-sm">Candidate Score Breakdown</h4>
+        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-mono font-semibold ${candidateBucketBadgeClass(cs.bucket)}`}>
+          {candidateBucketLabel(cs.bucket)} · {cs.score != null ? fmtNum(cs.score, 1) : 'N/A'}
+        </span>
+        {cs.rawScore != null && cs.rawScore !== cs.score && (
+          <span className="text-muted-foreground">raw {fmtNum(cs.rawScore, 1)}</span>
+        )}
+        <span className={cs.tradeEligible ? 'text-emerald-700' : 'text-red-700'}>
+          {cs.tradeEligible ? 'Trade-eligible' : 'Not trade-eligible'}
+        </span>
+        {cs.hardKillCapped && <span className="text-orange-700">Hard-kill capped</span>}
+        {cs.usedFallback && <span className="text-yellow-700">Fallback: Strategy Fit</span>}
+      </div>
+      <table className="w-full">
+        <thead className="text-muted-foreground">
+          <tr>
+            <th className="text-left py-0.5">Component</th>
+            <th className="text-right py-0.5">Value</th>
+            <th className="text-right py-0.5">Orig W</th>
+            <th className="text-right py-0.5">Eff W</th>
+            <th className="text-right py-0.5">Contribution</th>
+            <th className="text-left py-0.5 pl-3">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cs.components.map((c) => (
+            <tr key={c.key} className="border-t border-muted">
+              <td className="py-0.5">{c.label}</td>
+              <td className="py-0.5 text-right font-mono">{c.value != null ? fmtNum(c.value, 1) : 'N/A'}</td>
+              <td className="py-0.5 text-right font-mono">{c.originalWeight}%</td>
+              <td className="py-0.5 text-right font-mono">{fmtNum(c.effectiveWeight, 1)}%</td>
+              <td className="py-0.5 text-right font-mono">{c.value != null ? fmtNum(c.contribution / 100, 2) : '—'}</td>
+              <td className="py-0.5 pl-3 text-muted-foreground">{c.note ?? ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {cs.notes.length > 0 && (
+        <ul className="mt-2 list-disc pl-5 text-muted-foreground">
+          {cs.notes.map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+      )}
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        Candidate Score er kun en samlet kvalitetsvurdering for sortering/visning. Den endrer
+        ikke admission-status, kNN-vekter, labels eller execution.
+      </p>
+    </div>
+  );
+}
+
 function LastBacktestDetail({ r }: { r: Result }) {
+
   const hasAny =
     r.last_backtest_label != null ||
     r.last_bt_score != null ||
