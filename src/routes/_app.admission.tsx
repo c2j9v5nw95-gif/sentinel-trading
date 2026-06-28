@@ -128,7 +128,9 @@ type SortKey =
   | 'bt_score'
   | 'calib_score'
   | 'calibrated_fit'
-  | 'priority';
+  | 'priority'
+  | 'candidate_score';
+
 
 const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
 const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
