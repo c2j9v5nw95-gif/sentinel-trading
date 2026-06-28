@@ -51,8 +51,10 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'BT Class': 'Klassifisering av siste backtest. no_trades vises som "No Setup".',
   'BT Summary': 'Kort menneskelig oppsummering av siste backtest (drivers/safety).',
   'Calib Score': 'Calibration Score: hvor mye dagens coin-profil ligner historiske profitable observasjoner (kNN).',
-  'Priority': 'Candidate Priority Score (0–100) — kombinert prioriteringsscore for videre vurdering. Endrer IKKE admission-status.',
+  'Priority': 'Candidate Priority Score (0–100) — sekundær prioriteringsscore. Endrer IKKE admission-status.',
+  'Candidate': 'Coin Candidate Score (0–100) = samlet kvalitetsvurdering av coinen for denne strategien. Vektet sum: Market 25% · HTQ 25% · Calib 20% · BT 20% · Mom 10%. Manglende komponenter redistribueres — gir IKKE 0-straff. Hard kill capper score til ≤49 og blokkerer trading-egnethet, men endrer IKKE admission-status eller execution.',
 };
+
 
 function HeaderCell({
   label,
