@@ -323,7 +323,7 @@ function AdmissionPage() {
     const all = resultsQ.data ?? [];
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
-    return all.filter((r) => {
+    const filtered = all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
       if (onlyTrendCandidates && r.status !== 'trend_candidate') return false;
@@ -333,7 +333,20 @@ function AdmissionPage() {
       if (Number.isFinite(minFitN) && (r.strategy_fit_score ?? -1) < minFitN) return false;
       return true;
     });
-  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit]);
+    const dir = sort.dir === 'desc' ? -1 : 1;
+    const sorted = [...filtered].sort((a, b) => {
+      const av = sortValue(a, sort.key);
+      const bv = sortValue(b, sort.key);
+      const aNull = av == null || (typeof av === 'number' && !Number.isFinite(av));
+      const bNull = bv == null || (typeof bv === 'number' && !Number.isFinite(bv));
+      if (aNull && bNull) return 0;
+      if (aNull) return 1;   // nulls always last
+      if (bNull) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+    return sorted;
+  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, sort]);
 
 
   const counts = useMemo(() => {
