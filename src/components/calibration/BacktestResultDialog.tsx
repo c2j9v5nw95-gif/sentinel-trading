@@ -23,9 +23,10 @@ import {
 } from '@/lib/calibration/scoring';
 import { computeSizingDerived, SIZING_DEFAULTS } from '@/lib/calibration/sizing';
 
-type Label = 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
+type Label = 'no_trades' | 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
 const LABEL_OPTIONS: Array<{ value: Label; label: string }> = [
+  { value: 'no_trades', label: 'No Trades / No Setup' },
   { value: 'rejected_backtest', label: 'Rejected Backtest' },
   { value: 'marginal', label: 'Marginal' },
   { value: 'profitable', label: 'Profitable' },
