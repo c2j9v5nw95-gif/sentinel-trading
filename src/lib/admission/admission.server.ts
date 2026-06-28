@@ -152,15 +152,14 @@ export async function fetchDailyKline(symbol: string, limit = 30): Promise<{
   return { ok: true, bars };
 }
 
-/** 1h klines for wick / extreme-move analysis (last 30 days = 720 bars). */
-export async function fetchHourlyKline(symbol: string, limit = 720): Promise<{
+async function fetchKlineGeneric(symbol: string, interval: string, limit: number): Promise<{
   ok: true;
-  bars: Array<{ open: number; high: number; low: number; close: number; bar_time: number }>;
+  bars: Array<{ open: number; high: number; low: number; close: number; volume: number; bar_time: number }>;
 } | { ok: false; error: string }> {
   const res = await publicGet('/v5/market/kline', {
     category: 'linear',
     symbol,
-    interval: '60',
+    interval,
     limit: String(Math.min(Math.max(limit, 1), 1000)),
   });
   if (!res.ok) return { ok: false, error: res.error ?? 'unknown' };
@@ -171,10 +170,23 @@ export async function fetchHourlyKline(symbol: string, limit = 720): Promise<{
     high: Number(row[2]),
     low: Number(row[3]),
     close: Number(row[4]),
+    volume: Number(row[5]),
   })).filter((b) => Number.isFinite(b.close));
   bars.reverse();
   return { ok: true, bars };
 }
+
+/** 1h klines for wick / extreme-move analysis (last 30 days = 720 bars). */
+export const fetchHourlyKline = (symbol: string, limit = 720) =>
+  fetchKlineGeneric(symbol, '60', limit);
+
+/** 5m klines for trend quality (default ~48h = 576 bars). */
+export const fetch5mKline = (symbol: string, limit = 576) =>
+  fetchKlineGeneric(symbol, '5', limit);
+
+/** 15m klines for trend confirmation (default ~3d = 288 bars). */
+export const fetch15mKline = (symbol: string, limit = 288) =>
+  fetchKlineGeneric(symbol, '15', limit);
 
 function numOrNull(x: unknown): number | null {
   if (x == null || x === '') return null;

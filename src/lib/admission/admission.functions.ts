@@ -7,19 +7,22 @@ import {
   fetchCoinGeckoMarkets,
   fetchDailyKline,
   fetchHourlyKline,
+  fetch5mKline,
+  fetch15mKline,
   buildMetrics,
   pMapLimit,
   computeAdmissionScore,
   type AdmissionThresholds,
   type AdmissionWeights,
 } from './admission.server';
+import { computeTrendQuality } from './trend-quality';
 
 const StartInput = z.object({
   profileId: z.string().uuid(),
-  /** Optional cap on symbols processed (sorted by 24h turnover desc) — for fast iteration. */
   maxSymbols: z.number().int().min(1).max(2000).optional(),
-  /** Skip per-symbol hourly fetch (faster, no wick risk). */
   skipWickAnalysis: z.boolean().default(false),
+  mode: z.enum(['strict', 'trend_adjusted']).default('strict'),
+  includeTrendQuality: z.boolean().optional(),
 });
 
 export const startAdmissionRun = createServerFn({ method: 'POST' })
@@ -27,8 +30,8 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
   .inputValidator((i: unknown) => StartInput.parse(i))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    const includeTrend = data.includeTrendQuality ?? (data.mode === 'trend_adjusted');
 
-    // 1) Load profile.
     const { data: profile, error: profErr } = await supabase
       .from('coin_admission_profiles')
       .select('id, name, thresholds, weights')
@@ -38,7 +41,6 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
     const thresholds = profile.thresholds as unknown as AdmissionThresholds;
     const weights = profile.weights as unknown as AdmissionWeights;
 
-    // 2) Create run row.
     const { data: runRow, error: runErr } = await supabase
       .from('coin_admission_runs')
       .insert({
@@ -46,6 +48,8 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         profile_name: profile.name,
         triggered_by: userId,
         status: 'running',
+        admission_mode: data.mode,
+        include_trend_quality: includeTrend,
       })
       .select('id')
       .single();
@@ -53,7 +57,6 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
     const runId = runRow.id as string;
 
     try {
-      // 3) Universe + tickers + coingecko, in parallel.
       const [universe, tickers, cg] = await Promise.all([
         fetchUniverse(),
         fetchAllTickers(),
@@ -63,14 +66,12 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         }),
       ]);
 
-      // CoinGecko symbol → rank (lowercase). Pick lowest rank wins.
       const cgRankBySymbol = new Map<string, number>();
       for (const c of cg) {
         if (c.market_cap_rank == null) continue;
         const prev = cgRankBySymbol.get(c.symbol);
         if (prev == null || c.market_cap_rank < prev) cgRankBySymbol.set(c.symbol, c.market_cap_rank);
       }
-      // Optional manual overrides
       const { data: mapping } = await supabase
         .from('coin_admission_coingecko_map')
         .select('bybit_symbol, coingecko_id');
@@ -79,7 +80,6 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
       const cgById = new Map<string, { rank: number | null }>();
       for (const c of cg) cgById.set(c.id, { rank: c.market_cap_rank });
 
-      // 4) Sort + cap universe by 24h turnover for processing budget.
       const ranked = universe
         .map((inst) => ({ inst, t: tickers.get(inst.symbol)?.turnover24h ?? 0 }))
         .sort((a, b) => (b.t ?? 0) - (a.t ?? 0));
@@ -91,15 +91,13 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         .update({ symbols_total: slice.length, progress_total: slice.length })
         .eq('id', runId);
 
-      // 5) Per-symbol enrichment (concurrency-bounded).
       let done = 0;
       const rows: any[] = [];
 
-      await pMapLimit(slice, 12, async ({ inst }) => {
+      await pMapLimit(slice, 10, async ({ inst }) => {
         const symbol = inst.symbol;
         const ticker = tickers.get(symbol);
 
-        // Resolve rank: prefer manual map → cg id rank, else lowercase base coin lookup.
         let rank: number | null = null;
         const manualId = manualMap.get(symbol);
         if (manualId && cgById.has(manualId)) {
@@ -110,9 +108,10 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
 
         let dailyBars: any[] | null = null;
         let hourlyBars: any[] | null = null;
+        let bars5m: any[] | null = null;
+        let bars15m: any[] | null = null;
         let fetchError: string | null = null;
 
-        // Always fetch daily (cheap, gives medians). Skip hourly when requested.
         const daily = await fetchDailyKline(symbol, 30);
         if (daily.ok) dailyBars = daily.bars;
         else fetchError = `daily:${daily.error}`;
@@ -123,6 +122,22 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           else fetchError = (fetchError ? fetchError + ';' : '') + `hourly:${hourly.error}`;
         }
 
+        if (includeTrend) {
+          const [k5, k15] = await Promise.all([
+            fetch5mKline(symbol, 576),
+            fetch15mKline(symbol, 288),
+          ]);
+          if (k5.ok) bars5m = k5.bars;
+          else fetchError = (fetchError ? fetchError + ';' : '') + `5m:${k5.error}`;
+          if (k15.ok) bars15m = k15.bars;
+          else fetchError = (fetchError ? fetchError + ';' : '') + `15m:${k15.error}`;
+          // Ensure hourly is loaded for trend confirmation even if wick skipped
+          if (!hourlyBars && data.skipWickAnalysis) {
+            const h = await fetchHourlyKline(symbol, 200);
+            if (h.ok) hourlyBars = h.bars;
+          }
+        }
+
         const metrics = buildMetrics({
           symbol,
           instrument: inst,
@@ -131,13 +146,38 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           dailyBars,
           hourlyBars,
         });
-        const scored = computeAdmissionScore(metrics, thresholds, weights);
+
+        let trendScore: number | null = null;
+        let trendComponents: any = null;
+        if (includeTrend) {
+          const tq = computeTrendQuality(
+            bars5m as any,
+            bars15m as any,
+            hourlyBars as any,
+          );
+          if (tq) {
+            trendScore = tq.score;
+            trendComponents = tq.components;
+          }
+        }
+
+        const scored = computeAdmissionScore(metrics, thresholds, weights, {
+          mode: data.mode,
+          trendScore,
+        });
 
         rows.push({
           run_id: runId,
           symbol,
           status: scored.status,
           score: scored.score,
+          trend_score: scored.trend_score,
+          trend_components: trendComponents,
+          strategy_fit_score: scored.strategy_fit_score,
+          admission_mode: data.mode,
+          admission_reason: scored.admission_reason,
+          hard_kill_rules: scored.hard_kill_rules,
+          soft_failures: scored.soft_failures,
           coingecko_id: manualId ?? null,
           rank: metrics.rank,
           turnover_24h: metrics.turnover_24h,
@@ -145,7 +185,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           turnover_30d_median: metrics.turnover_30d_median,
           open_interest_value: metrics.open_interest_value,
           spread_bps: metrics.spread_bps,
-          slippage_bps_est: null, // v1: not computed (orderbook fetch not in scope)
+          slippage_bps_est: null,
           listing_age_days: metrics.listing_age_days,
           funding_rate: metrics.funding_rate,
           max_1h_drop_pct: metrics.max_1h_drop_pct,
@@ -157,7 +197,6 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         });
 
         done++;
-        // Progress write every 25 symbols
         if (done % 25 === 0) {
           await supabase
             .from('coin_admission_runs')
@@ -166,7 +205,6 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         }
       });
 
-      // 6) Bulk insert results in chunks of 200.
       for (let i = 0; i < rows.length; i += 200) {
         const chunk = rows.slice(i, i + 200);
         const { error: insErr } = await supabase.from('coin_admission_results').insert(chunk);
@@ -175,6 +213,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
 
       const approved = rows.filter((r) => r.status === 'approved').length;
       const watchlist = rows.filter((r) => r.status === 'watchlist').length;
+      const trendCandidate = rows.filter((r) => r.status === 'trend_candidate').length;
       const rejected = rows.filter((r) => r.status === 'rejected').length;
 
       await supabase
@@ -184,7 +223,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           finished_at: new Date().toISOString(),
           progress_done: rows.length,
           approved_n: approved,
-          watchlist_n: watchlist,
+          watchlist_n: watchlist + trendCandidate,
           rejected_n: rejected,
         })
         .eq('id', runId);
@@ -194,6 +233,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         symbols_total: rows.length,
         approved,
         watchlist,
+        trend_candidate: trendCandidate,
         rejected,
       };
     } catch (err) {
