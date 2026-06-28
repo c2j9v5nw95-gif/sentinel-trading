@@ -366,6 +366,30 @@ export function BacktestResultDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {symbolKey && historyQ.data && historyQ.data.total > 0 && (
+          <div className="rounded border border-blue-500/40 bg-blue-500/5 p-2 text-xs">
+            <div className="font-medium mb-1">
+              {historyQ.data.total} tidligere observasjon{historyQ.data.total === 1 ? '' : 'er'} for {symbolKey} — denne lagres som en ny rad (append-only).
+            </div>
+            <ul className="space-y-0.5 max-h-32 overflow-auto">
+              {historyQ.data.rows.slice(0, 5).map((row: any) => (
+                <li key={row.id} className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] text-muted-foreground">{row.test_date}</span>
+                  <Badge variant="outline" className="text-[10px]">{row.label}</Badge>
+                  <span className="text-muted-foreground">{row.strategy_version}</span>
+                  {row.extraction_source === 'screenshot_ocr' && (
+                    <Badge variant="secondary" className="text-[10px]">OCR</Badge>
+                  )}
+                </li>
+              ))}
+              {historyQ.data.total > 5 && (
+                <li className="text-muted-foreground">… og {historyQ.data.total - 5} til (se Backtest History i admission-raden).</li>
+              )}
+            </ul>
+          </div>
+        )}
+
+
         <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
           <TabsList>
             <TabsTrigger value="manual">Manual Entry</TabsTrigger>
