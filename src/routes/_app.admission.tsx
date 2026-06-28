@@ -876,7 +876,17 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
-                            <div className="mt-3 flex justify-end">
+                            <BacktestHistorySection symbol={r.symbol} />
+                            <div className="mt-3 flex flex-wrap justify-end gap-2">
+                              {activeRunId && (
+                                <RecalcCalibrationButton
+                                  runId={activeRunId}
+                                  symbol={r.symbol}
+                                  onDone={() =>
+                                    qc.invalidateQueries({ queryKey: ['admission-results'] })
+                                  }
+                                />
+                              )}
                               <button
                                 className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-muted"
                                 onClick={(e) => {
@@ -905,6 +915,7 @@ function AdmissionPage() {
                                 + Add Backtest Result
                               </button>
                             </div>
+
                           </td>
 
 
