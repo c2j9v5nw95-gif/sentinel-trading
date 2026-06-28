@@ -309,6 +309,33 @@ function CalibrationPage() {
               value={strategy}
               onChange={(e) => setStrategy(e.target.value)}
             />
+            <select
+              className="rounded border bg-background px-2 py-1"
+              value={quickFilter}
+              onChange={(e) => setQuickFilter(e.target.value as QuickFilter)}
+              title="Quick filter for label review"
+            >
+              <option value="all">Quick filter: all</option>
+              <option value="strong_marginal">Strong metrics but marginal</option>
+              <option value="profitable_low_sample">Profitable metrics, low/acceptable sample</option>
+              <option value="pf2_wr65_t8">PF ≥ 2 · WR ≥ 65 · Trades ≥ 8</option>
+              <option value="pf3_wr70_t12">PF ≥ 3 · WR ≥ 70 · Trades ≥ 12</option>
+              <option value="manual_override_diff">Manual override differs from suggestion</option>
+            </select>
+            <select
+              className="rounded border bg-background px-2 py-1"
+              value={bucketFilter}
+              onChange={(e) => setBucketFilter(e.target.value as BucketFilter)}
+              title="Filter by sample bucket"
+            >
+              <option value="all">Sample: all buckets</option>
+              <option value="very_low_sample">very_low_sample (1–3)</option>
+              <option value="low_sample">low_sample (4–7)</option>
+              <option value="acceptable_sample">acceptable_sample (8–12)</option>
+              <option value="good_sample">good_sample (13–19)</option>
+              <option value="strong_sample">strong_sample (20+)</option>
+            </select>
+
             <div className="ml-auto flex gap-2">
               <button
                 className="rounded border px-3 py-1 hover:bg-muted disabled:opacity-50"
