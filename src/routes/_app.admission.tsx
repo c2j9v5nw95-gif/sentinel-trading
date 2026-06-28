@@ -1089,6 +1089,7 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
+                            <LastBacktestDetail r={r} />
                             <BacktestHistorySection symbol={r.symbol} />
                             <div className="mt-3 flex flex-wrap justify-end gap-2">
                               {activeRunId && (
