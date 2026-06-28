@@ -1240,6 +1240,43 @@ function AdmissionPage() {
             <option value="no_trades">no_trades</option>
           </select>
         </div>
+        <div className="flex flex-wrap items-center gap-3 mb-3 text-xs">
+          <span className="text-muted-foreground">Candidate:</span>
+          <label className="flex items-center gap-1">
+            Min Candidate Score
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="w-16 rounded border bg-background px-1 py-0.5"
+              value={minCandidateScore}
+              onChange={(e) => setMinCandidateScore(e.target.value)}
+            />
+          </label>
+          <span className="ml-2 text-muted-foreground">Bucket:</span>
+          <select
+            className="rounded border bg-background px-1 py-0.5"
+            value={bucketFilter}
+            onChange={(e) => setBucketFilter(e.target.value as any)}
+          >
+            <option value="all">alle</option>
+            <option value="prime">Prime (≥80)</option>
+            <option value="strong">Strong (65–79)</option>
+            <option value="watch">Watch (50–64)</option>
+            <option value="weak">Weak (35–49)</option>
+            <option value="avoid">Avoid (&lt;35)</option>
+            <option value="blocked">Blocked (hard kill)</option>
+          </select>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={hideCapped} onChange={(e) => setHideCapped(e.target.checked)} />
+            Skjul hard-kill-capped
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={tradeEligibleOnly} onChange={(e) => setTradeEligibleOnly(e.target.checked)} />
+            Kun trade-eligible
+          </label>
+        </div>
+
 
 
         {!activeRunId ? (
