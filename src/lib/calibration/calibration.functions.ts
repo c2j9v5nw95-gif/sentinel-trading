@@ -304,6 +304,10 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       ...rest
     } = data;
 
+    // Detect whether user confirmed a label that disagrees with the suggestion
+    const review = detectNeedsReview(data.label as BacktestLabel, auto);
+    const labelSource = data.label === auto.label ? 'auto' : 'manual_override';
+
     const row = {
       user_id: userId,
       ...rest,
@@ -321,6 +325,18 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
       sizing_assumption_source: data.sizing_assumption_source ?? 'user_confirmed',
       auto_suggested_label: auto.label,
+      backtest_quality_score: auto.quality_score,
+      classification_reason_codes: auto.reason_codes,
+      classification_positive_drivers: auto.positive_drivers,
+      classification_negative_drivers: auto.negative_drivers,
+      classification_safety_overrides: auto.safety_overrides,
+      classification_summary: auto.summary,
+      label_source: labelSource,
+      label_overridden_at: labelSource === 'manual_override' ? new Date().toISOString() : null,
+      label_overridden_by: labelSource === 'manual_override' ? userId : null,
+      label_config_version: LABEL_CONFIG_VERSION,
+      needs_review: review.needs_review,
+      needs_review_reason: review.reason,
     };
     const { data: inserted, error } = await supabase
       .from('coin_backtest_results')
