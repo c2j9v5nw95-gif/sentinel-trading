@@ -1006,10 +1006,19 @@ function AdmissionPage() {
                         <td className="py-1 pr-2 text-xs max-w-[200px] truncate" title={r.admission_reason ?? ''}>
                           {r.admission_reason ?? '—'}
                         </td>
-                        <td className="py-1 pr-2 text-xs">
-                          {r.last_backtest_label ? (
-                            <span className="rounded bg-muted px-1.5 py-0.5">{r.last_backtest_label}</span>
-                          ) : '—'}
+                        <BtScoreCell r={r} />
+                        <BtClassCell r={r} />
+                        <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[220px] truncate" title={r.last_bt_summary ?? ''}>
+                          {r.last_bt_summary ?? '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right font-mono">
+                          {r.calibration_score != null ? fmtNum(r.calibration_score, 1) : '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right font-mono font-semibold">
+                          {r.candidate_priority_score != null ? fmtNum(r.candidate_priority_score, 1) : '—'}
+                          {r.last_needs_review && r.last_label_source === 'auto' && (
+                            <span className="ml-1 text-yellow-600" title="Backtest label needs review — BT contribution reduced.">⚠</span>
+                          )}
                         </td>
                         <td className="py-1 pr-2 text-xs font-mono text-muted-foreground">{r.last_backtest_date ?? '—'}</td>
                         <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.last_backtest_strategy_version ?? ''}>
@@ -1020,7 +1029,7 @@ function AdmissionPage() {
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={20} className="p-3">
+                          <td colSpan={24} className="p-3">
 
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
