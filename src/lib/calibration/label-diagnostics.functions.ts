@@ -320,8 +320,11 @@ export const safeRecomputeAutoLabels = createServerFn({ method: 'POST' })
         classification_negative_drivers: auto.negative_drivers,
         classification_safety_overrides: auto.safety_overrides,
         classification_summary: auto.summary,
+        sample_bucket: auto.sample_bucket,
+        sample_confidence_weight: auto.sample_confidence_weight,
         label_config_version: LABEL_CONFIG_VERSION,
       };
+
       if (!isManual) {
         patch.needs_review = willSetReview;
         patch.needs_review_reason = willSetReview ? review.reason : null;
