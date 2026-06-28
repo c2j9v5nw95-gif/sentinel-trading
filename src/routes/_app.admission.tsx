@@ -472,6 +472,14 @@ function AdmissionPage() {
                 />
                 Inkluder Trend Quality
               </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={includeCalibration}
+                  onChange={(e) => setIncludeCalibration(e.target.checked)}
+                />
+                Inkluder Calibration (kNN)
+              </label>
             </div>
             <div className="flex items-end">
               <button
