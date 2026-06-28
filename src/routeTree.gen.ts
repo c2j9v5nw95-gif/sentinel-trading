@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as MRouteImport } from './routes/m'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
@@ -38,6 +39,11 @@ import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './route
 import { Route as ApiPublicHooksSnapshotRegimeTickRouteImport } from './routes/api/public/hooks/snapshot-regime-tick'
 import { Route as ApiPublicHooksSetupSnapshotConfigRouteImport } from './routes/api/public/hooks/setup-snapshot-config'
 
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MRoute = MRouteImport.update({
   id: '/m',
   path: '/m',
@@ -185,6 +191,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/m': typeof MRouteWithChildren
+  '/reset-password': typeof ResetPasswordRoute
   '/admission': typeof AppAdmissionRoute
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/admission': typeof AppAdmissionRoute
   '/alerts': typeof AppAlertsRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/m': typeof MRouteWithChildren
+  '/reset-password': typeof ResetPasswordRoute
   '/_app/admission': typeof AppAdmissionRoute
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
@@ -275,6 +284,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/m'
+    | '/reset-password'
     | '/admission'
     | '/alerts'
     | '/analytics-debug'
@@ -303,6 +313,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/reset-password'
     | '/admission'
     | '/alerts'
     | '/analytics-debug'
@@ -333,6 +344,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/m'
+    | '/reset-password'
     | '/_app/admission'
     | '/_app/alerts'
     | '/_app/analytics-debug'
@@ -364,6 +376,7 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
   MRoute: typeof MRouteWithChildren
+  ResetPasswordRoute: typeof ResetPasswordRoute
   ApiPublicHooksSetupSnapshotConfigRoute: typeof ApiPublicHooksSetupSnapshotConfigRoute
   ApiPublicHooksSnapshotRegimeTickRoute: typeof ApiPublicHooksSnapshotRegimeTickRoute
   ApiPublicHooksSnapshotSignalContextRoute: typeof ApiPublicHooksSnapshotSignalContextRoute
@@ -371,6 +384,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/m': {
       id: '/m'
       path: '/m'
@@ -633,6 +653,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
   MRoute: MRouteWithChildren,
+  ResetPasswordRoute: ResetPasswordRoute,
   ApiPublicHooksSetupSnapshotConfigRoute:
     ApiPublicHooksSetupSnapshotConfigRoute,
   ApiPublicHooksSnapshotRegimeTickRoute: ApiPublicHooksSnapshotRegimeTickRoute,
