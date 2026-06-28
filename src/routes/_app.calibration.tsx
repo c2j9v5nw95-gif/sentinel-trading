@@ -13,7 +13,7 @@
  */
 
 import { createFileRoute } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PageHeader, Card, EmptyState } from '@/components/PageHeader';
@@ -25,6 +25,31 @@ import {
 } from '@/lib/calibration/label-review.functions';
 
 type Label = 'no_trades' | 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
+
+type SortKey =
+  | 'symbol'
+  | 'test_date'
+  | 'label'
+  | 'auto_suggested_label'
+  | 'label_source'
+  | 'backtest_quality_score'
+  | 'num_trades'
+  | 'win_rate_pct'
+  | 'net_profit_pct'
+  | 'normalized_net_profit_pct'
+  | 'net_profit_usd'
+  | 'max_drawdown_pct'
+  | 'profit_factor'
+  | 'needs_review'
+  | 'strategy_version';
+
+const LABEL_RANK: Record<Label | string, number> = {
+  profitable_plus: 5,
+  profitable: 4,
+  marginal: 3,
+  rejected_backtest: 2,
+  no_trades: 1,
+};
 
 const LABELS: Array<{ value: Label | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
@@ -49,6 +74,62 @@ function labelBadge(l: string): string {
 function fmtNum(n: number | null | undefined, dp = 2): string {
   if (n == null || !Number.isFinite(Number(n))) return '—';
   return Number(n).toFixed(dp);
+}
+
+function rankOfLabel(l: string | null | undefined): number {
+  return LABEL_RANK[l ?? ''] ?? 0;
+}
+
+function sortValue(row: any, key: SortKey): string | number | boolean | null {
+  switch (key) {
+    case 'symbol': return (row.symbol ?? '').toUpperCase();
+    case 'test_date': return row.test_date ? new Date(row.test_date).getTime() : null;
+    case 'label': return rankOfLabel(row.label);
+    case 'auto_suggested_label': return rankOfLabel(row.auto_suggested_label);
+    case 'label_source': return row.label_source ?? '';
+    case 'backtest_quality_score': return row.backtest_quality_score ?? null;
+    case 'num_trades': return row.num_trades ?? null;
+    case 'win_rate_pct': return row.win_rate_pct ?? null;
+    case 'net_profit_pct': return row.net_profit_pct ?? null;
+    case 'normalized_net_profit_pct': return row.normalized_net_profit_pct ?? null;
+    case 'net_profit_usd': return row.net_profit_usd ?? null;
+    case 'max_drawdown_pct': return row.max_drawdown_pct ?? null;
+    case 'profit_factor': return row.profit_factor ?? null;
+    case 'needs_review': return row.needs_review ? 1 : 0;
+    case 'strategy_version': return row.strategy_version ?? '';
+  }
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  currentKey,
+  direction,
+  onSort,
+  align,
+  title,
+}: {
+  label: string;
+  sortKey: SortKey;
+  currentKey: SortKey | null;
+  direction: 'desc' | 'asc';
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'right';
+  title?: string;
+}) {
+  const active = currentKey === sortKey;
+  return (
+    <th
+      className={`py-1 pr-2 cursor-pointer select-none hover:text-foreground ${align === 'right' ? 'text-right' : 'text-left'}`}
+      title={title}
+      onClick={() => onSort(sortKey)}
+    >
+      {label}
+      <span className="ml-1 inline-block w-3">
+        {active ? (direction === 'desc' ? '▼' : '▲') : '⇅'}
+      </span>
+    </th>
+  );
 }
 
 export const Route = createFileRoute('/_app/calibration')({
@@ -77,10 +158,38 @@ function CalibrationPage() {
       }),
   });
 
+  const [sortKey, setSortKey] = useState<SortKey>('net_profit_pct');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+
+  const handleSort = useCallback((key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDirection('desc');
+    }
+  }, [sortKey]);
+
   const rows = useMemo(() => {
     const all = (reviewQ.data?.rows ?? []) as any[];
-    return showNoTrades ? all : all.filter((r) => r.label !== 'no_trades');
-  }, [reviewQ.data?.rows, showNoTrades]);
+    const filtered = showNoTrades ? all : all.filter((r) => r.label !== 'no_trades');
+    return [...filtered].sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      const aNull = av === null;
+      const bNull = bv === null;
+      if (aNull && bNull) return 0;
+      if (aNull) return 1; // nulls sink to bottom
+      if (bNull) return -1; // nulls sink to bottom
+      if (av < bv) return sortDirection === 'desc' ? 1 : -1;
+      if (av > bv) return sortDirection === 'desc' ? -1 : 1;
+      // stable tie-break: newest test_date first, then symbol
+      const ta = a.test_date ? new Date(a.test_date).getTime() : 0;
+      const tb = b.test_date ? new Date(b.test_date).getTime() : 0;
+      if (ta !== tb) return tb - ta;
+      return (a.symbol ?? '').localeCompare(b.symbol ?? '');
+    });
+  }, [reviewQ.data?.rows, showNoTrades, sortKey, sortDirection]);
 
   const dryRun = useMutation({
     mutationFn: () =>
@@ -203,22 +312,22 @@ function CalibrationPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-muted-foreground border-b">
-                  <th className="py-1 pr-2">Symbol</th>
-                  <th className="py-1 pr-2">Test Date</th>
-                  <th className="py-1 pr-2">Label</th>
-                  <th className="py-1 pr-2">Suggested</th>
-                  <th className="py-1 pr-2">Source</th>
-                  <th className="py-1 pr-2 text-right">Quality</th>
-                  <th className="py-1 pr-2 text-right">Trades</th>
+                  <SortHeader label="Symbol" sortKey="symbol" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Test Date" sortKey="test_date" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Label" sortKey="label" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Suggested" sortKey="auto_suggested_label" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Source" sortKey="label_source" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Quality" sortKey="backtest_quality_score" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Trades" sortKey="num_trades" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
                   <th className="py-1 pr-2 text-right" title="Wins / Losses">W / L</th>
-                  <th className="py-1 pr-2 text-right">Win%</th>
-                  <th className="py-1 pr-2 text-right">Net%</th>
-                  <th className="py-1 pr-2 text-right" title="Position-size normalized net profit">Norm Net%</th>
-                  <th className="py-1 pr-2 text-right" title="Net profit in USD">Net $</th>
-                  <th className="py-1 pr-2 text-right" title="Max drawdown %">MaxDD%</th>
-                  <th className="py-1 pr-2 text-right">PF</th>
-                  <th className="py-1 pr-2">Review</th>
-                  <th className="py-1 pr-2 text-right">Strategy</th>
+                  <SortHeader label="Win%" sortKey="win_rate_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Net%" sortKey="net_profit_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Norm Net%" sortKey="normalized_net_profit_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" title="Position-size normalized net profit" />
+                  <SortHeader label="Net $" sortKey="net_profit_usd" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" title="Net profit in USD" />
+                  <SortHeader label="MaxDD%" sortKey="max_drawdown_pct" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" title="Max drawdown %" />
+                  <SortHeader label="PF" sortKey="profit_factor" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+                  <SortHeader label="Review" sortKey="needs_review" currentKey={sortKey} direction={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Strategy" sortKey="strategy_version" currentKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
                 </tr>
               </thead>
               <tbody>
