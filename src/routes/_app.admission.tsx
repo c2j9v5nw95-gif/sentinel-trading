@@ -338,6 +338,21 @@ function AdmissionPage() {
     },
   });
 
+  // Augment results with the latest backtest observation per symbol. Single
+  // batch round-trip per run, refreshed when the symbol set changes or after
+  // a save (key invalidation by ['backtest-latest-map']).
+  const symbolList = useMemo(
+    () => (resultsQ.data ?? []).map((r) => r.symbol),
+    [resultsQ.data],
+  );
+  const latestBtQ = useQuery({
+    enabled: symbolList.length > 0,
+    queryKey: ['backtest-latest-map', activeRunId, symbolList.length],
+    queryFn: () => listLatestBacktestPerSymbol({ data: { symbols: symbolList } }),
+  });
+
+
+
   const startRun = useMutation({
     mutationFn: async () => {
       if (!selectedProfileId) throw new Error('no_profile');
