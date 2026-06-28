@@ -170,6 +170,7 @@ function sortValue(r: Result, k: SortKey): number | string | null {
     case 'calib_score': return r.calibration_score ?? null;
     case 'calibrated_fit': return r.calibrated_strategy_fit ?? null;
     case 'priority': return r.candidate_priority_score ?? null;
+    case 'candidate_score': return r.candidate_score?.score ?? null;
   }
 }
 
@@ -179,7 +180,9 @@ const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
   last_bt_class: 'asc', last_bt_date: 'desc', last_bt_ver: 'asc', bt_count: 'desc',
   bt_score: 'desc', calib_score: 'desc', calibrated_fit: 'desc', priority: 'desc',
+  candidate_score: 'desc',
 };
+
 
 // ---- Backtest Quality + Candidate Priority helpers ---------------------------
 
