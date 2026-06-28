@@ -384,6 +384,12 @@ function AdmissionPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
   const [includeCalibration, setIncludeCalibration] = useState(true);
   const [backtestPrefill, setBacktestPrefill] = useState<BacktestDialogPrefill | null>(null);
+  // BT-related filters
+  const [minBtScore, setMinBtScore] = useState<string>('');
+  const [hideNoTrades, setHideNoTrades] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<'any' | 'only' | 'hide'>('any');
+  const [sourceFilter, setSourceFilter] = useState<'any' | 'manual_override' | 'auto'>('any');
+  const [btClassFilter, setBtClassFilter] = useState<string>('all');
 
   const toggleSort = (k: SortKey) => {
     setSort((prev) => prev.key === k
