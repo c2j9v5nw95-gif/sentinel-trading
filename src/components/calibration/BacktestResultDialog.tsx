@@ -435,7 +435,7 @@ export function BacktestResultDialog({
         largest_loss_usd: noTrades ? null : numeric(form.largest_loss_usd),
         profitable_trades_count: noTrades ? 0 : intish(form.profitable_trades_count),
         losing_trades_count: noTrades ? 0 : intish(form.losing_trades_count),
-        label: noTrades ? ('rejected_backtest' as Label) : form.label,
+        label: noTrades ? ('no_trades' as Label) : form.label,
         notes: notesFinal,
         screenshot_storage_path: storagePath,
         extraction_source: extractionSource as 'manual' | 'screenshot_ocr',
