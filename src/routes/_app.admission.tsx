@@ -515,6 +515,102 @@ function LastBacktestDetail({ r }: { r: Result }) {
   );
 }
 
+function CalibrationNeighborsTable({ r }: { r: Result }) {
+  const neighbors = Array.isArray(r.calibration_neighbors) ? r.calibration_neighbors : [];
+  if (neighbors.length === 0) {
+    return (
+      <div className="mt-3 rounded border bg-background p-3 text-xs">
+        <h4 className="font-semibold text-sm mb-1">Calibration Neighbors</h4>
+        <p className="text-muted-foreground">
+          Ingen naboer registrert ennå. Kjør calibration (eller Recalculate-knappen
+          nedenfor) for å fylle inn de 10 nærmeste historiske observasjonene.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 rounded border bg-background p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <h4 className="font-semibold text-sm">Calibration Neighbors</h4>
+        <span className="text-muted-foreground">
+          Top {neighbors.length} historiske observasjoner brukt for å lære Calibration
+          Score. Sammenligning gjøres mot screener-features, ikke samme test-dato på
+          dette symbolet.
+        </span>
+        {r.calibration_score != null && (
+          <span className="ml-auto rounded bg-muted px-1.5 py-0.5 font-mono">
+            Calib Score: {fmtNum(r.calibration_score, 1)} · {r.calibration_confidence ?? '—'}
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="text-muted-foreground">
+            <tr className="border-b">
+              <th className="text-left py-0.5 pr-2">Symbol</th>
+              <th className="text-left py-0.5 pr-2">Test Date</th>
+              <th className="text-left py-0.5 pr-2">Label</th>
+              <th className="text-left py-0.5 pr-2">Source</th>
+              <th className="text-right py-0.5 pr-2" title="num_trades">Trades</th>
+              <th className="text-left py-0.5 pr-2">Sample bucket</th>
+              <th className="text-right py-0.5 pr-2" title="Outcome used (quality score or fallback)">Outcome</th>
+              <th className="text-right py-0.5 pr-2" title="raw 1/(1+distance) similarity">Sim</th>
+              <th className="text-right py-0.5 pr-2" title="exp time decay 0–1">Decay</th>
+              <th className="text-right py-0.5 pr-2" title="sample_confidence_weight">Sample W</th>
+              <th className="text-right py-0.5 pr-2" title="sim × decay × sample_w">Final W</th>
+              <th className="text-right py-0.5 pr-2" title="outcome × final_weight">Contribution</th>
+              <th className="text-left py-0.5 pl-2">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {neighbors.map((n: any, i: number) => {
+              const isSameSymbol = n.symbol === r.symbol;
+              return (
+                <tr key={n.id ?? i} className="border-t border-muted">
+                  <td className="py-0.5 pr-2 font-mono">
+                    {n.symbol}
+                    {isSameSymbol && (
+                      <span className="ml-1 text-[10px] text-muted-foreground" title="Tidligere backtest for samme symbol">↺</span>
+                    )}
+                  </td>
+                  <td className="py-0.5 pr-2 font-mono text-muted-foreground">{n.test_date ?? '—'}</td>
+                  <td className="py-0.5 pr-2">
+                    <span className="rounded bg-muted px-1 py-0.5 text-[10px]">{n.label ?? '—'}</span>
+                  </td>
+                  <td className="py-0.5 pr-2 text-[10px] text-muted-foreground">
+                    {n.label_source ?? '—'}
+                    {n.label_source === 'manual_override' && <span className="ml-0.5 text-emerald-700">✓</span>}
+                  </td>
+                  <td className="py-0.5 pr-2 text-right font-mono">{n.num_trades ?? '—'}</td>
+                  <td className="py-0.5 pr-2 text-[10px]">{n.sample_bucket ?? '—'}</td>
+                  <td className="py-0.5 pr-2 text-right font-mono">{fmtNum(n.outcome, 1)}</td>
+                  <td className="py-0.5 pr-2 text-right font-mono">{fmtNum(n.similarity, 3)}</td>
+                  <td className="py-0.5 pr-2 text-right font-mono">{fmtNum(n.time_decay, 3)}</td>
+                  <td className="py-0.5 pr-2 text-right font-mono">{fmtNum(n.sample_confidence_weight, 2)}</td>
+                  <td className="py-0.5 pr-2 text-right font-mono font-semibold">{fmtNum(n.final_weight, 4)}</td>
+                  <td className="py-0.5 pr-2 text-right font-mono">{fmtNum(n.contribution, 1)}</td>
+                  <td className="py-0.5 pl-2 text-[10px] text-muted-foreground">
+                    {n.used_fallback
+                      ? (n.note ?? 'Fallback: label-based outcome because quality score is missing')
+                      : ''}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        Final weight = similarity × time_decay × sample_confidence_weight. Outcome er
+        backtest_quality_score (0–100) eller, hvis denne mangler, en label-basert
+        fallback (markert i Note). 1-trade Profitable kan ikke dominere fordi
+        sample_confidence_weight = 0.15.
+      </p>
+    </div>
+  );
+}
+
+
 function Metric({ label, value, dp }: { label: string; value: number | null | undefined; dp: number }) {
   return (
     <div>
@@ -594,6 +690,8 @@ type Result = {
   calibration_reason?: string | null;
   calibrated_strategy_fit?: number | null;
   calibration_computed_at?: string | null;
+  calibration_neighbors?: any;
+
   // Augmented client-side from listLatestBacktestPerSymbol
   last_backtest_label?: string | null;
   last_backtest_date?: string | null;
@@ -1459,6 +1557,8 @@ function AdmissionPage() {
                             </div>
                             <CandidateScoreBreakdown r={r} />
                             <LastBacktestDetail r={r} />
+                            <CalibrationNeighborsTable r={r} />
+
 
                             <BacktestHistorySection symbol={r.symbol} />
                             <div className="mt-3 flex flex-wrap justify-end gap-2">

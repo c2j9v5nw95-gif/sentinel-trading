@@ -126,6 +126,9 @@ async function loadCalibrationConfig(
 async function loadClassificationThresholds(
   supabase: SupabaseClient,
 ): Promise<ClassificationThresholds> {
+  // We still read from app_settings for backwards-compat with the v2 keys, but
+  // the schema-bound defaults now drive the strategy-aware buckets. Anything
+  // not present in app_settings falls through to the new defaults.
   const { data } = await supabase
     .from('app_settings')
     .select(
@@ -134,26 +137,39 @@ async function loadClassificationThresholds(
     .eq('singleton', true)
     .maybeSingle();
   const d = DEFAULT_CLASSIFICATION_THRESHOLDS;
+  const legacyMinTrades = (data as any)?.backtest_min_trades;
   return {
-    min_trades: data?.backtest_min_trades ?? d.min_trades,
+    // Strategy-aware sample thresholds. Legacy `backtest_min_trades` (if set)
+    // only acts as a floor for Profitable+; it does NOT raise the Profitable
+    // floor any more (avoids the hard 20-trade penalty against DEXE/NEAR).
+    profitable_min_trades: d.profitable_min_trades,
+    profitable_plus_min_trades: Math.max(
+      d.profitable_plus_min_trades,
+      typeof legacyMinTrades === 'number' && legacyMinTrades > d.profitable_plus_min_trades
+        ? legacyMinTrades
+        : d.profitable_plus_min_trades,
+    ),
     marginal_min_profit_factor:
-      data?.backtest_marginal_min_profit_factor ?? d.marginal_min_profit_factor,
+      (data as any)?.backtest_marginal_min_profit_factor ?? d.marginal_min_profit_factor,
     profitable_min_profit_factor:
-      data?.backtest_profitable_min_profit_factor ?? d.profitable_min_profit_factor,
+      (data as any)?.backtest_profitable_min_profit_factor ?? d.profitable_min_profit_factor,
     profitable_plus_min_profit_factor:
-      data?.backtest_profitable_plus_min_profit_factor ?? d.profitable_plus_min_profit_factor,
+      (data as any)?.backtest_profitable_plus_min_profit_factor ?? d.profitable_plus_min_profit_factor,
+    profitable_min_win_rate_pct: d.profitable_min_win_rate_pct,
+    profitable_plus_min_win_rate_pct: d.profitable_plus_min_win_rate_pct,
     profitable_min_normalized_net_profit_pct:
-      data?.backtest_profitable_min_normalized_net_profit_pct ??
+      (data as any)?.backtest_profitable_min_normalized_net_profit_pct ??
       d.profitable_min_normalized_net_profit_pct,
     profitable_plus_min_normalized_net_profit_pct:
-      data?.backtest_profitable_plus_min_normalized_net_profit_pct ??
+      (data as any)?.backtest_profitable_plus_min_normalized_net_profit_pct ??
       d.profitable_plus_min_normalized_net_profit_pct,
     max_leverage_adjusted_drawdown_profitable:
-      data?.backtest_max_leverage_adjusted_drawdown_profitable ??
+      (data as any)?.backtest_max_leverage_adjusted_drawdown_profitable ??
       d.max_leverage_adjusted_drawdown_profitable,
     max_leverage_adjusted_drawdown_profitable_plus:
-      data?.backtest_max_leverage_adjusted_drawdown_profitable_plus ??
+      (data as any)?.backtest_max_leverage_adjusted_drawdown_profitable_plus ??
       d.max_leverage_adjusted_drawdown_profitable_plus,
+    profitable_plus_min_drawdown_control_ratio: d.profitable_plus_min_drawdown_control_ratio,
   };
 }
 
@@ -170,7 +186,10 @@ async function loadObservations(
 ): Promise<Observation[]> {
   let q = supabase
     .from('coin_backtest_results')
-    .select('id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source')
+    .select(
+      'id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source, ' +
+        'num_trades, backtest_quality_score, sample_bucket, sample_confidence_weight',
+    )
     .in('extraction_status', ['manual', 'confirmed'])
     .order('test_date', { ascending: false })
     .limit(2000);
@@ -182,7 +201,6 @@ async function loadObservations(
   return (data ?? [])
     .filter((r: any) => {
       if (excludeNoTrades && r.label === 'no_trades') return false;
-      // Only exclude when the row was auto-labeled AND flagged for review
       if (excludeNeedsReview && r.needs_review === true && r.label_source !== 'manual_override') return false;
       return true;
     })
@@ -191,10 +209,17 @@ async function loadObservations(
       symbol: r.symbol,
       test_date: r.test_date,
       label: r.label as BacktestLabel,
+      label_source: r.label_source ?? 'auto',
       age_days: ageDays(r.test_date),
       features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
+      quality_score: r.backtest_quality_score != null ? Number(r.backtest_quality_score) : null,
+      sample_bucket: (r.sample_bucket ?? null) as any,
+      sample_confidence_weight:
+        r.sample_confidence_weight != null ? Number(r.sample_confidence_weight) : null,
+      num_trades: r.num_trades ?? null,
     }));
 }
+
 
 // ── Functions ─────────────────────────────────────────────────────────────
 
@@ -331,6 +356,8 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
       classification_negative_drivers: auto.negative_drivers,
       classification_safety_overrides: auto.safety_overrides,
       classification_summary: auto.summary,
+      sample_bucket: auto.sample_bucket,
+      sample_confidence_weight: auto.sample_confidence_weight,
       label_source: labelSource,
       label_overridden_at: labelSource === 'manual_override' ? new Date().toISOString() : null,
       label_overridden_by: labelSource === 'manual_override' ? userId : null,
@@ -340,7 +367,8 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
     };
     const { data: inserted, error } = await supabase
       .from('coin_backtest_results')
-      .insert(row)
+      .insert(row as any)
+
       .select('*')
       .single();
     if (error) {

@@ -44,7 +44,10 @@ export async function runCalibrationForRunInline(
 
   let q = supabase
     .from('coin_backtest_results')
-    .select('id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source')
+    .select(
+      'id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source, ' +
+        'num_trades, backtest_quality_score, sample_bucket, sample_confidence_weight',
+    )
     .in('extraction_status', ['manual', 'confirmed'])
     .order('test_date', { ascending: false })
     .limit(2000);
@@ -61,9 +64,16 @@ export async function runCalibrationForRunInline(
       symbol: r.symbol,
       test_date: r.test_date,
       label: r.label as BacktestLabel,
+      label_source: r.label_source ?? 'auto',
       age_days: ageDays(r.test_date),
       features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
+      quality_score: r.backtest_quality_score != null ? Number(r.backtest_quality_score) : null,
+      sample_bucket: (r.sample_bucket ?? null) as any,
+      sample_confidence_weight:
+        r.sample_confidence_weight != null ? Number(r.sample_confidence_weight) : null,
+      num_trades: r.num_trades ?? null,
     }));
+
   const featureRows = observations.map((o) => o.features);
   const medians = computeFeatureMedians(featureRows);
   const stds = computeFeatureStds(featureRows, medians);
