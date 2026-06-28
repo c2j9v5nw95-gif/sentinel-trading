@@ -630,6 +630,7 @@ export type Database = {
           coingecko_id: string | null
           components: Json | null
           created_at: string
+          current_momentum_components: Json | null
           current_momentum_score: number | null
           extreme_wick_count: number | null
           fetch_error: string | null
@@ -678,6 +679,7 @@ export type Database = {
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
+          current_momentum_components?: Json | null
           current_momentum_score?: number | null
           extreme_wick_count?: number | null
           fetch_error?: string | null
@@ -726,6 +728,7 @@ export type Database = {
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
+          current_momentum_components?: Json | null
           current_momentum_score?: number | null
           extreme_wick_count?: number | null
           fetch_error?: string | null
