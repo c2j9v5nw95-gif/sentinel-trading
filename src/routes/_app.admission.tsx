@@ -378,7 +378,17 @@ function AdmissionPage() {
   });
 
   const filteredResults = useMemo(() => {
-    const all = resultsQ.data ?? [];
+    const map = latestBtQ.data?.per_symbol ?? {};
+    const all = (resultsQ.data ?? []).map((r) => {
+      const m = map[r.symbol];
+      return {
+        ...r,
+        last_backtest_label: m?.last_label ?? null,
+        last_backtest_date: m?.last_test_date ?? null,
+        last_backtest_strategy_version: m?.last_strategy_version ?? null,
+        backtest_count: m?.count ?? 0,
+      } as Result;
+    });
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
     const filtered = all.filter((r) => {
