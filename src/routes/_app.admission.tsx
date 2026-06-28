@@ -40,6 +40,7 @@ type Result = {
   score: number | null;
   trend_score: number | null;
   strategy_fit_score: number | null;
+  strategy_fit_label: string | null;
   admission_reason: string | null;
   admission_mode: string | null;
   hard_kill_rules: string[] | null;
@@ -56,11 +57,21 @@ type Result = {
   kill_rules_triggered: string[] | null;
   components: Record<string, number> | null;
   trend_components: Record<string, number> | null;
+  historical_trend_quality: number | null;
+  htq_components: Record<string, number> | null;
+  htq_lookback_days: number | null;
+  htq_mode: string | null;
+  trend_classification: 'trend_friendly' | 'neutral' | 'choppy' | null;
+  htq_reason: string | null;
+  current_momentum_score: number | null;
   fetch_error: string | null;
 };
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
+type ClassFilter = 'all' | 'trend_friendly' | 'neutral' | 'choppy';
 type Mode = 'strict' | 'trend_adjusted';
+type Lookback = 5 | 10 | 14 | 30 | 90;
+
 
 function fmtUsd(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
