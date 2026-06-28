@@ -342,8 +342,12 @@ export function BacktestResultDialog({
       };
       return await createBacktestResult({ data: payload as any });
     },
-    onSuccess: () => {
-      onSaved?.();
+    onSuccess: (_res, _vars) => {
+      const sym = form.symbol.trim().toUpperCase();
+      toast.success('Backtest saved', {
+        description: `${sym} · ${form.label}. Calibration will update on next admission run, or click "Recalculate calibration for this symbol".`,
+      });
+      onSaved?.({ symbol: sym, label: form.label });
       onOpenChange(false);
     },
     onError: (e: any) => setError(e?.message ?? String(e)),
