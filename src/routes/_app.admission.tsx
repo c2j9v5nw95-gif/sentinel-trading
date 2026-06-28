@@ -13,6 +13,17 @@ import {
 import { PageHeader, Card, EmptyState } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { BacktestResultDialog, type BacktestDialogPrefill } from '@/components/calibration/BacktestResultDialog';
+import {
+  computeCandidateScore,
+  candidateBucketBadgeClass,
+  candidateBucketBarClass,
+  candidateBucketLabel,
+  type CandidateScoreResult,
+  type CandidateBucket,
+  type BtTrust,
+} from '@/lib/admission/candidate-score';
+
+
 
 
 const COLUMN_TOOLTIPS: Record<string, string> = {
