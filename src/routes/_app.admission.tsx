@@ -1260,7 +1260,9 @@ function AdmissionPage() {
                             <span className="ml-1 text-yellow-600" title="Backtest label needs review — BT contribution reduced.">⚠</span>
                           )}
                         </td>
+                        <CandidateScoreCell r={r} />
                         <td className="py-1 pr-2 text-xs font-mono text-muted-foreground">{r.last_backtest_date ?? '—'}</td>
+
                         <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.last_backtest_strategy_version ?? ''}>
                           {r.last_backtest_strategy_version ?? '—'}
                         </td>
