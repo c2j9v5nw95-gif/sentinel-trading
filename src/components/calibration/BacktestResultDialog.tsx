@@ -138,7 +138,7 @@ export function BacktestResultDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   prefill?: BacktestDialogPrefill;
-  onSaved?: () => void;
+  onSaved?: (info?: { symbol: string; label: Label }) => void;
 }) {
   const [tab, setTab] = useState<'manual' | 'screenshot'>('manual');
   const [form, setForm] = useState<FormFields>(emptyForm);
@@ -157,6 +157,15 @@ export function BacktestResultDialog({
     queryKey: ['calibration-strategy-versions'],
     queryFn: () => listStrategyVersions(),
     enabled: open,
+  });
+
+  // Previous observations for this symbol — proves to user that earlier tests
+  // exist and helps avoid accidental duplicates. Append-only is always honored.
+  const symbolKey = (prefill?.symbol ?? form.symbol).trim().toUpperCase();
+  const historyQ = useQuery({
+    queryKey: ['backtest-history', symbolKey],
+    queryFn: () => listBacktestResults({ data: { symbol: symbolKey, limit: 25 } }),
+    enabled: open && !!symbolKey,
   });
 
   // Apply prefill + default strategy version when dialog opens
