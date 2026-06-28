@@ -297,12 +297,34 @@ type Result = {
   // Calibration (best-effort, may be absent)
   calibration_score?: number | null;
   calibration_label?: string | null;
+  calibration_confidence?: string | null;
+  calibration_status?: string | null;
+  calibration_reason?: string | null;
+  calibrated_strategy_fit?: number | null;
   calibration_computed_at?: string | null;
   // Augmented client-side from listLatestBacktestPerSymbol
   last_backtest_label?: string | null;
   last_backtest_date?: string | null;
   last_backtest_strategy_version?: string | null;
   backtest_count?: number;
+  last_bt_score?: number | null;
+  last_auto_suggested_label?: string | null;
+  last_label_source?: string | null;
+  last_needs_review?: boolean | null;
+  last_needs_review_reason?: string | null;
+  last_bt_summary?: string | null;
+  last_positive_drivers?: any;
+  last_negative_drivers?: any;
+  last_safety_overrides?: string[] | null;
+  last_net_profit_pct?: number | null;
+  last_normalized_net_profit_pct?: number | null;
+  last_leverage_adjusted_net_profit_pct?: number | null;
+  last_profit_factor?: number | null;
+  last_win_rate_pct?: number | null;
+  last_max_drawdown_pct?: number | null;
+  last_num_trades?: number | null;
+  // Computed client-side
+  candidate_priority_score?: number | null;
 };
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
