@@ -355,9 +355,9 @@ function AdmissionPage() {
       for (let i = 0; i < symbolList.length; i += CHUNK) {
         const slice = symbolList.slice(i, i + CHUNK);
         const part = await listLatestBacktestPerSymbol({ data: { symbols: slice } });
-        Object.assign(merged, (part as any)?.map ?? part ?? {});
+        Object.assign(merged, part?.per_symbol ?? {});
       }
-      return { map: merged };
+      return { per_symbol: merged };
     },
   });
 
