@@ -530,6 +530,205 @@ export type Database = {
         }
         Relationships: []
       }
+      coin_admission_coingecko_map: {
+        Row: {
+          bybit_symbol: string
+          coingecko_id: string
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          bybit_symbol: string
+          coingecko_id: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          bybit_symbol?: string
+          coingecko_id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      coin_admission_profiles: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          thresholds: Json
+          updated_at: string
+          weights: Json
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          thresholds: Json
+          updated_at?: string
+          weights: Json
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          thresholds?: Json
+          updated_at?: string
+          weights?: Json
+        }
+        Relationships: []
+      }
+      coin_admission_results: {
+        Row: {
+          coingecko_id: string | null
+          components: Json | null
+          created_at: string
+          extreme_wick_count: number | null
+          fetch_error: string | null
+          funding_rate: number | null
+          id: string
+          kill_rules_triggered: string[] | null
+          listing_age_days: number | null
+          max_1h_drop_pct: number | null
+          open_interest_value: number | null
+          rank: number | null
+          run_id: string
+          score: number | null
+          slippage_bps_est: number | null
+          spread_bps: number | null
+          status: string
+          symbol: string
+          turnover_24h: number | null
+          turnover_30d_median: number | null
+          turnover_7d_median: number | null
+          wick_risk_score: number | null
+        }
+        Insert: {
+          coingecko_id?: string | null
+          components?: Json | null
+          created_at?: string
+          extreme_wick_count?: number | null
+          fetch_error?: string | null
+          funding_rate?: number | null
+          id?: string
+          kill_rules_triggered?: string[] | null
+          listing_age_days?: number | null
+          max_1h_drop_pct?: number | null
+          open_interest_value?: number | null
+          rank?: number | null
+          run_id: string
+          score?: number | null
+          slippage_bps_est?: number | null
+          spread_bps?: number | null
+          status: string
+          symbol: string
+          turnover_24h?: number | null
+          turnover_30d_median?: number | null
+          turnover_7d_median?: number | null
+          wick_risk_score?: number | null
+        }
+        Update: {
+          coingecko_id?: string | null
+          components?: Json | null
+          created_at?: string
+          extreme_wick_count?: number | null
+          fetch_error?: string | null
+          funding_rate?: number | null
+          id?: string
+          kill_rules_triggered?: string[] | null
+          listing_age_days?: number | null
+          max_1h_drop_pct?: number | null
+          open_interest_value?: number | null
+          rank?: number | null
+          run_id?: string
+          score?: number | null
+          slippage_bps_est?: number | null
+          spread_bps?: number | null
+          status?: string
+          symbol?: string
+          turnover_24h?: number | null
+          turnover_30d_median?: number | null
+          turnover_7d_median?: number | null
+          wick_risk_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coin_admission_results_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "coin_admission_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coin_admission_runs: {
+        Row: {
+          approved_n: number | null
+          error: string | null
+          finished_at: string | null
+          id: string
+          notes: string | null
+          profile_id: string | null
+          profile_name: string
+          progress_done: number | null
+          progress_total: number | null
+          rejected_n: number | null
+          started_at: string
+          status: string
+          symbols_total: number | null
+          triggered_by: string | null
+          watchlist_n: number | null
+        }
+        Insert: {
+          approved_n?: number | null
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          notes?: string | null
+          profile_id?: string | null
+          profile_name: string
+          progress_done?: number | null
+          progress_total?: number | null
+          rejected_n?: number | null
+          started_at?: string
+          status?: string
+          symbols_total?: number | null
+          triggered_by?: string | null
+          watchlist_n?: number | null
+        }
+        Update: {
+          approved_n?: number | null
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          notes?: string | null
+          profile_id?: string | null
+          profile_name?: string
+          progress_done?: number | null
+          progress_total?: number | null
+          rejected_n?: number | null
+          started_at?: string
+          status?: string
+          symbols_total?: number | null
+          triggered_by?: string | null
+          watchlist_n?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coin_admission_runs_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "coin_admission_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       error_log: {
         Row: {
           context: Json | null
