@@ -528,7 +528,9 @@ type Result = {
   last_num_trades?: number | null;
   // Computed client-side
   candidate_priority_score?: number | null;
+  candidate_score?: CandidateScoreResult | null;
 };
+
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
 type ClassFilter = 'all' | 'trend_friendly' | 'neutral' | 'choppy';
