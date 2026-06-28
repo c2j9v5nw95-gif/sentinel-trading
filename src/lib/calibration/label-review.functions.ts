@@ -168,7 +168,7 @@ export const recomputeSuggestedLabels = createServerFn({ method: 'POST' })
       if (isManual) skipped_manual += 1;
       const { error: upErr } = await supabase
         .from('coin_backtest_results')
-        .update(patch)
+        .update(patch as any)
         .eq('id', row.id);
       if (upErr) continue;
       updated += 1;
@@ -215,7 +215,7 @@ export const overrideBacktestLabel = createServerFn({ method: 'POST' })
     }
     const { data: updated, error } = await supabase
       .from('coin_backtest_results')
-      .update(patch)
+      .update(patch as any)
       .eq('id', data.id)
       .select('*')
       .single();
