@@ -485,9 +485,33 @@ export function BacktestResultDialog({
           </Field>
         </div>
 
+        <div className="mt-3 rounded border border-border bg-muted/30 p-2">
+          <label className="flex items-start gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={noTrades}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setNoTrades(v);
+                if (v) {
+                  setLabelTouched(true);
+                  setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+                }
+              }}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium">No trades in test period</span>
+              <span className="block text-muted-foreground">
+                Strategien åpnet ingen posisjoner i perioden. Lagres som <code>rejected_backtest</code> med <code>num_trades = 0</code>; metrics-feltene under ignoreres.
+              </span>
+            </span>
+          </label>
+        </div>
+
         <div className="mt-3">
           <h4 className="text-xs font-semibold text-muted-foreground mb-2">Backtest metrics</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className={`grid grid-cols-2 md:grid-cols-3 gap-3 ${noTrades ? 'opacity-40 pointer-events-none' : ''}`}>
             {OCR_FIELDS.map((k) => (
               <Field key={k} label={prettyLabel(k)} confidence={fc[k as string]}>
                 <Input
@@ -495,6 +519,7 @@ export function BacktestResultDialog({
                   onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
                   className={confidenceClass(fc[k as string])}
                   inputMode="decimal"
+                  disabled={noTrades}
                 />
               </Field>
             ))}
