@@ -96,21 +96,30 @@ const BacktestPayload = z.object({
 
 async function loadCalibrationConfig(
   supabase: SupabaseClient,
-): Promise<CalibrationConfig & { ocr_model: string; default_strategy_version: string | null }> {
+): Promise<
+  CalibrationConfig & {
+    ocr_model: string;
+    default_strategy_version: string | null;
+    exclude_no_trades: boolean;
+    exclude_needs_review: boolean;
+  }
+> {
   const { data } = await supabase
     .from('app_settings')
     .select(
-      'calibration_half_life_days, calibration_k, calibration_min_neighbors_medium, calibration_min_neighbors_high, calibration_default_strategy_version, calibration_ocr_model',
+      'calibration_half_life_days, calibration_k, calibration_min_neighbors_medium, calibration_min_neighbors_high, calibration_default_strategy_version, calibration_ocr_model, calibration_exclude_no_trades, calibration_exclude_needs_review',
     )
     .eq('singleton', true)
     .maybeSingle();
   return {
-    k: data?.calibration_k ?? 5,
+    k: data?.calibration_k ?? 10,
     half_life_days: data?.calibration_half_life_days ?? 180,
-    min_neighbors_medium: data?.calibration_min_neighbors_medium ?? 3,
-    min_neighbors_high: data?.calibration_min_neighbors_high ?? 6,
+    min_neighbors_medium: data?.calibration_min_neighbors_medium ?? 4,
+    min_neighbors_high: data?.calibration_min_neighbors_high ?? 10,
     ocr_model: data?.calibration_ocr_model ?? 'google/gemini-3-flash-preview',
     default_strategy_version: data?.calibration_default_strategy_version ?? null,
+    exclude_no_trades: data?.calibration_exclude_no_trades ?? true,
+    exclude_needs_review: data?.calibration_exclude_needs_review ?? true,
   };
 }
 
@@ -157,24 +166,34 @@ function ageDays(testDate: string, now: Date = new Date()): number {
 async function loadObservations(
   supabase: SupabaseClient,
   strategyVersion: string | null,
+  opts?: { exclude_no_trades?: boolean; exclude_needs_review?: boolean },
 ): Promise<Observation[]> {
   let q = supabase
     .from('coin_backtest_results')
-    .select('id, symbol, test_date, label, screener_snapshot, strategy_version')
+    .select('id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source')
     .in('extraction_status', ['manual', 'confirmed'])
     .order('test_date', { ascending: false })
     .limit(2000);
   if (strategyVersion) q = q.eq('strategy_version', strategyVersion);
   const { data, error } = await q;
   if (error) throw new Error(`load_observations:${error.message}`);
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    symbol: r.symbol,
-    test_date: r.test_date,
-    label: r.label as BacktestLabel,
-    age_days: ageDays(r.test_date),
-    features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
-  }));
+  const excludeNoTrades = opts?.exclude_no_trades ?? true;
+  const excludeNeedsReview = opts?.exclude_needs_review ?? true;
+  return (data ?? [])
+    .filter((r: any) => {
+      if (excludeNoTrades && r.label === 'no_trades') return false;
+      // Only exclude when the row was auto-labeled AND flagged for review
+      if (excludeNeedsReview && r.needs_review === true && r.label_source !== 'manual_override') return false;
+      return true;
+    })
+    .map((r: any) => ({
+      id: r.id,
+      symbol: r.symbol,
+      test_date: r.test_date,
+      label: r.label as BacktestLabel,
+      age_days: ageDays(r.test_date),
+      features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
+    }));
 }
 
 // ── Functions ─────────────────────────────────────────────────────────────
