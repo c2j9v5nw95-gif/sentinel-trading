@@ -594,6 +594,8 @@ type Result = {
   calibration_reason?: string | null;
   calibrated_strategy_fit?: number | null;
   calibration_computed_at?: string | null;
+  calibration_neighbors?: any;
+
   // Augmented client-side from listLatestBacktestPerSymbol
   last_backtest_label?: string | null;
   last_backtest_date?: string | null;
