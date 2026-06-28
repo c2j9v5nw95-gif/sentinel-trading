@@ -637,6 +637,70 @@ export function BacktestResultDialog({
           </div>
         </div>
 
+        <div className="mt-3 rounded border border-border bg-muted/20 p-3">
+          <h4 className="text-xs font-semibold mb-2">
+            Strategy sizing assumptions
+            <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+              Defaults reflect live bot. Edits override per row.
+            </span>
+          </h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Field label="Initial capital (USD)">
+              <Input
+                value={sizing.initial_capital_usd}
+                inputMode="decimal"
+                onChange={(e) => {
+                  setSizing((s) => ({ ...s, initial_capital_usd: e.target.value }));
+                  setSizingTouched(true);
+                }}
+              />
+            </Field>
+            <Field label="Position size type">
+              <Input value="percent_of_equity" disabled />
+            </Field>
+            <Field label="Position size %">
+              <Input
+                value={sizing.position_size_pct}
+                inputMode="decimal"
+                onChange={(e) => {
+                  setSizing((s) => ({ ...s, position_size_pct: e.target.value }));
+                  setSizingTouched(true);
+                }}
+              />
+            </Field>
+            <Field label="Leverage enabled">
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={sizing.leverage_enabled}
+                  onChange={(e) => {
+                    setSizing((s) => ({ ...s, leverage_enabled: e.target.checked }));
+                    setSizingTouched(true);
+                  }}
+                />
+                {sizing.leverage_enabled ? 'On' : 'Off'}
+              </label>
+            </Field>
+            <Field label="Leverage">
+              <Input
+                value={sizing.leverage}
+                inputMode="decimal"
+                disabled={!sizing.leverage_enabled}
+                onChange={(e) => {
+                  setSizing((s) => ({ ...s, leverage: e.target.value }));
+                  setSizingTouched(true);
+                }}
+              />
+            </Field>
+            <Field label="Notional exposure %" hint="position_size % × leverage">
+              <Input value={`${notionalExposurePct.toFixed(1)}%`} disabled />
+            </Field>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Leverage-adjusted values are estimates based on configured position size and leverage. They do not include funding, slippage, liquidation risk, margin rules or execution differences.
+          </p>
+        </div>
+
         <div className="mt-3">
           <Label className="text-xs">Label (auto-suggested — overstyrbar)</Label>
           <div className="mt-1 flex flex-wrap gap-2">
@@ -652,9 +716,21 @@ export function BacktestResultDialog({
                 }`}
               >
                 {opt.label}
+                {suggestion?.label === opt.value && !labelTouched && (
+                  <span className="ml-1 text-[10px] opacity-80">· suggested</span>
+                )}
               </button>
             ))}
           </div>
+          {suggestion && !noTrades && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              <span className="font-medium">Suggested:</span> {suggestion.label}
+              {suggestion.confidence === 'low' && (
+                <span className="ml-1 rounded bg-yellow-500/15 px-1 text-yellow-700">low confidence</span>
+              )}
+              <span className="ml-1">— {suggestion.reason}</span>
+            </p>
+          )}
         </div>
 
         <div className="mt-3">
