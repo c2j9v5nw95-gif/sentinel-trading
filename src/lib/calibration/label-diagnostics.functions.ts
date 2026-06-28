@@ -290,7 +290,10 @@ export const safeRecomputeAutoLabels = createServerFn({ method: 'POST' })
       const changed =
         (r.auto_suggested_label ?? null) !== auto.label ||
         Math.abs((r.backtest_quality_score ?? -1) - auto.quality_score) >= 0.5 ||
+        (r.sample_bucket ?? null) !== auto.sample_bucket ||
+        (r.label_config_version ?? null) !== LABEL_CONFIG_VERSION ||
         (r.needs_review === true) !== willSetReview;
+
 
       const diff: Diff = {
         id: r.id,
