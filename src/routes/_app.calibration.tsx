@@ -137,13 +137,41 @@ export const Route = createFileRoute('/_app/calibration')({
   component: CalibrationPage,
 });
 
+type QuickFilter =
+  | 'all'
+  | 'strong_marginal'
+  | 'profitable_low_sample'
+  | 'pf2_wr65_t8'
+  | 'pf3_wr70_t12'
+  | 'manual_override_diff';
+
+type BucketFilter = 'all' | 'very_low_sample' | 'low_sample' | 'acceptable_sample' | 'good_sample' | 'strong_sample';
+
+function passesQuickFilter(r: any, qf: QuickFilter): boolean {
+  if (qf === 'all') return true;
+  const pf = r.profit_factor ?? 0;
+  const wr = r.win_rate_pct ?? 0;
+  const t = r.num_trades ?? 0;
+  if (qf === 'strong_marginal') return r.label === 'marginal' && pf >= 2 && wr >= 65 && t >= 8;
+  if (qf === 'profitable_low_sample')
+    return (r.label === 'profitable' || r.label === 'profitable_plus') && t < 13 && t > 0;
+  if (qf === 'pf2_wr65_t8') return pf >= 2 && wr >= 65 && t >= 8;
+  if (qf === 'pf3_wr70_t12') return pf >= 3 && wr >= 70 && t >= 12;
+  if (qf === 'manual_override_diff')
+    return r.label_source === 'manual_override' && r.auto_suggested_label && r.auto_suggested_label !== r.label;
+  return true;
+}
+
 function CalibrationPage() {
   const qc = useQueryClient();
   const [labelFilter, setLabelFilter] = useState<Label | 'all'>('all');
   const [onlyReview, setOnlyReview] = useState(true);
   const [showNoTrades, setShowNoTrades] = useState(false);
   const [strategy, setStrategy] = useState('');
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  const [bucketFilter, setBucketFilter] = useState<BucketFilter>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
+
 
   const reviewQ = useQuery({
     queryKey: ['label-review', labelFilter, onlyReview, strategy],
