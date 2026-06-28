@@ -785,7 +785,37 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
+                            <div className="mt-3 flex justify-end">
+                              <button
+                                className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setBacktestPrefill({
+                                    symbol: r.symbol,
+                                    admission_result_id: r.id,
+                                    admission_run_id: activeRunId,
+                                    screener_snapshot: {
+                                      robustness: r.score,
+                                      historical_trend_quality: r.historical_trend_quality,
+                                      htq_components: r.htq_components,
+                                      current_momentum_score: r.current_momentum_score,
+                                      turnover_24h: r.turnover_24h,
+                                      turnover_7d_median: (r as any).turnover_7d_median ?? null,
+                                      open_interest_value: r.open_interest_value,
+                                      spread_bps: r.spread_bps,
+                                      listing_age_days: r.listing_age_days,
+                                      strategy_fit_score: r.strategy_fit_score,
+                                      htq_lookback_days: r.htq_lookback_days,
+                                      htq_mode: r.htq_mode,
+                                    },
+                                  });
+                                }}
+                              >
+                                + Add Backtest Result
+                              </button>
+                            </div>
                           </td>
+
 
                         </tr>
                       )}
