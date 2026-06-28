@@ -27,6 +27,15 @@ const StartInput = z.object({
   htqLookbackDays: z.number().int().min(5).max(90).optional(),
 });
 
+function strategyFitLabel(score: number | null | undefined): string {
+  if (score == null || !Number.isFinite(score)) return 'unknown';
+  if (score >= 80) return 'strong';
+  if (score >= 65) return 'acceptable';
+  if (score >= 50) return 'borderline';
+  return 'weak';
+}
+
+
 
 export const startAdmissionRun = createServerFn({ method: 'POST' })
   .middleware([requireSupabaseAuth])
