@@ -7,8 +7,6 @@ import {
   fetchCoinGeckoMarkets,
   fetchDailyKline,
   fetchHourlyKline,
-  fetch5mKline,
-  fetch15mKline,
   buildMetrics,
   pMapLimit,
   computeAdmissionScore,
@@ -16,6 +14,8 @@ import {
   type AdmissionWeights,
 } from './admission.server';
 import { computeTrendQuality } from './trend-quality';
+import { computeHistoricalTrendQuality } from './historical-trend-quality';
+import { fetchKlinePaginated } from './kline-paginate';
 
 const StartInput = z.object({
   profileId: z.string().uuid(),
@@ -23,7 +23,10 @@ const StartInput = z.object({
   skipWickAnalysis: z.boolean().default(false),
   mode: z.enum(['strict', 'trend_adjusted']).default('strict'),
   includeTrendQuality: z.boolean().optional(),
+  /** Historical Trend Quality lookback in days. 14 / 30 / 90, or 5/10 for emerging. */
+  htqLookbackDays: z.number().int().min(5).max(90).optional(),
 });
+
 
 export const startAdmissionRun = createServerFn({ method: 'POST' })
   .middleware([requireSupabaseAuth])
