@@ -84,6 +84,13 @@ export type Database = {
         Row: {
           auto_pause_on_critical_invariant: boolean
           auto_snapshot_signal_context_enabled: boolean
+          calibration_default_strategy_version: string | null
+          calibration_half_life_days: number
+          calibration_include_default: boolean
+          calibration_k: number
+          calibration_min_neighbors_high: number
+          calibration_min_neighbors_medium: number
+          calibration_ocr_model: string
           chaos_config: Json
           created_at: string
           dedupe_window_seconds: number
@@ -127,6 +134,13 @@ export type Database = {
         Insert: {
           auto_pause_on_critical_invariant?: boolean
           auto_snapshot_signal_context_enabled?: boolean
+          calibration_default_strategy_version?: string | null
+          calibration_half_life_days?: number
+          calibration_include_default?: boolean
+          calibration_k?: number
+          calibration_min_neighbors_high?: number
+          calibration_min_neighbors_medium?: number
+          calibration_ocr_model?: string
           chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
@@ -170,6 +184,13 @@ export type Database = {
         Update: {
           auto_pause_on_critical_invariant?: boolean
           auto_snapshot_signal_context_enabled?: boolean
+          calibration_default_strategy_version?: string | null
+          calibration_half_life_days?: number
+          calibration_include_default?: boolean
+          calibration_k?: number
+          calibration_min_neighbors_high?: number
+          calibration_min_neighbors_medium?: number
+          calibration_ocr_model?: string
           chaos_config?: Json
           created_at?: string
           dedupe_window_seconds?: number
@@ -597,6 +618,15 @@ export type Database = {
         Row: {
           admission_mode: string | null
           admission_reason: string | null
+          calibrated_strategy_fit: number | null
+          calibration_computed_at: string | null
+          calibration_confidence: string | null
+          calibration_label: string | null
+          calibration_neighbors: Json | null
+          calibration_reason: string | null
+          calibration_score: number | null
+          calibration_status: string | null
+          calibration_strategy_version: string | null
           coingecko_id: string | null
           components: Json | null
           created_at: string
@@ -636,6 +666,15 @@ export type Database = {
         Insert: {
           admission_mode?: string | null
           admission_reason?: string | null
+          calibrated_strategy_fit?: number | null
+          calibration_computed_at?: string | null
+          calibration_confidence?: string | null
+          calibration_label?: string | null
+          calibration_neighbors?: Json | null
+          calibration_reason?: string | null
+          calibration_score?: number | null
+          calibration_status?: string | null
+          calibration_strategy_version?: string | null
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
@@ -675,6 +714,15 @@ export type Database = {
         Update: {
           admission_mode?: string | null
           admission_reason?: string | null
+          calibrated_strategy_fit?: number | null
+          calibration_computed_at?: string | null
+          calibration_confidence?: string | null
+          calibration_label?: string | null
+          calibration_neighbors?: Json | null
+          calibration_reason?: string | null
+          calibration_score?: number | null
+          calibration_status?: string | null
+          calibration_strategy_version?: string | null
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
@@ -791,6 +839,144 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "coin_admission_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coin_backtest_results: {
+        Row: {
+          admission_result_id: string | null
+          admission_run_id: string | null
+          auto_suggested_label: string | null
+          avg_bars_in_trade: number | null
+          avg_pnl_pct: number | null
+          candles_tested: number
+          created_at: string
+          expected_payoff_usd: number | null
+          extracted_metrics: Json | null
+          extracted_raw_text: string | null
+          extraction_confidence: number | null
+          extraction_source: string
+          extraction_status: string
+          field_confidences: Json | null
+          id: string
+          label: string
+          largest_loss_usd: number | null
+          largest_profit_usd: number | null
+          lookback_equivalent_days: number | null
+          losing_trades_count: number | null
+          max_drawdown_pct: number | null
+          max_drawdown_usd: number | null
+          net_profit_pct: number | null
+          net_profit_usd: number | null
+          notes: string | null
+          num_trades: number | null
+          profit_factor: number | null
+          profitable_trades_count: number | null
+          screener_snapshot: Json | null
+          screenshot_storage_path: string | null
+          sharpe_ratio: number | null
+          strategy_version: string
+          symbol: string
+          test_date: string
+          timeframe: string
+          updated_at: string
+          user_id: string
+          win_rate_pct: number | null
+        }
+        Insert: {
+          admission_result_id?: string | null
+          admission_run_id?: string | null
+          auto_suggested_label?: string | null
+          avg_bars_in_trade?: number | null
+          avg_pnl_pct?: number | null
+          candles_tested?: number
+          created_at?: string
+          expected_payoff_usd?: number | null
+          extracted_metrics?: Json | null
+          extracted_raw_text?: string | null
+          extraction_confidence?: number | null
+          extraction_source?: string
+          extraction_status?: string
+          field_confidences?: Json | null
+          id?: string
+          label: string
+          largest_loss_usd?: number | null
+          largest_profit_usd?: number | null
+          lookback_equivalent_days?: number | null
+          losing_trades_count?: number | null
+          max_drawdown_pct?: number | null
+          max_drawdown_usd?: number | null
+          net_profit_pct?: number | null
+          net_profit_usd?: number | null
+          notes?: string | null
+          num_trades?: number | null
+          profit_factor?: number | null
+          profitable_trades_count?: number | null
+          screener_snapshot?: Json | null
+          screenshot_storage_path?: string | null
+          sharpe_ratio?: number | null
+          strategy_version: string
+          symbol: string
+          test_date?: string
+          timeframe?: string
+          updated_at?: string
+          user_id: string
+          win_rate_pct?: number | null
+        }
+        Update: {
+          admission_result_id?: string | null
+          admission_run_id?: string | null
+          auto_suggested_label?: string | null
+          avg_bars_in_trade?: number | null
+          avg_pnl_pct?: number | null
+          candles_tested?: number
+          created_at?: string
+          expected_payoff_usd?: number | null
+          extracted_metrics?: Json | null
+          extracted_raw_text?: string | null
+          extraction_confidence?: number | null
+          extraction_source?: string
+          extraction_status?: string
+          field_confidences?: Json | null
+          id?: string
+          label?: string
+          largest_loss_usd?: number | null
+          largest_profit_usd?: number | null
+          lookback_equivalent_days?: number | null
+          losing_trades_count?: number | null
+          max_drawdown_pct?: number | null
+          max_drawdown_usd?: number | null
+          net_profit_pct?: number | null
+          net_profit_usd?: number | null
+          notes?: string | null
+          num_trades?: number | null
+          profit_factor?: number | null
+          profitable_trades_count?: number | null
+          screener_snapshot?: Json | null
+          screenshot_storage_path?: string | null
+          sharpe_ratio?: number | null
+          strategy_version?: string
+          symbol?: string
+          test_date?: string
+          timeframe?: string
+          updated_at?: string
+          user_id?: string
+          win_rate_pct?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coin_backtest_results_admission_result_id_fkey"
+            columns: ["admission_result_id"]
+            isOneToOne: false
+            referencedRelation: "coin_admission_results"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coin_backtest_results_admission_run_id_fkey"
+            columns: ["admission_run_id"]
+            isOneToOne: false
+            referencedRelation: "coin_admission_runs"
             referencedColumns: ["id"]
           },
         ]

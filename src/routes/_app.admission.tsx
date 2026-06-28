@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { startAdmissionRun } from '@/lib/admission/admission.functions';
 import { PageHeader, Card, EmptyState } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { BacktestResultDialog, type BacktestDialogPrefill } from '@/components/calibration/BacktestResultDialog';
 
 const COLUMN_TOOLTIPS: Record<string, string> = {
   Symbol: 'Bybit perp-symbol (LinearPerpetual USDT).',
@@ -238,6 +239,8 @@ function AdmissionPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
+  const [includeCalibration, setIncludeCalibration] = useState(true);
+  const [backtestPrefill, setBacktestPrefill] = useState<BacktestDialogPrefill | null>(null);
 
   const toggleSort = (k: SortKey) => {
     setSort((prev) => prev.key === k
@@ -308,6 +311,7 @@ function AdmissionPage() {
           mode,
           includeTrendQuality: includeTrend,
           htqLookbackDays: lookback,
+          includeCalibration,
         },
       });
     },
@@ -468,6 +472,14 @@ function AdmissionPage() {
                 />
                 Inkluder Trend Quality
               </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={includeCalibration}
+                  onChange={(e) => setIncludeCalibration(e.target.checked)}
+                />
+                Inkluder Calibration (kNN)
+              </label>
             </div>
             <div className="flex items-end">
               <button
@@ -502,6 +514,17 @@ function AdmissionPage() {
               <strong>{startRun.data.watchlist}</strong> watchlist /{' '}
               <strong>{startRun.data.trend_candidate}</strong> trend candidate /{' '}
               <strong>{startRun.data.rejected}</strong> rejected
+              {startRun.data.calibration && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Calibration: {startRun.data.calibration.ok} ok / {startRun.data.calibration.unavailable} unavailable ·{' '}
+                  {startRun.data.calibration.used} observations brukt
+                </div>
+              )}
+              {startRun.data.calibration_error && (
+                <div className="mt-1 text-xs text-yellow-700">
+                  Calibration feilet (admission fullført): {startRun.data.calibration_error}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -762,7 +785,37 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
+                            <div className="mt-3 flex justify-end">
+                              <button
+                                className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setBacktestPrefill({
+                                    symbol: r.symbol,
+                                    admission_result_id: r.id,
+                                    admission_run_id: activeRunId,
+                                    screener_snapshot: {
+                                      robustness: r.score,
+                                      historical_trend_quality: r.historical_trend_quality,
+                                      htq_components: r.htq_components,
+                                      current_momentum_score: r.current_momentum_score,
+                                      turnover_24h: r.turnover_24h,
+                                      turnover_7d_median: (r as any).turnover_7d_median ?? null,
+                                      open_interest_value: r.open_interest_value,
+                                      spread_bps: r.spread_bps,
+                                      listing_age_days: r.listing_age_days,
+                                      strategy_fit_score: r.strategy_fit_score,
+                                      htq_lookback_days: r.htq_lookback_days,
+                                      htq_mode: r.htq_mode,
+                                    },
+                                  });
+                                }}
+                              >
+                                + Add Backtest Result
+                              </button>
+                            </div>
                           </td>
+
 
                         </tr>
                       )}
@@ -776,6 +829,16 @@ function AdmissionPage() {
 
         )}
       </Card>
+
+      <BacktestResultDialog
+        open={!!backtestPrefill}
+        onOpenChange={(o) => { if (!o) setBacktestPrefill(null); }}
+        prefill={backtestPrefill ?? undefined}
+        onSaved={() => {
+          setBacktestPrefill(null);
+          qc.invalidateQueries({ queryKey: ['admission-results'] });
+        }}
+      />
     </div>
   );
 }
