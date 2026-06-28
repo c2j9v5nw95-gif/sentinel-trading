@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -94,6 +94,15 @@ function LoginPage() {
             ? "Need an operator account? Sign up"
             : "Have an account? Sign in"}
         </button>
+
+        {mode === "sign_in" && (
+          <Link
+            to="/forgot-password"
+            className="mt-2 block text-center text-xs text-muted-foreground hover:text-foreground"
+          >
+            Glemt passord?
+          </Link>
+        )}
       </form>
     </div>
   );
