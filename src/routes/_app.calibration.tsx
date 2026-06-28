@@ -291,10 +291,22 @@ function ReviewRow({
           {row.label_source ?? 'auto'}
         </td>
         <td className="py-1 pr-2 text-right">{fmtNum(row.backtest_quality_score, 0)}</td>
-        <td className="py-1 pr-2 text-right">{fmtNum(row.net_profit_pct, 1)}</td>
-        <td className="py-1 pr-2 text-right">{fmtNum(row.normalized_net_profit_pct, 1)}</td>
-        <td className="py-1 pr-2 text-right">{fmtNum(row.profit_factor, 2)}</td>
         <td className="py-1 pr-2 text-right">{row.num_trades ?? '—'}</td>
+        <td className="py-1 pr-2 text-right font-mono text-[11px]">
+          {row.winning_trades_count != null || row.losing_trades_count != null ? (
+            <>
+              <span className="text-green-700">{row.winning_trades_count ?? '–'}</span>
+              <span className="text-muted-foreground"> / </span>
+              <span className="text-red-700">{row.losing_trades_count ?? '–'}</span>
+            </>
+          ) : '—'}
+        </td>
+        <td className="py-1 pr-2 text-right">{fmtNum(row.win_rate_pct, 1)}</td>
+        <td className={`py-1 pr-2 text-right ${row.net_profit_pct != null && row.net_profit_pct < 0 ? 'text-red-700' : row.net_profit_pct != null && row.net_profit_pct > 0 ? 'text-green-700' : ''}`}>{fmtNum(row.net_profit_pct, 1)}</td>
+        <td className="py-1 pr-2 text-right">{fmtNum(row.normalized_net_profit_pct, 1)}</td>
+        <td className={`py-1 pr-2 text-right ${row.net_profit_usd != null && row.net_profit_usd < 0 ? 'text-red-700' : row.net_profit_usd != null && row.net_profit_usd > 0 ? 'text-green-700' : ''}`}>{fmtNum(row.net_profit_usd, 0)}</td>
+        <td className="py-1 pr-2 text-right">{fmtNum(row.max_drawdown_pct, 1)}</td>
+        <td className="py-1 pr-2 text-right">{fmtNum(row.profit_factor, 2)}</td>
         <td className="py-1 pr-2">
           {row.needs_review ? (
             <span className="rounded px-1.5 py-0.5 text-[10px] bg-yellow-500/20 text-yellow-700" title={row.needs_review_reason ?? ''}>
@@ -308,7 +320,7 @@ function ReviewRow({
       </tr>
       {open && (
         <tr className="border-b bg-muted/10">
-          <td colSpan={12} className="p-3">
+          <td colSpan={17} className="p-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div>
                 <div className="font-semibold mb-1">Classification summary</div>
