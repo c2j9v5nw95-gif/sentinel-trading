@@ -586,12 +586,15 @@ export type Database = {
       }
       coin_admission_results: {
         Row: {
+          admission_mode: string | null
+          admission_reason: string | null
           coingecko_id: string | null
           components: Json | null
           created_at: string
           extreme_wick_count: number | null
           fetch_error: string | null
           funding_rate: number | null
+          hard_kill_rules: string[] | null
           id: string
           kill_rules_triggered: string[] | null
           listing_age_days: number | null
@@ -601,21 +604,28 @@ export type Database = {
           run_id: string
           score: number | null
           slippage_bps_est: number | null
+          soft_failures: string[] | null
           spread_bps: number | null
           status: string
+          strategy_fit_score: number | null
           symbol: string
+          trend_components: Json | null
+          trend_score: number | null
           turnover_24h: number | null
           turnover_30d_median: number | null
           turnover_7d_median: number | null
           wick_risk_score: number | null
         }
         Insert: {
+          admission_mode?: string | null
+          admission_reason?: string | null
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
           extreme_wick_count?: number | null
           fetch_error?: string | null
           funding_rate?: number | null
+          hard_kill_rules?: string[] | null
           id?: string
           kill_rules_triggered?: string[] | null
           listing_age_days?: number | null
@@ -625,21 +635,28 @@ export type Database = {
           run_id: string
           score?: number | null
           slippage_bps_est?: number | null
+          soft_failures?: string[] | null
           spread_bps?: number | null
           status: string
+          strategy_fit_score?: number | null
           symbol: string
+          trend_components?: Json | null
+          trend_score?: number | null
           turnover_24h?: number | null
           turnover_30d_median?: number | null
           turnover_7d_median?: number | null
           wick_risk_score?: number | null
         }
         Update: {
+          admission_mode?: string | null
+          admission_reason?: string | null
           coingecko_id?: string | null
           components?: Json | null
           created_at?: string
           extreme_wick_count?: number | null
           fetch_error?: string | null
           funding_rate?: number | null
+          hard_kill_rules?: string[] | null
           id?: string
           kill_rules_triggered?: string[] | null
           listing_age_days?: number | null
@@ -649,9 +666,13 @@ export type Database = {
           run_id?: string
           score?: number | null
           slippage_bps_est?: number | null
+          soft_failures?: string[] | null
           spread_bps?: number | null
           status?: string
+          strategy_fit_score?: number | null
           symbol?: string
+          trend_components?: Json | null
+          trend_score?: number | null
           turnover_24h?: number | null
           turnover_30d_median?: number | null
           turnover_7d_median?: number | null
@@ -669,10 +690,12 @@ export type Database = {
       }
       coin_admission_runs: {
         Row: {
+          admission_mode: string
           approved_n: number | null
           error: string | null
           finished_at: string | null
           id: string
+          include_trend_quality: boolean
           notes: string | null
           profile_id: string | null
           profile_name: string
@@ -686,10 +709,12 @@ export type Database = {
           watchlist_n: number | null
         }
         Insert: {
+          admission_mode?: string
           approved_n?: number | null
           error?: string | null
           finished_at?: string | null
           id?: string
+          include_trend_quality?: boolean
           notes?: string | null
           profile_id?: string | null
           profile_name: string
@@ -703,10 +728,12 @@ export type Database = {
           watchlist_n?: number | null
         }
         Update: {
+          admission_mode?: string
           approved_n?: number | null
           error?: string | null
           finished_at?: string | null
           id?: string
+          include_trend_quality?: boolean
           notes?: string | null
           profile_id?: string | null
           profile_name?: string
