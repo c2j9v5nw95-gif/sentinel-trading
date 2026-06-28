@@ -1360,7 +1360,7 @@ function AdmissionPage() {
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={24} className="p-3">
+                          <td colSpan={25} className="p-3">
 
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
