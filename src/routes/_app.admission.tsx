@@ -111,7 +111,11 @@ type SortKey =
   | 'last_bt_class'
   | 'last_bt_date'
   | 'last_bt_ver'
-  | 'bt_count';
+  | 'bt_count'
+  | 'bt_score'
+  | 'calib_score'
+  | 'calibrated_fit'
+  | 'priority';
 
 const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
 const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
@@ -120,6 +124,7 @@ const LABEL_ORDER: Record<string, number> = {
   profitable: 1,
   marginal: 2,
   rejected_backtest: 3,
+  no_trades: 4,
 };
 
 function sortValue(r: Result, k: SortKey): number | string | null {
@@ -144,6 +149,12 @@ function sortValue(r: Result, k: SortKey): number | string | null {
     case 'last_bt_date': return r.last_backtest_date ?? '';
     case 'last_bt_ver': return r.last_backtest_strategy_version ?? '';
     case 'bt_count': return r.backtest_count ?? 0;
+    case 'bt_score':
+      // no_trades treated as null (sinks to bottom), so it never looks "weak".
+      return r.last_backtest_label === 'no_trades' ? null : (r.last_bt_score ?? null);
+    case 'calib_score': return r.calibration_score ?? null;
+    case 'calibrated_fit': return r.calibrated_strategy_fit ?? null;
+    case 'priority': return r.candidate_priority_score ?? null;
   }
 }
 
@@ -152,7 +163,74 @@ const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   htq: 'desc', momentum: 'desc', rank: 'asc', turnover_24h: 'desc', oi: 'desc',
   spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
   last_bt_class: 'asc', last_bt_date: 'desc', last_bt_ver: 'asc', bt_count: 'desc',
+  bt_score: 'desc', calib_score: 'desc', calibrated_fit: 'desc', priority: 'desc',
 };
+
+// ---- Backtest Quality + Candidate Priority helpers ---------------------------
+
+function btScoreBucket(score: number): 'strong' | 'good' | 'mixed' | 'weak' {
+  if (score >= 80) return 'strong';
+  if (score >= 65) return 'good';
+  if (score >= 40) return 'mixed';
+  return 'weak';
+}
+
+function btBucketBadgeClass(b: 'strong' | 'good' | 'mixed' | 'weak' | 'no_setup'): string {
+  switch (b) {
+    case 'strong': return 'bg-emerald-500/20 text-emerald-700';
+    case 'good': return 'bg-green-500/20 text-green-700';
+    case 'mixed': return 'bg-yellow-500/20 text-yellow-700';
+    case 'weak': return 'bg-red-500/20 text-red-700';
+    case 'no_setup': return 'bg-slate-400/20 text-slate-700';
+  }
+}
+
+function btClassDisplay(label: string | null | undefined): string {
+  if (!label) return '—';
+  if (label === 'no_trades') return 'No Setup';
+  return label;
+}
+
+/**
+ * Freshness / review-quality proxy used in Candidate Priority blend.
+ * Pure review trust signal — does not include calendar age in v1.
+ */
+function reviewQuality(r: Result): number {
+  if (r.last_label_source === 'manual_override') return 100;
+  if (r.last_needs_review) return 40;
+  if (r.last_label_source === 'auto') return 80;
+  return 60;
+}
+
+/**
+ * Candidate Priority Score (v1) — pure surfacing/sort metric.
+ * NEVER feeds into admission status or execution.
+ */
+function computeCandidatePriority(r: Result): number | null {
+  const fit = r.calibrated_strategy_fit ?? r.strategy_fit_score ?? null;
+  const calib = r.calibration_score ?? null;
+  const hasCalib = calib != null;
+  const isNoTrades = r.last_backtest_label === 'no_trades';
+  const btScore = isNoTrades ? null : (r.last_bt_score ?? null);
+  const hasBT = btScore != null;
+  const trusted = hasBT && !(r.last_needs_review && r.last_label_source === 'auto');
+  const rq = reviewQuality(r);
+
+  if (!hasCalib) {
+    return r.strategy_fit_score ?? null;
+  }
+  if (hasBT && trusted) {
+    if (fit == null) return null;
+    return 0.45 * fit + 0.30 * calib! + 0.15 * btScore! + 0.10 * rq;
+  }
+  if (hasBT && !trusted) {
+    if (fit == null) return null;
+    return 0.50 * fit + 0.35 * calib! + 0.075 * btScore! + 0.075 * rq;
+  }
+  // No backtest OR no_trades → use calibration + fit only
+  if (fit == null) return null;
+  return 0.60 * fit + 0.40 * calib!;
+}
 
 
 export const Route = createFileRoute('/_app/admission')({
