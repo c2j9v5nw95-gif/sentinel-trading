@@ -178,6 +178,7 @@ export function BacktestResultDialog({
     if (prefill?.candles_tested) fresh.candles_tested = String(prefill.candles_tested);
     setForm(fresh);
     setLabelTouched(false);
+    setNoTrades(false);
     setError(null);
     setStage('idle');
     setStoragePath(null);
