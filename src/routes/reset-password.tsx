@@ -21,13 +21,11 @@ function ResetPasswordPage() {
 
     const url = new URL(window.location.href);
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const readParam = (key: string) => url.searchParams.get(key) || hash.get(key);
+    const cleanUrl = () => window.history.replaceState({}, "", window.location.pathname);
 
-    // Sjekk for feil fra Supabase (utløpt/ugyldig lenke)
     const errDesc =
-      url.searchParams.get("error_description") ||
-      hash.get("error_description") ||
-      url.searchParams.get("error") ||
-      hash.get("error");
+      readParam("error_description") || readParam("error_code") || readParam("error");
     if (errDesc) {
       setLinkError(decodeURIComponent(errDesc).replace(/\+/g, " "));
       return;
@@ -45,18 +43,49 @@ function ResetPasswordPage() {
     let unsub: (() => void) | undefined;
 
     (async () => {
+      // Recovery links can arrive as either PKCE (?code=...), token_hash,
+      // or implicit hash tokens (#access_token=...&refresh_token=...).
+      const accessToken = readParam("access_token");
+      const refreshToken = readParam("refresh_token");
+      if (accessToken && refreshToken) {
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (error) {
+          setLinkError(error.message);
+          return;
+        }
+        cleanUrl();
+        setReady(true);
+        return;
+      }
+
+      const tokenHash = readParam("token_hash");
+      const type = readParam("type");
+      if (tokenHash && type === "recovery") {
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: "recovery",
+        });
+        if (error) {
+          setLinkError(error.message);
+          return;
+        }
+        cleanUrl();
+        setReady(true);
+        return;
+      }
+
       // PKCE flow: ?code=...
-      const code = url.searchParams.get("code");
+      const code = readParam("code");
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) {
-          setLinkError(
-            "Reset-lenken er ugyldig eller utløpt. Be om en ny fra login-siden.",
-          );
+          setLinkError(error.message);
           return;
         }
-        // Rydd opp i URL
-        window.history.replaceState({}, "", window.location.pathname);
+        cleanUrl();
         setReady(true);
         return;
       }
