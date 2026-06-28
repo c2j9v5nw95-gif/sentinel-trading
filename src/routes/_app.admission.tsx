@@ -238,6 +238,8 @@ function AdmissionPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
+  const [includeCalibration, setIncludeCalibration] = useState(true);
+  const [backtestPrefill, setBacktestPrefill] = useState<BacktestDialogPrefill | null>(null);
 
   const toggleSort = (k: SortKey) => {
     setSort((prev) => prev.key === k
