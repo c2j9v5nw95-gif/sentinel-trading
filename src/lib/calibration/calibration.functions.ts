@@ -726,9 +726,9 @@ export const listLatestBacktestPerSymbol = createServerFn({ method: 'POST' })
           last_needs_review_reason: r.needs_review_reason ?? null,
           last_bt_score: r.backtest_quality_score != null ? Number(r.backtest_quality_score) : null,
           last_summary: r.classification_summary ?? null,
-          last_positive_drivers: r.classification_positive_drivers ?? null,
-          last_negative_drivers: r.classification_negative_drivers ?? null,
-          last_safety_overrides: r.classification_safety_overrides ?? null,
+      last_positive_drivers: (r.classification_positive_drivers ?? null) as any,
+      last_negative_drivers: (r.classification_negative_drivers ?? null) as any,
+      last_safety_overrides: (r.classification_safety_overrides ?? null) as string[] | null,
           last_net_profit_pct: r.net_profit_pct != null ? Number(r.net_profit_pct) : null,
           last_normalized_net_profit_pct:
             r.normalized_net_profit_pct != null ? Number(r.normalized_net_profit_pct) : null,
