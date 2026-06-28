@@ -367,7 +367,7 @@ export const createBacktestResult = createServerFn({ method: 'POST' })
     };
     const { data: inserted, error } = await supabase
       .from('coin_backtest_results')
-      .insert(row)
+      .insert(row as any)
 
       .select('*')
       .single();
