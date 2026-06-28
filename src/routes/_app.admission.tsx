@@ -107,8 +107,12 @@ function AdmissionPage() {
   const [onlyTrendCandidates, setOnlyTrendCandidates] = useState(false);
   const [minTrend, setMinTrend] = useState<string>('');
   const [minFit, setMinFit] = useState<string>('');
+  const [classFilter, setClassFilter] = useState<ClassFilter>('all');
+  const [lookback, setLookback] = useState<Lookback>(30);
+  const [confirmLongRun, setConfirmLongRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+
 
   const profilesQ = useQuery({
     queryKey: ['admission-profiles'],
@@ -171,10 +175,12 @@ function AdmissionPage() {
           skipWickAnalysis: skipWick,
           mode,
           includeTrendQuality: includeTrend,
+          htqLookbackDays: lookback,
         },
       });
     },
     onSuccess: (res) => {
+
       setSelectedRunId(res.runId);
       qc.invalidateQueries({ queryKey: ['admission-runs'] });
       qc.invalidateQueries({ queryKey: ['admission-results'] });
@@ -187,14 +193,16 @@ function AdmissionPage() {
     const minFitN = parseFloat(minFit);
     return all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
       if (onlyTrendCandidates && r.status !== 'trend_candidate') return false;
       if (hideHardRejections && (r.hard_kill_rules?.length ?? 0) > 0) return false;
       if (search && !r.symbol.toLowerCase().includes(search.toLowerCase())) return false;
-      if (Number.isFinite(minTrendN) && (r.trend_score ?? -1) < minTrendN) return false;
+      if (Number.isFinite(minTrendN) && (r.historical_trend_quality ?? -1) < minTrendN) return false;
       if (Number.isFinite(minFitN) && (r.strategy_fit_score ?? -1) < minFitN) return false;
       return true;
     });
-  }, [resultsQ.data, statusFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit]);
+  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit]);
+
 
   const counts = useMemo(() => {
     const all = resultsQ.data ?? [];
