@@ -181,6 +181,7 @@ type Result = {
   trend_classification: 'trend_friendly' | 'neutral' | 'choppy' | null;
   htq_reason: string | null;
   current_momentum_score: number | null;
+  current_momentum_components: Record<string, number> | null;
   fetch_error: string | null;
 };
 
