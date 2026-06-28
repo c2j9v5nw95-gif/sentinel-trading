@@ -862,6 +862,57 @@ function AdmissionPage() {
             </button>
           ))}
         </div>
+        <div className="flex flex-wrap items-center gap-3 mb-3 text-xs">
+          <span className="text-muted-foreground">Backtest:</span>
+          <label className="flex items-center gap-1">
+            Min BT Score
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="w-16 rounded border bg-background px-1 py-0.5"
+              value={minBtScore}
+              onChange={(e) => setMinBtScore(e.target.value)}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={hideNoTrades} onChange={(e) => setHideNoTrades(e.target.checked)} />
+            Skjul no_trades
+          </label>
+          <span className="ml-2 text-muted-foreground">Review:</span>
+          {(['any', 'only', 'hide'] as const).map((v) => (
+            <button
+              key={v}
+              className={`rounded px-2 py-0.5 ${reviewFilter === v ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              onClick={() => setReviewFilter(v)}
+            >
+              {v === 'any' ? 'alle' : v === 'only' ? 'needs review' : 'hide review'}
+            </button>
+          ))}
+          <span className="ml-2 text-muted-foreground">Source:</span>
+          {(['any', 'manual_override', 'auto'] as const).map((v) => (
+            <button
+              key={v}
+              className={`rounded px-2 py-0.5 ${sourceFilter === v ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              onClick={() => setSourceFilter(v)}
+            >
+              {v === 'any' ? 'alle' : v}
+            </button>
+          ))}
+          <span className="ml-2 text-muted-foreground">BT Class:</span>
+          <select
+            className="rounded border bg-background px-1 py-0.5"
+            value={btClassFilter}
+            onChange={(e) => setBtClassFilter(e.target.value)}
+          >
+            <option value="all">alle</option>
+            <option value="profitable_plus">profitable_plus</option>
+            <option value="profitable">profitable</option>
+            <option value="marginal">marginal</option>
+            <option value="rejected_backtest">rejected_backtest</option>
+            <option value="no_trades">no_trades</option>
+          </select>
+        </div>
 
 
         {!activeRunId ? (
