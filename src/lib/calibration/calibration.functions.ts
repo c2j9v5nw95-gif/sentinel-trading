@@ -445,3 +445,157 @@ export const updateCalibrationConfig = createServerFn({ method: 'POST' })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+/**
+ * Latest backtest observation per symbol (for the calling user), plus total
+ * count. Used by the admission table to render "Last Backtest" columns
+ * without N round-trips. Scoped to small symbol batches (≤ ~300).
+ */
+export const listLatestBacktestPerSymbol = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        symbols: z.array(z.string().min(1).max(40)).min(1).max(500),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: rows, error } = await supabase
+      .from('coin_backtest_results')
+      .select('symbol, test_date, label, strategy_version, created_at')
+      .eq('user_id', userId)
+      .in('symbol', data.symbols)
+      .order('test_date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(5000);
+    if (error) throw new Error(error.message);
+    const map: Record<
+      string,
+      {
+        symbol: string;
+        last_test_date: string | null;
+        last_label: string | null;
+        last_strategy_version: string | null;
+        count: number;
+      }
+    > = {};
+    for (const r of rows ?? []) {
+      const cur = map[r.symbol];
+      if (!cur) {
+        map[r.symbol] = {
+          symbol: r.symbol,
+          last_test_date: r.test_date,
+          last_label: r.label,
+          last_strategy_version: r.strategy_version,
+          count: 1,
+        };
+      } else {
+        cur.count += 1;
+      }
+    }
+    return { per_symbol: map };
+  });
+
+/**
+ * Recalculate calibration for a single admission row (one symbol in one run).
+ * Reuses the same scoring path as a full-run calibration so results stay
+ * consistent. Best-effort: marks the row `unavailable` on failure rather than
+ * throwing to the UI.
+ */
+export const recalcCalibrationForSymbol = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        run_id: z.string().uuid(),
+        symbol: z.string().min(1).max(40),
+        strategy_version: z.string().optional(),
+      })
+      .parse(i),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const cfg = await loadCalibrationConfig(supabase);
+    const observations = await loadObservations(
+      supabase,
+      data.strategy_version ?? null,
+    );
+    const featureRows = observations.map((o) => o.features);
+    const medians = computeFeatureMedians(featureRows);
+    const stds = computeFeatureStds(featureRows, medians);
+
+    const { data: row, error } = await supabase
+      .from('coin_admission_results')
+      .select(
+        'id, symbol, score, historical_trend_quality, htq_components, current_momentum_score, turnover_24h, turnover_7d_median, open_interest_value, spread_bps, listing_age_days, strategy_fit_score',
+      )
+      .eq('run_id', data.run_id)
+      .eq('symbol', data.symbol)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row) throw new Error('admission_row_not_found');
+
+    let res: CalibrationResult | null = null;
+    let status: 'ok' | 'unavailable' = 'ok';
+    let reason: string | null = null;
+    try {
+      if (observations.length === 0) {
+        status = 'unavailable';
+        reason = 'no_observations';
+      } else {
+        const candFeatures = extractFeatures({
+          robustness: row.score,
+          historical_trend_quality: row.historical_trend_quality,
+          htq_components: row.htq_components as any,
+          current_momentum_score: row.current_momentum_score,
+          turnover_24h: row.turnover_24h,
+          turnover_7d_median: row.turnover_7d_median,
+          open_interest_value: row.open_interest_value,
+          spread_bps: row.spread_bps,
+          listing_age_days: row.listing_age_days,
+        });
+        res = calibrateCandidate(candFeatures, observations, medians, stds, cfg);
+        if (!res) {
+          status = 'unavailable';
+          reason = 'calibration_empty';
+        }
+      }
+    } catch (err) {
+      status = 'unavailable';
+      reason = `calibration_error:${err instanceof Error ? err.message : String(err)}`;
+    }
+
+    const baseFit = Number(row.strategy_fit_score ?? 0);
+    const calibratedFit =
+      res && Number.isFinite(baseFit)
+        ? Math.max(0, Math.min(100, baseFit * res.fit_multiplier))
+        : null;
+
+    const computedAt = new Date().toISOString();
+    const { error: upErr } = await supabase
+      .from('coin_admission_results')
+      .update({
+        calibration_score: res?.score ?? null,
+        calibration_confidence: res?.confidence ?? null,
+        calibration_label: res?.label ?? null,
+        calibration_neighbors: (res?.neighbors ?? null) as any,
+        calibrated_strategy_fit: calibratedFit,
+        calibration_strategy_version: data.strategy_version ?? null,
+        calibration_status: status,
+        calibration_reason: reason,
+        calibration_computed_at: computedAt,
+      })
+      .eq('id', row.id);
+    if (upErr) throw new Error(upErr.message);
+
+    return {
+      ok: true,
+      status,
+      reason,
+      calibration_score: res?.score ?? null,
+      calibration_label: res?.label ?? null,
+      observations_used: observations.length,
+    };
+  });

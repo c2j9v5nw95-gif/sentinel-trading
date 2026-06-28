@@ -1,11 +1,19 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { startAdmissionRun } from '@/lib/admission/admission.functions';
+import {
+  listLatestBacktestPerSymbol,
+  listBacktestResults,
+  recalcCalibrationForSymbol,
+  getBacktestScreenshotUrl,
+} from '@/lib/calibration/calibration.functions';
 import { PageHeader, Card, EmptyState } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { BacktestResultDialog, type BacktestDialogPrefill } from '@/components/calibration/BacktestResultDialog';
+
 
 const COLUMN_TOOLTIPS: Record<string, string> = {
   Symbol: 'Bybit perp-symbol (LinearPerpetual USDT).',
@@ -24,6 +32,11 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'Hard Kills': 'Brudd som ALDRI kan overstyres (f.eks. for ny, for lav likviditet, ekstreme wicks). Trigger automatisk Rejected.',
   Soft: 'Krav som KAN lempes ved høy HTQ i Trend Adjusted-modus (f.eks. lavere rank/turnover-grenser).',
   Reason: 'Kort menneskelig forklaring på statusen (hvilke regler som slo inn / hvorfor lempet).',
+  'Last BT Class': 'Siste registrerte backtest-label for symbolet (test_date desc, deretter created_at desc).',
+  'Last BT Date': 'Test-dato på siste registrerte backtest (kan være satt manuelt).',
+  'Last BT Ver': 'Strategy version brukt på siste registrerte backtest.',
+  '# BT': 'Antall backtest-observasjoner registrert for dette symbolet (append-only).',
+
 };
 
 function HeaderCell({
@@ -90,10 +103,20 @@ type SortKey =
   | 'wick'
   | 'hard_kills'
   | 'soft'
-  | 'reason';
+  | 'reason'
+  | 'last_bt_class'
+  | 'last_bt_date'
+  | 'last_bt_ver'
+  | 'bt_count';
 
 const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
 const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
+const LABEL_ORDER: Record<string, number> = {
+  profitable_plus: 0,
+  profitable: 1,
+  marginal: 2,
+  rejected_backtest: 3,
+};
 
 function sortValue(r: Result, k: SortKey): number | string | null {
   switch (k) {
@@ -113,6 +136,10 @@ function sortValue(r: Result, k: SortKey): number | string | null {
     case 'hard_kills': return r.hard_kill_rules?.length ?? 0;
     case 'soft': return r.soft_failures?.length ?? 0;
     case 'reason': return r.admission_reason ?? '';
+    case 'last_bt_class': return r.last_backtest_label ? (LABEL_ORDER[r.last_backtest_label] ?? 99) : 99;
+    case 'last_bt_date': return r.last_backtest_date ?? '';
+    case 'last_bt_ver': return r.last_backtest_strategy_version ?? '';
+    case 'bt_count': return r.backtest_count ?? 0;
   }
 }
 
@@ -120,7 +147,9 @@ const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   symbol: 'asc', status: 'asc', class: 'asc', fit: 'desc', robust: 'desc',
   htq: 'desc', momentum: 'desc', rank: 'asc', turnover_24h: 'desc', oi: 'desc',
   spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
+  last_bt_class: 'asc', last_bt_date: 'desc', last_bt_ver: 'asc', bt_count: 'desc',
 };
+
 
 export const Route = createFileRoute('/_app/admission')({
   component: AdmissionPage,
@@ -183,6 +212,15 @@ type Result = {
   current_momentum_score: number | null;
   current_momentum_components: Record<string, number> | null;
   fetch_error: string | null;
+  // Calibration (best-effort, may be absent)
+  calibration_score?: number | null;
+  calibration_label?: string | null;
+  calibration_computed_at?: string | null;
+  // Augmented client-side from listLatestBacktestPerSymbol
+  last_backtest_label?: string | null;
+  last_backtest_date?: string | null;
+  last_backtest_strategy_version?: string | null;
+  backtest_count?: number;
 };
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
@@ -300,6 +338,21 @@ function AdmissionPage() {
     },
   });
 
+  // Augment results with the latest backtest observation per symbol. Single
+  // batch round-trip per run, refreshed when the symbol set changes or after
+  // a save (key invalidation by ['backtest-latest-map']).
+  const symbolList = useMemo(
+    () => (resultsQ.data ?? []).map((r) => r.symbol),
+    [resultsQ.data],
+  );
+  const latestBtQ = useQuery({
+    enabled: symbolList.length > 0,
+    queryKey: ['backtest-latest-map', activeRunId, symbolList.length],
+    queryFn: () => listLatestBacktestPerSymbol({ data: { symbols: symbolList } }),
+  });
+
+
+
   const startRun = useMutation({
     mutationFn: async () => {
       if (!selectedProfileId) throw new Error('no_profile');
@@ -325,7 +378,17 @@ function AdmissionPage() {
   });
 
   const filteredResults = useMemo(() => {
-    const all = resultsQ.data ?? [];
+    const map = latestBtQ.data?.per_symbol ?? {};
+    const all = (resultsQ.data ?? []).map((r) => {
+      const m = map[r.symbol];
+      return {
+        ...r,
+        last_backtest_label: m?.last_label ?? null,
+        last_backtest_date: m?.last_test_date ?? null,
+        last_backtest_strategy_version: m?.last_strategy_version ?? null,
+        backtest_count: m?.count ?? 0,
+      } as Result;
+    });
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
     const filtered = all.filter((r) => {
@@ -351,7 +414,7 @@ function AdmissionPage() {
       return String(av).localeCompare(String(bv)) * dir;
     });
     return sorted;
-  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, sort]);
+  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, sort]);
 
 
   const counts = useMemo(() => {
@@ -680,9 +743,14 @@ function AdmissionPage() {
                   <HeaderCell label="Hard Kills" sortKey="hard_kills" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Soft" sortKey="soft" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Reason" sortKey="reason" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Last BT Class" sortKey="last_bt_class" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Last BT Date" sortKey="last_bt_date" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Last BT Ver" sortKey="last_bt_ver" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="# BT" align="right" sortKey="bt_count" activeSort={sort} onSort={toggleSort} />
 
                 </tr>
               </thead>
+
 
 
               <tbody>
@@ -734,11 +802,22 @@ function AdmissionPage() {
                         <td className="py-1 pr-2 text-xs max-w-[200px] truncate" title={r.admission_reason ?? ''}>
                           {r.admission_reason ?? '—'}
                         </td>
+                        <td className="py-1 pr-2 text-xs">
+                          {r.last_backtest_label ? (
+                            <span className="rounded bg-muted px-1.5 py-0.5">{r.last_backtest_label}</span>
+                          ) : '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-xs font-mono text-muted-foreground">{r.last_backtest_date ?? '—'}</td>
+                        <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.last_backtest_strategy_version ?? ''}>
+                          {r.last_backtest_strategy_version ?? '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right">{r.backtest_count ?? 0}</td>
                       </tr>
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={17} className="p-3">
+                          <td colSpan={20} className="p-3">
+
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
                                 <h4 className="font-semibold mb-1">Robustness components</h4>
@@ -797,7 +876,17 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
-                            <div className="mt-3 flex justify-end">
+                            <BacktestHistorySection symbol={r.symbol} />
+                            <div className="mt-3 flex flex-wrap justify-end gap-2">
+                              {activeRunId && (
+                                <RecalcCalibrationButton
+                                  runId={activeRunId}
+                                  symbol={r.symbol}
+                                  onDone={() =>
+                                    qc.invalidateQueries({ queryKey: ['admission-results'] })
+                                  }
+                                />
+                              )}
                               <button
                                 className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-muted"
                                 onClick={(e) => {
@@ -826,6 +915,7 @@ function AdmissionPage() {
                                 + Add Backtest Result
                               </button>
                             </div>
+
                           </td>
 
 
@@ -846,11 +936,168 @@ function AdmissionPage() {
         open={!!backtestPrefill}
         onOpenChange={(o) => { if (!o) setBacktestPrefill(null); }}
         prefill={backtestPrefill ?? undefined}
-        onSaved={() => {
+        onSaved={(info) => {
           setBacktestPrefill(null);
           qc.invalidateQueries({ queryKey: ['admission-results'] });
+          qc.invalidateQueries({ queryKey: ['backtest-latest-map'] });
+          if (info?.symbol) {
+            qc.invalidateQueries({ queryKey: ['backtest-history', info.symbol] });
+          } else {
+            qc.invalidateQueries({ queryKey: ['backtest-history'] });
+          }
+          qc.invalidateQueries({ queryKey: ['calibration-strategy-versions'] });
         }}
       />
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Expanded-row helpers
+// ---------------------------------------------------------------------------
+
+function fmtTs(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return ts;
+  }
+}
+
+function BacktestHistorySection({ symbol }: { symbol: string }) {
+  const historyQ = useQuery({
+    queryKey: ['backtest-history', symbol],
+    queryFn: () => listBacktestResults({ data: { symbol, limit: 100 } }),
+    enabled: !!symbol,
+  });
+
+  if (historyQ.isLoading) {
+    return <p className="mt-3 text-xs text-muted-foreground">Laster backtest-historikk…</p>;
+  }
+  const rows = historyQ.data?.rows ?? [];
+  if (rows.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-muted-foreground">
+        Ingen backtest-observasjoner registrert for {symbol} ennå.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded border bg-background/60 p-2">
+      <div className="mb-1 text-xs font-semibold">
+        Backtest History ({rows.length} observasjon{rows.length === 1 ? '' : 'er'})
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-muted-foreground border-b">
+              <th className="py-0.5 pr-2">Test Date</th>
+              <th className="py-0.5 pr-2">Label</th>
+              <th className="py-0.5 pr-2">Strategy</th>
+              <th className="py-0.5 pr-2 text-right">Net %</th>
+              <th className="py-0.5 pr-2 text-right">DD %</th>
+              <th className="py-0.5 pr-2 text-right">PF</th>
+              <th className="py-0.5 pr-2 text-right">Trades</th>
+              <th className="py-0.5 pr-2">Source</th>
+              <th className="py-0.5 pr-2">Saved</th>
+              <th className="py-0.5 pr-2">Screenshot</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row: any) => (
+              <tr key={row.id} className="border-b last:border-b-0">
+                <td className="py-0.5 pr-2 font-mono">{row.test_date}</td>
+                <td className="py-0.5 pr-2">
+                  <span className="rounded bg-muted px-1.5 py-0.5">{row.label}</span>
+                </td>
+                <td className="py-0.5 pr-2 text-muted-foreground">{row.strategy_version}</td>
+                <td className="py-0.5 pr-2 text-right">{fmtNum(row.net_profit_pct, 1)}</td>
+                <td className="py-0.5 pr-2 text-right">{fmtNum(row.max_drawdown_pct, 1)}</td>
+                <td className="py-0.5 pr-2 text-right">{fmtNum(row.profit_factor, 2)}</td>
+                <td className="py-0.5 pr-2 text-right">{row.num_trades ?? '—'}</td>
+                <td className="py-0.5 pr-2">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${row.extraction_source === 'screenshot_ocr' ? 'bg-blue-500/15 text-blue-700' : 'bg-muted'}`}>
+                    {row.extraction_source === 'screenshot_ocr' ? 'OCR' : 'manual'}
+                  </span>
+                </td>
+                <td className="py-0.5 pr-2 text-muted-foreground">{fmtTs(row.created_at)}</td>
+                <td className="py-0.5 pr-2">
+                  {row.screenshot_storage_path ? (
+                    <ScreenshotLink id={row.id} />
+                  ) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ScreenshotLink({ id }: { id: string }) {
+  const [loading, setLoading] = useState(false);
+  const open = async () => {
+    setLoading(true);
+    try {
+      const res = await getBacktestScreenshotUrl({ data: { id } });
+      if (res.url) window.open(res.url, '_blank', 'noopener');
+      else toast.error('Screenshot ikke tilgjengelig');
+    } catch (e: any) {
+      toast.error(`Kunne ikke hente screenshot: ${e?.message ?? e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <button
+      className="text-blue-600 hover:underline disabled:opacity-50"
+      onClick={open}
+      disabled={loading}
+    >
+      {loading ? '…' : 'view'}
+    </button>
+  );
+}
+
+function RecalcCalibrationButton({
+  runId,
+  symbol,
+  onDone,
+}: {
+  runId: string;
+  symbol: string;
+  onDone?: () => void;
+}) {
+  const m = useMutation({
+    mutationFn: () => recalcCalibrationForSymbol({ data: { run_id: runId, symbol } }),
+    onSuccess: (res) => {
+      if (res.status === 'ok') {
+        toast.success(`Calibration oppdatert for ${symbol}`, {
+          description: `Score: ${res.calibration_score ?? '—'} · Label: ${res.calibration_label ?? '—'} · ${res.observations_used} observasjoner brukt.`,
+        });
+      } else {
+        toast.warning(`Calibration unavailable for ${symbol}`, {
+          description: res.reason ?? 'unknown',
+        });
+      }
+      onDone?.();
+    },
+    onError: (e: any) => toast.error(`Recalc feilet: ${e?.message ?? e}`),
+  });
+  return (
+    <button
+      className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+      onClick={(e) => {
+        e.stopPropagation();
+        m.mutate();
+      }}
+      disabled={m.isPending}
+    >
+      {m.isPending ? 'Recalculating…' : 'Recalculate calibration for this symbol'}
+    </button>
+  );
+}
+

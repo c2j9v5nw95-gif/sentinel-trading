@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   createBacktestResult,
   extractScreenshot,
+  listBacktestResults,
   listStrategyVersions,
 } from '@/lib/calibration/calibration.functions';
 import type { OcrExtraction } from '@/lib/calibration/ocr.server';
@@ -136,7 +138,7 @@ export function BacktestResultDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   prefill?: BacktestDialogPrefill;
-  onSaved?: () => void;
+  onSaved?: (info?: { symbol: string; label: Label }) => void;
 }) {
   const [tab, setTab] = useState<'manual' | 'screenshot'>('manual');
   const [form, setForm] = useState<FormFields>(emptyForm);
@@ -155,6 +157,15 @@ export function BacktestResultDialog({
     queryKey: ['calibration-strategy-versions'],
     queryFn: () => listStrategyVersions(),
     enabled: open,
+  });
+
+  // Previous observations for this symbol — proves to user that earlier tests
+  // exist and helps avoid accidental duplicates. Append-only is always honored.
+  const symbolKey = (prefill?.symbol ?? form.symbol).trim().toUpperCase();
+  const historyQ = useQuery({
+    queryKey: ['backtest-history', symbolKey],
+    queryFn: () => listBacktestResults({ data: { symbol: symbolKey, limit: 25 } }),
+    enabled: open && !!symbolKey,
   });
 
   // Apply prefill + default strategy version when dialog opens
@@ -331,8 +342,12 @@ export function BacktestResultDialog({
       };
       return await createBacktestResult({ data: payload as any });
     },
-    onSuccess: () => {
-      onSaved?.();
+    onSuccess: (_res, _vars) => {
+      const sym = form.symbol.trim().toUpperCase();
+      toast.success('Backtest saved', {
+        description: `${sym} · ${form.label}. Calibration will update on next admission run, or click "Recalculate calibration for this symbol".`,
+      });
+      onSaved?.({ symbol: sym, label: form.label });
       onOpenChange(false);
     },
     onError: (e: any) => setError(e?.message ?? String(e)),
@@ -350,6 +365,30 @@ export function BacktestResultDialog({
             bekreftede verdier. Tips: Trykk <kbd className="rounded border px-1 text-[10px]">Ctrl/⌘ + V</kbd> hvor som helst i dialogen for å lime inn screenshot direkte fra utklippstavlen.
           </DialogDescription>
         </DialogHeader>
+
+        {symbolKey && historyQ.data && historyQ.data.total > 0 && (
+          <div className="rounded border border-blue-500/40 bg-blue-500/5 p-2 text-xs">
+            <div className="font-medium mb-1">
+              {historyQ.data.total} tidligere observasjon{historyQ.data.total === 1 ? '' : 'er'} for {symbolKey} — denne lagres som en ny rad (append-only).
+            </div>
+            <ul className="space-y-0.5 max-h-32 overflow-auto">
+              {historyQ.data.rows.slice(0, 5).map((row: any) => (
+                <li key={row.id} className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] text-muted-foreground">{row.test_date}</span>
+                  <Badge variant="outline" className="text-[10px]">{row.label}</Badge>
+                  <span className="text-muted-foreground">{row.strategy_version}</span>
+                  {row.extraction_source === 'screenshot_ocr' && (
+                    <Badge variant="secondary" className="text-[10px]">OCR</Badge>
+                  )}
+                </li>
+              ))}
+              {historyQ.data.total > 5 && (
+                <li className="text-muted-foreground">… og {historyQ.data.total - 5} til (se Backtest History i admission-raden).</li>
+              )}
+            </ul>
+          </div>
+        )}
+
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
           <TabsList>
