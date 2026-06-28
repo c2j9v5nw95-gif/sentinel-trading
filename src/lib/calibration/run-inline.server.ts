@@ -29,33 +29,41 @@ export async function runCalibrationForRunInline(
   const { data: cfgRow } = await supabase
     .from('app_settings')
     .select(
-      'calibration_half_life_days, calibration_k, calibration_min_neighbors_medium, calibration_min_neighbors_high',
+      'calibration_half_life_days, calibration_k, calibration_min_neighbors_medium, calibration_min_neighbors_high, calibration_exclude_no_trades, calibration_exclude_needs_review',
     )
     .eq('singleton', true)
     .maybeSingle();
   const cfg = {
-    k: cfgRow?.calibration_k ?? 5,
+    k: cfgRow?.calibration_k ?? 10,
     half_life_days: cfgRow?.calibration_half_life_days ?? 180,
-    min_neighbors_medium: cfgRow?.calibration_min_neighbors_medium ?? 3,
-    min_neighbors_high: cfgRow?.calibration_min_neighbors_high ?? 6,
+    min_neighbors_medium: cfgRow?.calibration_min_neighbors_medium ?? 4,
+    min_neighbors_high: cfgRow?.calibration_min_neighbors_high ?? 10,
   };
+  const excludeNoTrades = cfgRow?.calibration_exclude_no_trades ?? true;
+  const excludeNeedsReview = cfgRow?.calibration_exclude_needs_review ?? true;
 
   let q = supabase
     .from('coin_backtest_results')
-    .select('id, symbol, test_date, label, screener_snapshot, strategy_version')
+    .select('id, symbol, test_date, label, screener_snapshot, strategy_version, needs_review, label_source')
     .in('extraction_status', ['manual', 'confirmed'])
     .order('test_date', { ascending: false })
     .limit(2000);
   if (strategyVersion) q = q.eq('strategy_version', strategyVersion);
   const { data: obsRows } = await q;
-  const observations: Observation[] = (obsRows ?? []).map((r: any) => ({
-    id: r.id,
-    symbol: r.symbol,
-    test_date: r.test_date,
-    label: r.label as BacktestLabel,
-    age_days: ageDays(r.test_date),
-    features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
-  }));
+  const observations: Observation[] = (obsRows ?? [])
+    .filter((r: any) => {
+      if (excludeNoTrades && r.label === 'no_trades') return false;
+      if (excludeNeedsReview && r.needs_review === true && r.label_source !== 'manual_override') return false;
+      return true;
+    })
+    .map((r: any) => ({
+      id: r.id,
+      symbol: r.symbol,
+      test_date: r.test_date,
+      label: r.label as BacktestLabel,
+      age_days: ageDays(r.test_date),
+      features: extractFeatures((r.screener_snapshot ?? {}) as ScreenerSnapshot),
+    }));
   const featureRows = observations.map((o) => o.features);
   const medians = computeFeatureMedians(featureRows);
   const stds = computeFeatureStds(featureRows, medians);
