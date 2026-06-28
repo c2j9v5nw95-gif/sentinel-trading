@@ -802,11 +802,22 @@ function AdmissionPage() {
                         <td className="py-1 pr-2 text-xs max-w-[200px] truncate" title={r.admission_reason ?? ''}>
                           {r.admission_reason ?? '—'}
                         </td>
+                        <td className="py-1 pr-2 text-xs">
+                          {r.last_backtest_label ? (
+                            <span className="rounded bg-muted px-1.5 py-0.5">{r.last_backtest_label}</span>
+                          ) : '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-xs font-mono text-muted-foreground">{r.last_backtest_date ?? '—'}</td>
+                        <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.last_backtest_strategy_version ?? ''}>
+                          {r.last_backtest_strategy_version ?? '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right">{r.backtest_count ?? 0}</td>
                       </tr>
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={17} className="p-3">
+                          <td colSpan={20} className="p-3">
+
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
                                 <h4 className="font-semibold mb-1">Robustness components</h4>
