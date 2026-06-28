@@ -529,12 +529,26 @@ function AdmissionPage() {
                             {r.status === 'trend_candidate' ? 'trend cand.' : r.status}
                           </span>
                         </td>
+                        <td className="py-1 pr-2">
+                          {r.trend_classification ? (
+                            <span className={`rounded px-1.5 py-0.5 text-xs ${classBadgeClass(r.trend_classification)}`}>
+                              {r.trend_classification === 'trend_friendly' ? 'trend' : r.trend_classification}
+                            </span>
+                          ) : '—'}
+                        </td>
                         <td className="py-1 pr-2 text-right font-mono font-semibold">{fmtNum(r.strategy_fit_score, 1)}</td>
                         <td className="py-1 pr-2 text-right font-mono">{fmtNum(r.score, 1)}</td>
-                        <td className="py-1 pr-2 text-right font-mono">{r.trend_score != null ? fmtNum(r.trend_score, 1) : '—'}</td>
+                        <td
+                          className="py-1 pr-2 text-right font-mono"
+                          title={r.htq_lookback_days ? `${r.htq_lookback_days}d · ${r.htq_mode ?? ''}` : ''}
+                        >
+                          {r.historical_trend_quality != null ? fmtNum(r.historical_trend_quality, 1) : '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right font-mono text-muted-foreground">
+                          {r.current_momentum_score != null ? fmtNum(r.current_momentum_score, 1) : '—'}
+                        </td>
                         <td className="py-1 pr-2 text-right">{r.rank ?? '—'}</td>
                         <td className="py-1 pr-2 text-right">{fmtUsd(r.turnover_24h)}</td>
-                        <td className="py-1 pr-2 text-right">{fmtUsd(r.turnover_7d_median)}</td>
                         <td className="py-1 pr-2 text-right">{fmtUsd(r.open_interest_value)}</td>
                         <td className="py-1 pr-2 text-right">{fmtNum(r.spread_bps, 2)}</td>
                         <td className="py-1 pr-2 text-right">{r.listing_age_days ?? '—'}</td>
@@ -549,6 +563,7 @@ function AdmissionPage() {
                           {r.admission_reason ?? '—'}
                         </td>
                       </tr>
+
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
                           <td colSpan={15} className="p-3">
