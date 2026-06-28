@@ -158,10 +158,29 @@ function CalibrationPage() {
       }),
   });
 
+  const [sortKey, setSortKey] = useState<SortKey>('backtest_quality_score');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+
+  const handleSort = useCallback((key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDirection('desc');
+    }
+  }, [sortKey]);
+
   const rows = useMemo(() => {
     const all = (reviewQ.data?.rows ?? []) as any[];
-    return showNoTrades ? all : all.filter((r) => r.label !== 'no_trades');
-  }, [reviewQ.data?.rows, showNoTrades]);
+    const filtered = showNoTrades ? all : all.filter((r) => r.label !== 'no_trades');
+    return [...filtered].sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av < bv) return sortDirection === 'desc' ? 1 : -1;
+      if (av > bv) return sortDirection === 'desc' ? -1 : 1;
+      return 0;
+    });
+  }, [reviewQ.data?.rows, showNoTrades, sortKey, sortDirection]);
 
   const dryRun = useMutation({
     mutationFn: () =>
