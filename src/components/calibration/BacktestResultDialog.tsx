@@ -16,6 +16,12 @@ import {
   listStrategyVersions,
 } from '@/lib/calibration/calibration.functions';
 import type { OcrExtraction } from '@/lib/calibration/ocr.server';
+import {
+  autoSuggestLabel,
+  DEFAULT_CLASSIFICATION_THRESHOLDS,
+  type AutoSuggestResult,
+} from '@/lib/calibration/scoring';
+import { computeSizingDerived, SIZING_DEFAULTS } from '@/lib/calibration/sizing';
 
 type Label = 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
@@ -26,20 +32,45 @@ const LABEL_OPTIONS: Array<{ value: Label; label: string }> = [
   { value: 'profitable_plus', label: 'Profitable+' },
 ];
 
-function autoSuggest(input: {
-  net_profit_pct: string;
-  max_drawdown_pct: string;
-  profit_factor: string;
-  num_trades: string;
-}): Label {
-  const pnl = parseFloat(input.net_profit_pct);
-  const dd = Math.abs(parseFloat(input.max_drawdown_pct));
-  const pf = parseFloat(input.profit_factor);
-  const tr = parseInt(input.num_trades, 10);
-  if (!Number.isFinite(pnl) || pnl <= 0 || !(pf >= 1) || !(tr >= 10)) return 'rejected_backtest';
-  if (pf >= 1.5 && pnl >= 15 && (Number.isFinite(dd) ? dd <= 15 : true)) return 'profitable_plus';
-  if (pf >= 1.2 && pnl >= 5 && (Number.isFinite(dd) ? dd <= 25 : true)) return 'profitable';
-  return 'marginal';
+function autoSuggestUI(
+  metrics: {
+    net_profit_pct: string;
+    max_drawdown_pct: string;
+    profit_factor: string;
+    num_trades: string;
+    avg_pnl_pct: string;
+  },
+  sizing: { position_size_pct: number; leverage: number; leverage_enabled: boolean },
+): AutoSuggestResult {
+  const numOr = (s: string): number | null => {
+    if (!s || s.trim() === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+  const np = numOr(metrics.net_profit_pct);
+  const dd = numOr(metrics.max_drawdown_pct);
+  const derived = computeSizingDerived(
+    {
+      position_size_type: 'percent_of_equity',
+      position_size_pct: sizing.position_size_pct,
+      leverage: sizing.leverage,
+      leverage_enabled: sizing.leverage_enabled,
+    },
+    { net_profit_pct: np, max_drawdown_pct: dd, avg_pnl_pct: numOr(metrics.avg_pnl_pct) },
+  );
+  return autoSuggestLabel(
+    {
+      net_profit_pct: np,
+      max_drawdown_pct: dd,
+      profit_factor: numOr(metrics.profit_factor),
+      num_trades: numOr(metrics.num_trades),
+      normalized_net_profit_pct: derived.normalized_net_profit_pct,
+      normalized_drawdown_pct: derived.normalized_drawdown_pct,
+      leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+      leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+    },
+    DEFAULT_CLASSIFICATION_THRESHOLDS,
+  );
 }
 
 export type BacktestDialogPrefill = {
