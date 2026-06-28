@@ -35,6 +35,7 @@ import { Route as AppAnalyticsDebugRouteImport } from './routes/_app.analytics-d
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
 import { Route as AppAdmissionRouteImport } from './routes/_app.admission'
 import { Route as MPositionsSymbolRouteImport } from './routes/m.positions_.$symbol'
+import { Route as ApiPublicSendPasswordResetRouteImport } from './routes/api/public/send-password-reset'
 import { Route as AppSymbolsSymbolRouteImport } from './routes/_app.symbols_.$symbol'
 import { Route as ApiPublicHooksSnapshotSignalContextRouteImport } from './routes/api/public/hooks/snapshot-signal-context'
 import { Route as ApiPublicHooksSnapshotRegimeTickRouteImport } from './routes/api/public/hooks/snapshot-regime-tick'
@@ -169,6 +170,12 @@ const MPositionsSymbolRoute = MPositionsSymbolRouteImport.update({
   path: '/positions/$symbol',
   getParentRoute: () => MRoute,
 } as any)
+const ApiPublicSendPasswordResetRoute =
+  ApiPublicSendPasswordResetRouteImport.update({
+    id: '/api/public/send-password-reset',
+    path: '/api/public/send-password-reset',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AppSymbolsSymbolRoute = AppSymbolsSymbolRouteImport.update({
   id: '/symbols_/$symbol',
   path: '/symbols/$symbol',
@@ -219,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/m/pulse': typeof MPulseRoute
   '/m/': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/api/public/send-password-reset': typeof ApiPublicSendPasswordResetRoute
   '/m/positions/$symbol': typeof MPositionsSymbolRoute
   '/api/public/hooks/setup-snapshot-config': typeof ApiPublicHooksSetupSnapshotConfigRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
@@ -249,6 +257,7 @@ export interface FileRoutesByTo {
   '/m/pulse': typeof MPulseRoute
   '/m': typeof MIndexRoute
   '/symbols/$symbol': typeof AppSymbolsSymbolRoute
+  '/api/public/send-password-reset': typeof ApiPublicSendPasswordResetRoute
   '/m/positions/$symbol': typeof MPositionsSymbolRoute
   '/api/public/hooks/setup-snapshot-config': typeof ApiPublicHooksSetupSnapshotConfigRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
@@ -282,6 +291,7 @@ export interface FileRoutesById {
   '/m/pulse': typeof MPulseRoute
   '/m/': typeof MIndexRoute
   '/_app/symbols_/$symbol': typeof AppSymbolsSymbolRoute
+  '/api/public/send-password-reset': typeof ApiPublicSendPasswordResetRoute
   '/m/positions_/$symbol': typeof MPositionsSymbolRoute
   '/api/public/hooks/setup-snapshot-config': typeof ApiPublicHooksSetupSnapshotConfigRoute
   '/api/public/hooks/snapshot-regime-tick': typeof ApiPublicHooksSnapshotRegimeTickRoute
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
     | '/m/pulse'
     | '/m/'
     | '/symbols/$symbol'
+    | '/api/public/send-password-reset'
     | '/m/positions/$symbol'
     | '/api/public/hooks/setup-snapshot-config'
     | '/api/public/hooks/snapshot-regime-tick'
@@ -345,6 +356,7 @@ export interface FileRouteTypes {
     | '/m/pulse'
     | '/m'
     | '/symbols/$symbol'
+    | '/api/public/send-password-reset'
     | '/m/positions/$symbol'
     | '/api/public/hooks/setup-snapshot-config'
     | '/api/public/hooks/snapshot-regime-tick'
@@ -377,6 +389,7 @@ export interface FileRouteTypes {
     | '/m/pulse'
     | '/m/'
     | '/_app/symbols_/$symbol'
+    | '/api/public/send-password-reset'
     | '/m/positions_/$symbol'
     | '/api/public/hooks/setup-snapshot-config'
     | '/api/public/hooks/snapshot-regime-tick'
@@ -390,6 +403,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   MRoute: typeof MRouteWithChildren
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiPublicSendPasswordResetRoute: typeof ApiPublicSendPasswordResetRoute
   ApiPublicHooksSetupSnapshotConfigRoute: typeof ApiPublicHooksSetupSnapshotConfigRoute
   ApiPublicHooksSnapshotRegimeTickRoute: typeof ApiPublicHooksSnapshotRegimeTickRoute
   ApiPublicHooksSnapshotSignalContextRoute: typeof ApiPublicHooksSnapshotSignalContextRoute
@@ -579,6 +593,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MPositionsSymbolRouteImport
       parentRoute: typeof MRoute
     }
+    '/api/public/send-password-reset': {
+      id: '/api/public/send-password-reset'
+      path: '/api/public/send-password-reset'
+      fullPath: '/api/public/send-password-reset'
+      preLoaderRoute: typeof ApiPublicSendPasswordResetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/symbols_/$symbol': {
       id: '/_app/symbols_/$symbol'
       path: '/symbols/$symbol'
@@ -675,6 +696,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MRoute: MRouteWithChildren,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiPublicSendPasswordResetRoute: ApiPublicSendPasswordResetRoute,
   ApiPublicHooksSetupSnapshotConfigRoute:
     ApiPublicHooksSetupSnapshotConfigRoute,
   ApiPublicHooksSnapshotRegimeTickRoute: ApiPublicHooksSnapshotRegimeTickRoute,
