@@ -103,10 +103,20 @@ type SortKey =
   | 'wick'
   | 'hard_kills'
   | 'soft'
-  | 'reason';
+  | 'reason'
+  | 'last_bt_class'
+  | 'last_bt_date'
+  | 'last_bt_ver'
+  | 'bt_count';
 
 const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
 const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
+const LABEL_ORDER: Record<string, number> = {
+  profitable_plus: 0,
+  profitable: 1,
+  marginal: 2,
+  rejected_backtest: 3,
+};
 
 function sortValue(r: Result, k: SortKey): number | string | null {
   switch (k) {
@@ -126,6 +136,10 @@ function sortValue(r: Result, k: SortKey): number | string | null {
     case 'hard_kills': return r.hard_kill_rules?.length ?? 0;
     case 'soft': return r.soft_failures?.length ?? 0;
     case 'reason': return r.admission_reason ?? '';
+    case 'last_bt_class': return r.last_backtest_label ? (LABEL_ORDER[r.last_backtest_label] ?? 99) : 99;
+    case 'last_bt_date': return r.last_backtest_date ?? '';
+    case 'last_bt_ver': return r.last_backtest_strategy_version ?? '';
+    case 'bt_count': return r.backtest_count ?? 0;
   }
 }
 
@@ -133,7 +147,9 @@ const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   symbol: 'asc', status: 'asc', class: 'asc', fit: 'desc', robust: 'desc',
   htq: 'desc', momentum: 'desc', rank: 'asc', turnover_24h: 'desc', oi: 'desc',
   spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
+  last_bt_class: 'asc', last_bt_date: 'desc', last_bt_ver: 'asc', bt_count: 'desc',
 };
+
 
 export const Route = createFileRoute('/_app/admission')({
   component: AdmissionPage,
