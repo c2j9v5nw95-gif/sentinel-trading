@@ -221,12 +221,20 @@ export function BacktestResultDialog({
     setLabelTouched(false);
     setNoTrades(false);
     setError(null);
+    setSuggestion(null);
     setStage('idle');
     setStoragePath(null);
     setExtraction(null);
     setOcrUsed(false);
     setOcrError(null);
     setTab('manual');
+    setSizing({
+      initial_capital_usd: String(SIZING_DEFAULTS.initial_capital_usd),
+      position_size_pct: String(SIZING_DEFAULTS.position_size_pct),
+      leverage: String(SIZING_DEFAULTS.leverage),
+      leverage_enabled: SIZING_DEFAULTS.leverage_enabled,
+    });
+    setSizingTouched(false);
   }, [open, prefill?.symbol]);
 
   // Global paste handler: while dialog is open, Ctrl/Cmd+V with an image on the
