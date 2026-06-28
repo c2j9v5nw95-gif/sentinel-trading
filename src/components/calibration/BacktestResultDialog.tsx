@@ -277,17 +277,48 @@ export function BacktestResultDialog({
     if (def) setForm((f) => ({ ...f, strategy_version: def }));
   }, [open, versionsQ.data, form.strategy_version]);
 
-  // Auto-suggest label as user types numbers — unless they manually changed it
+  // Sizing-aware suggestion, always recomputed; auto-applied unless user touched the label
+  const sizingNumeric = useMemo(
+    () => ({
+      position_size_pct: Number(sizing.position_size_pct) || SIZING_DEFAULTS.position_size_pct,
+      leverage: Number(sizing.leverage) || SIZING_DEFAULTS.leverage,
+      leverage_enabled: sizing.leverage_enabled,
+    }),
+    [sizing.position_size_pct, sizing.leverage, sizing.leverage_enabled],
+  );
+
+  const notionalExposurePct = useMemo(() => {
+    return sizingNumeric.leverage_enabled
+      ? sizingNumeric.position_size_pct * sizingNumeric.leverage
+      : sizingNumeric.position_size_pct;
+  }, [sizingNumeric]);
+
   useEffect(() => {
-    if (labelTouched) return;
-    const lbl = autoSuggest({
-      net_profit_pct: form.net_profit_pct,
-      max_drawdown_pct: form.max_drawdown_pct,
-      profit_factor: form.profit_factor,
-      num_trades: form.num_trades,
-    });
-    setForm((f) => (f.label === lbl ? f : { ...f, label: lbl }));
-  }, [form.net_profit_pct, form.max_drawdown_pct, form.profit_factor, form.num_trades, labelTouched]);
+    if (noTrades) return;
+    const s = autoSuggestUI(
+      {
+        net_profit_pct: form.net_profit_pct,
+        max_drawdown_pct: form.max_drawdown_pct,
+        profit_factor: form.profit_factor,
+        num_trades: form.num_trades,
+        avg_pnl_pct: form.avg_pnl_pct,
+      },
+      sizingNumeric,
+    );
+    setSuggestion(s);
+    if (!labelTouched) {
+      setForm((f) => (f.label === s.label ? f : { ...f, label: s.label }));
+    }
+  }, [
+    form.net_profit_pct,
+    form.max_drawdown_pct,
+    form.profit_factor,
+    form.num_trades,
+    form.avg_pnl_pct,
+    sizingNumeric,
+    labelTouched,
+    noTrades,
+  ]);
 
   const lookbackDays = useMemo(() => {
     const candles = parseInt(form.candles_tested, 10);
