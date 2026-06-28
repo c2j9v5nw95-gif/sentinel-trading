@@ -674,7 +674,9 @@ function AdmissionPage() {
                 })}
               </tbody>
             </table>
+            </TooltipProvider>
           </div>
+
         )}
       </Card>
     </div>
