@@ -143,6 +143,7 @@ export function BacktestResultDialog({
   const [tab, setTab] = useState<'manual' | 'screenshot'>('manual');
   const [form, setForm] = useState<FormFields>(emptyForm);
   const [labelTouched, setLabelTouched] = useState(false);
+  const [noTrades, setNoTrades] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Screenshot/OCR state
