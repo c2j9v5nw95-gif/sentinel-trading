@@ -607,7 +607,7 @@ export function BacktestResultDialog({
                 setNoTrades(v);
                 if (v) {
                   setLabelTouched(true);
-                  setForm((f) => ({ ...f, label: 'rejected_backtest' }));
+                  setForm((f) => ({ ...f, label: 'no_trades' }));
                 }
               }}
               className="mt-0.5"
@@ -615,7 +615,7 @@ export function BacktestResultDialog({
             <span>
               <span className="font-medium">No trades in test period</span>
               <span className="block text-muted-foreground">
-                Strategien åpnet ingen posisjoner i perioden. Lagres som <code>rejected_backtest</code> med <code>num_trades = 0</code>; metrics-feltene under ignoreres.
+                Strategien åpnet ingen posisjoner i perioden. Lagres som <code>no_trades</code> med <code>num_trades = 0</code>; metrics-feltene under ignoreres. Ekskluderes fra calibration som default.
               </span>
             </span>
           </label>
