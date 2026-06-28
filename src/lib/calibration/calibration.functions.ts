@@ -699,8 +699,9 @@ export const listLatestBacktestPerSymbol = createServerFn({ method: 'POST' })
       last_needs_review_reason: string | null;
       last_bt_score: number | null;
       last_summary: string | null;
-      last_positive_drivers: string | Record<string, unknown> | unknown[] | null;
-      last_negative_drivers: string | Record<string, unknown> | unknown[] | null;
+      // jsonb shape varies (string | array | object); typed loose for the serializer.
+      last_positive_drivers: any;
+      last_negative_drivers: any;
       last_safety_overrides: string[] | null;
       last_net_profit_pct: number | null;
       last_normalized_net_profit_pct: number | null;
