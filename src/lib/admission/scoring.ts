@@ -105,8 +105,15 @@ function computeWickComponent(m: SymbolMetrics, t: AdmissionThresholds): number 
 
 export interface ScoreOptions {
   mode: AdmissionMode;
-  trendScore: number | null;
+  /** Historical Trend Quality v2 score (drives Strategy Fit + Trend Adjusted status). */
+  htqScore: number | null;
+  /** Current Momentum / live EMA alignment (informational only). */
+  momentumScore: number | null;
+  /** When HTQ was computed from <14d lookback: status decisions don't promote. */
+  htqMode?: 'standard' | 'emerging';
 }
+
+
 
 export function computeAdmissionScore(
   m: SymbolMetrics,
