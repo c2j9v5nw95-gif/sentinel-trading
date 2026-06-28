@@ -743,9 +743,14 @@ function AdmissionPage() {
                   <HeaderCell label="Hard Kills" sortKey="hard_kills" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Soft" sortKey="soft" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Reason" sortKey="reason" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Last BT Class" sortKey="last_bt_class" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Last BT Date" sortKey="last_bt_date" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Last BT Ver" sortKey="last_bt_ver" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="# BT" align="right" sortKey="bt_count" activeSort={sort} onSort={toggleSort} />
 
                 </tr>
               </thead>
+
 
 
               <tbody>
