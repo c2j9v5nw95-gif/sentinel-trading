@@ -456,7 +456,7 @@ export const listLatestBacktestPerSymbol = createServerFn({ method: 'POST' })
   .inputValidator((i: unknown) =>
     z
       .object({
-        symbols: z.array(z.string().min(1).max(40)).min(1).max(500),
+        symbols: z.array(z.string().min(1).max(40)).min(1).max(2000),
       })
       .parse(i),
   )
