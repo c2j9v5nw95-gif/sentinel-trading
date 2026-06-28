@@ -25,25 +25,101 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   Reason: 'Kort menneskelig forklaring på statusen (hvilke regler som slo inn / hvorfor lempet).',
 };
 
-function HeaderCell({ label, align, className }: { label: string; align?: 'right'; className?: string }) {
+function HeaderCell({
+  label,
+  align,
+  className,
+  sortKey,
+  activeSort,
+  onSort,
+}: {
+  label: string;
+  align?: 'right';
+  className?: string;
+  sortKey?: SortKey;
+  activeSort?: { key: SortKey; dir: 'asc' | 'desc' } | null;
+  onSort?: (k: SortKey) => void;
+}) {
   const tip = COLUMN_TOOLTIPS[label];
   const base = `py-1 pr-2${align === 'right' ? ' text-right' : ''}${className ? ' ' + className : ''}`;
-  if (!tip) return <th className={base}>{label}</th>;
-  return (
-    <th className={base}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="cursor-help underline decoration-dotted decoration-muted-foreground/60 underline-offset-4">
-            {label}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs text-xs leading-relaxed">
-          {tip}
-        </TooltipContent>
-      </Tooltip>
-    </th>
+  const isActive = !!sortKey && activeSort?.key === sortKey;
+  const arrow = isActive ? (activeSort!.dir === 'desc' ? ' ▼' : ' ▲') : '';
+  const labelNode = (
+    <span
+      className={
+        sortKey
+          ? `cursor-pointer select-none hover:text-foreground ${isActive ? 'text-foreground font-semibold' : ''}`
+          : ''
+      }
+      onClick={sortKey && onSort ? () => onSort(sortKey) : undefined}
+    >
+      {tip ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-help underline decoration-dotted decoration-muted-foreground/60 underline-offset-4">
+              {label}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs text-xs leading-relaxed">
+            {tip}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        label
+      )}
+      {arrow && <span className="ml-0.5 text-[10px]">{arrow}</span>}
+    </span>
   );
+  return <th className={base}>{labelNode}</th>;
 }
+
+type SortKey =
+  | 'symbol'
+  | 'status'
+  | 'class'
+  | 'fit'
+  | 'robust'
+  | 'htq'
+  | 'momentum'
+  | 'rank'
+  | 'turnover_24h'
+  | 'oi'
+  | 'spread'
+  | 'age'
+  | 'wick'
+  | 'hard_kills'
+  | 'soft'
+  | 'reason';
+
+const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
+const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
+
+function sortValue(r: Result, k: SortKey): number | string | null {
+  switch (k) {
+    case 'symbol': return r.symbol;
+    case 'status': return STATUS_ORDER[r.status] ?? 99;
+    case 'class': return r.trend_classification ? CLASS_ORDER[r.trend_classification] : 99;
+    case 'fit': return r.strategy_fit_score;
+    case 'robust': return r.score;
+    case 'htq': return r.historical_trend_quality;
+    case 'momentum': return r.current_momentum_score;
+    case 'rank': return r.rank;
+    case 'turnover_24h': return r.turnover_24h;
+    case 'oi': return r.open_interest_value;
+    case 'spread': return r.spread_bps;
+    case 'age': return r.listing_age_days;
+    case 'wick': return r.max_1h_drop_pct;
+    case 'hard_kills': return r.hard_kill_rules?.length ?? 0;
+    case 'soft': return r.soft_failures?.length ?? 0;
+    case 'reason': return r.admission_reason ?? '';
+  }
+}
+
+const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
+  symbol: 'asc', status: 'asc', class: 'asc', fit: 'desc', robust: 'desc',
+  htq: 'desc', momentum: 'desc', rank: 'asc', turnover_24h: 'desc', oi: 'desc',
+  spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
+};
 
 export const Route = createFileRoute('/_app/admission')({
   component: AdmissionPage,
@@ -161,6 +237,13 @@ function AdmissionPage() {
   const [confirmLongRun, setConfirmLongRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
+
+  const toggleSort = (k: SortKey) => {
+    setSort((prev) => prev.key === k
+      ? { key: k, dir: prev.dir === 'desc' ? 'asc' : 'desc' }
+      : { key: k, dir: DEFAULT_DIR[k] });
+  };
 
 
   const profilesQ = useQuery({
@@ -240,7 +323,7 @@ function AdmissionPage() {
     const all = resultsQ.data ?? [];
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
-    return all.filter((r) => {
+    const filtered = all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
       if (onlyTrendCandidates && r.status !== 'trend_candidate') return false;
@@ -250,7 +333,20 @@ function AdmissionPage() {
       if (Number.isFinite(minFitN) && (r.strategy_fit_score ?? -1) < minFitN) return false;
       return true;
     });
-  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit]);
+    const dir = sort.dir === 'desc' ? -1 : 1;
+    const sorted = [...filtered].sort((a, b) => {
+      const av = sortValue(a, sort.key);
+      const bv = sortValue(b, sort.key);
+      const aNull = av == null || (typeof av === 'number' && !Number.isFinite(av));
+      const bNull = bv == null || (typeof bv === 'number' && !Number.isFinite(bv));
+      if (aNull && bNull) return 0;
+      if (aNull) return 1;   // nulls always last
+      if (bNull) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+    return sorted;
+  }, [resultsQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, sort]);
 
 
   const counts = useMemo(() => {
@@ -544,22 +640,23 @@ function AdmissionPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b">
-                  <HeaderCell label="Symbol" />
-                  <HeaderCell label="Status" />
-                  <HeaderCell label="Class" />
-                  <HeaderCell label="Fit" align="right" />
-                  <HeaderCell label="Robust" align="right" />
-                  <HeaderCell label="HTQ" align="right" />
-                  <HeaderCell label="Mom" align="right" />
-                  <HeaderCell label="Rank" align="right" />
-                  <HeaderCell label="24h TO" align="right" />
-                  <HeaderCell label="OI" align="right" />
-                  <HeaderCell label="Spread" align="right" />
-                  <HeaderCell label="Age" align="right" />
-                  <HeaderCell label="Wick%" align="right" />
-                  <HeaderCell label="Hard Kills" />
-                  <HeaderCell label="Soft" />
-                  <HeaderCell label="Reason" />
+                  <HeaderCell label="Symbol" sortKey="symbol" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Status" sortKey="status" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Class" sortKey="class" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Fit" align="right" sortKey="fit" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Robust" align="right" sortKey="robust" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="HTQ" align="right" sortKey="htq" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Mom" align="right" sortKey="momentum" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Rank" align="right" sortKey="rank" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="24h TO" align="right" sortKey="turnover_24h" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="OI" align="right" sortKey="oi" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Spread" align="right" sortKey="spread" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Age" align="right" sortKey="age" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Wick%" align="right" sortKey="wick" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Hard Kills" sortKey="hard_kills" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Soft" sortKey="soft" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Reason" sortKey="reason" activeSort={sort} onSort={toggleSort} />
+
                 </tr>
               </thead>
 
