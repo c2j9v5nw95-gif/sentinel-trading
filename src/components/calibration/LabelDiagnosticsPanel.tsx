@@ -50,7 +50,7 @@ export function LabelDiagnosticsPanel() {
 
   const diagQ = useQuery({
     queryKey: ['label-diagnostics'],
-    queryFn: () => getLabelDiagnostics({ data: undefined as any }),
+    queryFn: () => getLabelDiagnostics(),
   });
 
   const d = diagQ.data;
