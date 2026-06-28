@@ -327,7 +327,7 @@ function AdmissionPage() {
             <div className="flex items-end">
               <button
                 className="rounded bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-                disabled={startRun.isPending || !selectedProfileId}
+                disabled={startRun.isPending || !selectedProfileId || (lookback === 90 && !confirmLongRun)}
                 onClick={() => startRun.mutate()}
               >
                 {startRun.isPending ? 'Kjører…' : 'Start screener'}
