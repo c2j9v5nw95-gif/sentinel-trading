@@ -540,27 +540,29 @@ function AdmissionPage() {
           <EmptyState title="Ingen treff" hint="Endre filter eller søkeord." />
         ) : (
           <div className="overflow-x-auto">
+            <TooltipProvider delayDuration={150}>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b">
-                  <th className="py-1 pr-2">Symbol</th>
-                  <th className="py-1 pr-2">Status</th>
-                  <th className="py-1 pr-2">Class</th>
-                  <th className="py-1 pr-2 text-right">Fit</th>
-                  <th className="py-1 pr-2 text-right">Robust</th>
-                  <th className="py-1 pr-2 text-right">HTQ</th>
-                  <th className="py-1 pr-2 text-right">Mom</th>
-                  <th className="py-1 pr-2 text-right">Rank</th>
-                  <th className="py-1 pr-2 text-right">24h TO</th>
-                  <th className="py-1 pr-2 text-right">OI</th>
-                  <th className="py-1 pr-2 text-right">Spread</th>
-                  <th className="py-1 pr-2 text-right">Age</th>
-                  <th className="py-1 pr-2 text-right">Wick%</th>
-                  <th className="py-1 pr-2">Hard Kills</th>
-                  <th className="py-1 pr-2">Soft</th>
-                  <th className="py-1 pr-2">Reason</th>
+                  <HeaderCell label="Symbol" />
+                  <HeaderCell label="Status" />
+                  <HeaderCell label="Class" />
+                  <HeaderCell label="Fit" align="right" />
+                  <HeaderCell label="Robust" align="right" />
+                  <HeaderCell label="HTQ" align="right" />
+                  <HeaderCell label="Mom" align="right" />
+                  <HeaderCell label="Rank" align="right" />
+                  <HeaderCell label="24h TO" align="right" />
+                  <HeaderCell label="OI" align="right" />
+                  <HeaderCell label="Spread" align="right" />
+                  <HeaderCell label="Age" align="right" />
+                  <HeaderCell label="Wick%" align="right" />
+                  <HeaderCell label="Hard Kills" />
+                  <HeaderCell label="Soft" />
+                  <HeaderCell label="Reason" />
                 </tr>
               </thead>
+
 
               <tbody>
                 {filteredResults.map((r) => {
