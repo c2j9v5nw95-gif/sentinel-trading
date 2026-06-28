@@ -347,7 +347,7 @@ export function BacktestResultDialog({
           <DialogTitle>Add Backtest Result</DialogTitle>
           <DialogDescription>
             Hver registrering er en uavhengig observasjon (append-only). Calibration bruker
-            bekreftede verdier.
+            bekreftede verdier. Tips: Trykk <kbd className="rounded border px-1 text-[10px]">Ctrl/⌘ + V</kbd> hvor som helst i dialogen for å lime inn screenshot direkte fra utklippstavlen.
           </DialogDescription>
         </DialogHeader>
 
