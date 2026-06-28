@@ -34,6 +34,8 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const includeTrend = data.includeTrendQuality ?? (data.mode === 'trend_adjusted');
+    const htqLookback = data.htqLookbackDays ?? 30;
+    const htqMode: 'standard' | 'emerging' = htqLookback < 14 ? 'emerging' : 'standard';
 
     const { data: profile, error: profErr } = await supabase
       .from('coin_admission_profiles')
@@ -53,11 +55,14 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         status: 'running',
         admission_mode: data.mode,
         include_trend_quality: includeTrend,
+        htq_lookback_days: htqLookback,
+        htq_mode: htqMode,
       })
       .select('id')
       .single();
     if (runErr || !runRow) throw new Error(`run_insert_failed: ${runErr?.message}`);
     const runId = runRow.id as string;
+
 
     try {
       const [universe, tickers, cg] = await Promise.all([
@@ -97,7 +102,7 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
       let done = 0;
       const rows: any[] = [];
 
-      await pMapLimit(slice, 10, async ({ inst }) => {
+      await pMapLimit(slice, 5, async ({ inst }) => {
         const symbol = inst.symbol;
         const ticker = tickers.get(symbol);
 
@@ -119,26 +124,42 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
         if (daily.ok) dailyBars = daily.bars;
         else fetchError = `daily:${daily.error}`;
 
-        if (!data.skipWickAnalysis) {
-          const hourly = await fetchHourlyKline(symbol, 720);
-          if (hourly.ok) hourlyBars = hourly.bars;
-          else fetchError = (fetchError ? fetchError + ';' : '') + `hourly:${hourly.error}`;
+        // Determine 1h bars to fetch based on whether wick or HTQ needs it
+        const need1hBars = includeTrend
+          ? Math.max(24 * htqLookback, data.skipWickAnalysis ? 0 : 720)
+          : (data.skipWickAnalysis ? 0 : 720);
+
+        if (need1hBars > 0) {
+          if (need1hBars <= 1000) {
+            const hourly = await fetchHourlyKline(symbol, need1hBars);
+            if (hourly.ok) hourlyBars = hourly.bars;
+            else fetchError = (fetchError ? fetchError + ';' : '') + `hourly:${hourly.error}`;
+          } else {
+            const paginated = await fetchKlinePaginated(symbol, '60', need1hBars);
+            if (paginated.bars.length > 0) hourlyBars = paginated.bars;
+            if (!paginated.ok) {
+              fetchError = (fetchError ? fetchError + ';' : '') + `hourly:${paginated.error}`;
+            }
+          }
         }
 
         if (includeTrend) {
+          // 15m capped at 30d (~2880 bars). 5m capped at 14d (~4032 bars).
+          const bars15mNeeded = Math.min(96 * Math.min(htqLookback, 30), 2880);
+          const bars5mNeeded = Math.min(288 * Math.min(htqLookback, 14), 4032);
+
           const [k5, k15] = await Promise.all([
-            fetch5mKline(symbol, 576),
-            fetch15mKline(symbol, 288),
+            bars5mNeeded <= 1000
+              ? fetchKlinePaginated(symbol, '5', bars5mNeeded)
+              : fetchKlinePaginated(symbol, '5', bars5mNeeded),
+            bars15mNeeded <= 1000
+              ? fetchKlinePaginated(symbol, '15', bars15mNeeded)
+              : fetchKlinePaginated(symbol, '15', bars15mNeeded),
           ]);
-          if (k5.ok) bars5m = k5.bars;
-          else fetchError = (fetchError ? fetchError + ';' : '') + `5m:${k5.error}`;
-          if (k15.ok) bars15m = k15.bars;
-          else fetchError = (fetchError ? fetchError + ';' : '') + `15m:${k15.error}`;
-          // Ensure hourly is loaded for trend confirmation even if wick skipped
-          if (!hourlyBars && data.skipWickAnalysis) {
-            const h = await fetchHourlyKline(symbol, 200);
-            if (h.ok) hourlyBars = h.bars;
-          }
+          if (k5.bars.length > 0) bars5m = k5.bars;
+          if (!k5.ok) fetchError = (fetchError ? fetchError + ';' : '') + `5m:${k5.error}`;
+          if (k15.bars.length > 0) bars15m = k15.bars;
+          if (!k15.ok) fetchError = (fetchError ? fetchError + ';' : '') + `15m:${k15.error}`;
         }
 
         const metrics = buildMetrics({
@@ -150,8 +171,9 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           hourlyBars,
         });
 
-        let trendScore: number | null = null;
-        let trendComponents: any = null;
+        // --- Current Momentum (snapshot, informational only) ---
+        let momentumScore: number | null = null;
+        let momentumComponents: any = null;
         if (includeTrend) {
           const tq = computeTrendQuality(
             bars5m as any,
@@ -159,14 +181,36 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
             hourlyBars as any,
           );
           if (tq) {
-            trendScore = tq.score;
-            trendComponents = tq.components;
+            momentumScore = tq.score;
+            momentumComponents = tq.components;
+          }
+        }
+
+        // --- Historical Trend Quality v2 (drives Strategy Fit) ---
+        let htqScore: number | null = null;
+        let htqComponents: any = null;
+        let htqClassification: string | null = null;
+        let htqReason: string | null = null;
+        if (includeTrend) {
+          const htq = computeHistoricalTrendQuality(
+            hourlyBars as any,
+            bars15m as any,
+            bars5m as any,
+            htqLookback,
+          );
+          if (htq) {
+            htqScore = htq.score;
+            htqComponents = htq.components;
+            htqClassification = htq.classification;
+            htqReason = htq.reason;
           }
         }
 
         const scored = computeAdmissionScore(metrics, thresholds, weights, {
           mode: data.mode,
-          trendScore,
+          htqScore,
+          momentumScore,
+          htqMode,
         });
 
         rows.push({
@@ -174,9 +218,17 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
           symbol,
           status: scored.status,
           score: scored.score,
-          trend_score: scored.trend_score,
-          trend_components: trendComponents,
+          trend_score: scored.trend_score, // HTQ for back-compat
+          trend_components: htqComponents ?? momentumComponents,
+          historical_trend_quality: htqScore,
+          htq_components: htqComponents,
+          htq_lookback_days: htqLookback,
+          htq_mode: htqMode,
+          trend_classification: htqClassification,
+          htq_reason: htqReason,
+          current_momentum_score: momentumScore,
           strategy_fit_score: scored.strategy_fit_score,
+          strategy_fit_label: strategyFitLabel(scored.strategy_fit_score),
           admission_mode: data.mode,
           admission_reason: scored.admission_reason,
           hard_kill_rules: scored.hard_kill_rules,
@@ -207,6 +259,8 @@ export const startAdmissionRun = createServerFn({ method: 'POST' })
             .eq('id', runId);
         }
       });
+
+
 
       for (let i = 0; i < rows.length; i += 200) {
         const chunk = rows.slice(i, i + 200);
