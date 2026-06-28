@@ -209,10 +209,14 @@ function CalibrationPage() {
                   <th className="py-1 pr-2">Suggested</th>
                   <th className="py-1 pr-2">Source</th>
                   <th className="py-1 pr-2 text-right">Quality</th>
-                  <th className="py-1 pr-2 text-right">Net%</th>
-                  <th className="py-1 pr-2 text-right">Norm Net%</th>
-                  <th className="py-1 pr-2 text-right">PF</th>
                   <th className="py-1 pr-2 text-right">Trades</th>
+                  <th className="py-1 pr-2 text-right" title="Wins / Losses">W / L</th>
+                  <th className="py-1 pr-2 text-right">Win%</th>
+                  <th className="py-1 pr-2 text-right">Net%</th>
+                  <th className="py-1 pr-2 text-right" title="Position-size normalized net profit">Norm Net%</th>
+                  <th className="py-1 pr-2 text-right" title="Net profit in USD">Net $</th>
+                  <th className="py-1 pr-2 text-right" title="Max drawdown %">MaxDD%</th>
+                  <th className="py-1 pr-2 text-right">PF</th>
                   <th className="py-1 pr-2">Review</th>
                   <th className="py-1 pr-2 text-right">Strategy</th>
                 </tr>
