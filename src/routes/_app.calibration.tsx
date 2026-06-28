@@ -76,6 +76,62 @@ function fmtNum(n: number | null | undefined, dp = 2): string {
   return Number(n).toFixed(dp);
 }
 
+function rankOfLabel(l: string | null | undefined): number {
+  return LABEL_RANK[l ?? ''] ?? 0;
+}
+
+function sortValue(row: any, key: SortKey): string | number | boolean {
+  switch (key) {
+    case 'symbol': return (row.symbol ?? '').toUpperCase();
+    case 'test_date': return row.test_date ? new Date(row.test_date).getTime() : 0;
+    case 'label': return rankOfLabel(row.label);
+    case 'auto_suggested_label': return rankOfLabel(row.auto_suggested_label);
+    case 'label_source': return row.label_source ?? '';
+    case 'backtest_quality_score': return row.backtest_quality_score ?? -Infinity;
+    case 'num_trades': return row.num_trades ?? -Infinity;
+    case 'win_rate_pct': return row.win_rate_pct ?? -Infinity;
+    case 'net_profit_pct': return row.net_profit_pct ?? -Infinity;
+    case 'normalized_net_profit_pct': return row.normalized_net_profit_pct ?? -Infinity;
+    case 'net_profit_usd': return row.net_profit_usd ?? -Infinity;
+    case 'max_drawdown_pct': return row.max_drawdown_pct ?? Infinity;
+    case 'profit_factor': return row.profit_factor ?? -Infinity;
+    case 'needs_review': return row.needs_review ? 1 : 0;
+    case 'strategy_version': return row.strategy_version ?? '';
+  }
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  currentKey,
+  direction,
+  onSort,
+  align,
+  title,
+}: {
+  label: string;
+  sortKey: SortKey;
+  currentKey: SortKey | null;
+  direction: 'desc' | 'asc';
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'right';
+  title?: string;
+}) {
+  const active = currentKey === sortKey;
+  return (
+    <th
+      className={`py-1 pr-2 cursor-pointer select-none hover:text-foreground ${align === 'right' ? 'text-right' : 'text-left'}`}
+      title={title}
+      onClick={() => onSort(sortKey)}
+    >
+      {label}
+      <span className="ml-1 inline-block w-3">
+        {active ? (direction === 'desc' ? '▼' : '▲') : '⇅'}
+      </span>
+    </th>
+  );
+}
+
 export const Route = createFileRoute('/_app/calibration')({
   component: CalibrationPage,
 });
