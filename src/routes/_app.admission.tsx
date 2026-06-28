@@ -501,16 +501,35 @@ function AdmissionPage() {
     const map = latestBtQ.data?.per_symbol ?? {};
     const all = (resultsQ.data ?? []).map((r) => {
       const m = map[r.symbol];
-      return {
+      const merged: Result = {
         ...r,
         last_backtest_label: m?.last_label ?? null,
         last_backtest_date: m?.last_test_date ?? null,
         last_backtest_strategy_version: m?.last_strategy_version ?? null,
         backtest_count: m?.count ?? 0,
-      } as Result;
+        last_bt_score: m?.last_bt_score ?? null,
+        last_auto_suggested_label: m?.last_auto_suggested_label ?? null,
+        last_label_source: m?.last_label_source ?? null,
+        last_needs_review: m?.last_needs_review ?? null,
+        last_needs_review_reason: m?.last_needs_review_reason ?? null,
+        last_bt_summary: m?.last_summary ?? null,
+        last_positive_drivers: m?.last_positive_drivers ?? null,
+        last_negative_drivers: m?.last_negative_drivers ?? null,
+        last_safety_overrides: m?.last_safety_overrides ?? null,
+        last_net_profit_pct: m?.last_net_profit_pct ?? null,
+        last_normalized_net_profit_pct: m?.last_normalized_net_profit_pct ?? null,
+        last_leverage_adjusted_net_profit_pct: m?.last_leverage_adjusted_net_profit_pct ?? null,
+        last_profit_factor: m?.last_profit_factor ?? null,
+        last_win_rate_pct: m?.last_win_rate_pct ?? null,
+        last_max_drawdown_pct: m?.last_max_drawdown_pct ?? null,
+        last_num_trades: m?.last_num_trades ?? null,
+      };
+      merged.candidate_priority_score = computeCandidatePriority(merged);
+      return merged;
     });
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
+    const minBtN = parseFloat(minBtScore);
     const filtered = all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
@@ -519,6 +538,16 @@ function AdmissionPage() {
       if (search && !r.symbol.toLowerCase().includes(search.toLowerCase())) return false;
       if (Number.isFinite(minTrendN) && (r.historical_trend_quality ?? -1) < minTrendN) return false;
       if (Number.isFinite(minFitN) && (r.strategy_fit_score ?? -1) < minFitN) return false;
+      if (Number.isFinite(minBtN)) {
+        // no_trades has no BT score; exclude when threshold is set
+        if (r.last_backtest_label === 'no_trades' || r.last_bt_score == null) return false;
+        if (r.last_bt_score < minBtN) return false;
+      }
+      if (hideNoTrades && r.last_backtest_label === 'no_trades') return false;
+      if (reviewFilter === 'only' && !r.last_needs_review) return false;
+      if (reviewFilter === 'hide' && r.last_needs_review) return false;
+      if (sourceFilter !== 'any' && r.last_label_source !== sourceFilter) return false;
+      if (btClassFilter !== 'all' && r.last_backtest_label !== btClassFilter) return false;
       return true;
     });
     const dir = sort.dir === 'desc' ? -1 : 1;
@@ -534,7 +563,7 @@ function AdmissionPage() {
       return String(av).localeCompare(String(bv)) * dir;
     });
     return sorted;
-  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, sort]);
+  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, minBtScore, hideNoTrades, reviewFilter, sourceFilter, btClassFilter, sort]);
 
 
   const counts = useMemo(() => {
