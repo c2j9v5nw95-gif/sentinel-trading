@@ -13,6 +13,17 @@ import {
 import { PageHeader, Card, EmptyState } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { BacktestResultDialog, type BacktestDialogPrefill } from '@/components/calibration/BacktestResultDialog';
+import {
+  computeCandidateScore,
+  candidateBucketBadgeClass,
+  candidateBucketBarClass,
+  candidateBucketLabel,
+  type CandidateScoreResult,
+  type CandidateBucket,
+  type BtTrust,
+} from '@/lib/admission/candidate-score';
+
+
 
 
 const COLUMN_TOOLTIPS: Record<string, string> = {
@@ -40,8 +51,10 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'BT Class': 'Klassifisering av siste backtest. no_trades vises som "No Setup".',
   'BT Summary': 'Kort menneskelig oppsummering av siste backtest (drivers/safety).',
   'Calib Score': 'Calibration Score: hvor mye dagens coin-profil ligner historiske profitable observasjoner (kNN).',
-  'Priority': 'Candidate Priority Score (0–100) — kombinert prioriteringsscore for videre vurdering. Endrer IKKE admission-status.',
+  'Priority': 'Candidate Priority Score (0–100) — sekundær prioriteringsscore. Endrer IKKE admission-status.',
+  'Candidate': 'Coin Candidate Score (0–100) = samlet kvalitetsvurdering av coinen for denne strategien. Vektet sum: Market 25% · HTQ 25% · Calib 20% · BT 20% · Mom 10%. Manglende komponenter redistribueres — gir IKKE 0-straff. Hard kill capper score til ≤49 og blokkerer trading-egnethet, men endrer IKKE admission-status eller execution.',
 };
+
 
 function HeaderCell({
   label,
@@ -115,7 +128,9 @@ type SortKey =
   | 'bt_score'
   | 'calib_score'
   | 'calibrated_fit'
-  | 'priority';
+  | 'priority'
+  | 'candidate_score';
+
 
 const STATUS_ORDER: Record<string, number> = { approved: 0, trend_candidate: 1, watchlist: 2, rejected: 3 };
 const CLASS_ORDER: Record<string, number> = { trend_friendly: 0, neutral: 1, choppy: 2 };
@@ -155,6 +170,7 @@ function sortValue(r: Result, k: SortKey): number | string | null {
     case 'calib_score': return r.calibration_score ?? null;
     case 'calibrated_fit': return r.calibrated_strategy_fit ?? null;
     case 'priority': return r.candidate_priority_score ?? null;
+    case 'candidate_score': return r.candidate_score?.score ?? null;
   }
 }
 
@@ -164,7 +180,9 @@ const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   spread: 'asc', age: 'desc', wick: 'asc', hard_kills: 'desc', soft: 'desc', reason: 'asc',
   last_bt_class: 'asc', last_bt_date: 'desc', last_bt_ver: 'asc', bt_count: 'desc',
   bt_score: 'desc', calib_score: 'desc', calibrated_fit: 'desc', priority: 'desc',
+  candidate_score: 'desc',
 };
+
 
 // ---- Backtest Quality + Candidate Priority helpers ---------------------------
 
@@ -302,7 +320,96 @@ function BtClassCell({ r }: { r: Result }) {
   );
 }
 
+function CandidateScoreCell({ r }: { r: Result }) {
+  const cs = r.candidate_score;
+  if (!cs || cs.score == null) {
+    return <td className="py-1 pr-2 text-right text-muted-foreground">—</td>;
+  }
+  const badge = candidateBucketBadgeClass(cs.bucket);
+  const bar = candidateBucketBarClass(cs.bucket);
+  const showRaw = cs.hardKillCapped && cs.rawScore != null && cs.rawScore !== cs.score;
+  const tip = [
+    `Bucket: ${candidateBucketLabel(cs.bucket)}`,
+    showRaw ? `Raw: ${cs.rawScore}` : null,
+    cs.hardKillCapped ? 'Hard kill — score capped at 49.' : null,
+    !cs.tradeEligible ? 'Not trade-eligible' : null,
+    cs.usedFallback ? 'Fallback: Strategy Fit' : null,
+  ].filter(Boolean).join(' · ');
+  return (
+    <td className="py-1 pr-2 text-right" title={tip}>
+      <div className="flex items-center justify-end gap-2">
+        <div className="h-1.5 w-14 rounded bg-muted overflow-hidden">
+          <div className={`h-full ${bar}`} style={{ width: `${Math.max(2, Math.min(100, cs.score))}%` }} />
+        </div>
+        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-mono font-semibold ${badge}`}>
+          {fmtNum(cs.score, 1)}
+        </span>
+        {showRaw && (
+          <span className="text-[10px] text-muted-foreground">raw {fmtNum(cs.rawScore!, 0)}</span>
+        )}
+      </div>
+    </td>
+  );
+}
+
+function CandidateScoreBreakdown({ r }: { r: Result }) {
+  const cs = r.candidate_score;
+  if (!cs) return null;
+  return (
+    <div className="mt-3 rounded border bg-background p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <h4 className="font-semibold text-sm">Candidate Score Breakdown</h4>
+        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-mono font-semibold ${candidateBucketBadgeClass(cs.bucket)}`}>
+          {candidateBucketLabel(cs.bucket)} · {cs.score != null ? fmtNum(cs.score, 1) : 'N/A'}
+        </span>
+        {cs.rawScore != null && cs.rawScore !== cs.score && (
+          <span className="text-muted-foreground">raw {fmtNum(cs.rawScore, 1)}</span>
+        )}
+        <span className={cs.tradeEligible ? 'text-emerald-700' : 'text-red-700'}>
+          {cs.tradeEligible ? 'Trade-eligible' : 'Not trade-eligible'}
+        </span>
+        {cs.hardKillCapped && <span className="text-orange-700">Hard-kill capped</span>}
+        {cs.usedFallback && <span className="text-yellow-700">Fallback: Strategy Fit</span>}
+      </div>
+      <table className="w-full">
+        <thead className="text-muted-foreground">
+          <tr>
+            <th className="text-left py-0.5">Component</th>
+            <th className="text-right py-0.5">Value</th>
+            <th className="text-right py-0.5">Orig W</th>
+            <th className="text-right py-0.5">Eff W</th>
+            <th className="text-right py-0.5">Contribution</th>
+            <th className="text-left py-0.5 pl-3">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cs.components.map((c) => (
+            <tr key={c.key} className="border-t border-muted">
+              <td className="py-0.5">{c.label}</td>
+              <td className="py-0.5 text-right font-mono">{c.value != null ? fmtNum(c.value, 1) : 'N/A'}</td>
+              <td className="py-0.5 text-right font-mono">{c.originalWeight}%</td>
+              <td className="py-0.5 text-right font-mono">{fmtNum(c.effectiveWeight, 1)}%</td>
+              <td className="py-0.5 text-right font-mono">{c.value != null ? fmtNum(c.contribution / 100, 2) : '—'}</td>
+              <td className="py-0.5 pl-3 text-muted-foreground">{c.note ?? ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {cs.notes.length > 0 && (
+        <ul className="mt-2 list-disc pl-5 text-muted-foreground">
+          {cs.notes.map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+      )}
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        Candidate Score er kun en samlet kvalitetsvurdering for sortering/visning. Den endrer
+        ikke admission-status, kNN-vekter, labels eller execution.
+      </p>
+    </div>
+  );
+}
+
 function LastBacktestDetail({ r }: { r: Result }) {
+
   const hasAny =
     r.last_backtest_label != null ||
     r.last_bt_score != null ||
@@ -510,7 +617,9 @@ type Result = {
   last_num_trades?: number | null;
   // Computed client-side
   candidate_priority_score?: number | null;
+  candidate_score?: CandidateScoreResult | null;
 };
+
 
 type StatusFilter = 'all' | 'approved' | 'watchlist' | 'trend_candidate' | 'rejected';
 type ClassFilter = 'all' | 'trend_friendly' | 'neutral' | 'choppy';
@@ -566,7 +675,7 @@ function AdmissionPage() {
   const [confirmLongRun, setConfirmLongRun] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'fit', dir: 'desc' });
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'candidate_score', dir: 'desc' });
   const [includeCalibration, setIncludeCalibration] = useState(true);
   const [backtestPrefill, setBacktestPrefill] = useState<BacktestDialogPrefill | null>(null);
   // BT-related filters
@@ -575,6 +684,12 @@ function AdmissionPage() {
   const [reviewFilter, setReviewFilter] = useState<'any' | 'only' | 'hide'>('any');
   const [sourceFilter, setSourceFilter] = useState<'any' | 'manual_override' | 'auto'>('any');
   const [btClassFilter, setBtClassFilter] = useState<string>('all');
+  // Candidate Score filters
+  const [minCandidateScore, setMinCandidateScore] = useState<string>('');
+  const [bucketFilter, setBucketFilter] = useState<'all' | CandidateBucket>('all');
+  const [hideCapped, setHideCapped] = useState(false);
+  const [tradeEligibleOnly, setTradeEligibleOnly] = useState(false);
+
 
   const toggleSort = (k: SortKey) => {
     setSort((prev) => prev.key === k
@@ -710,11 +825,30 @@ function AdmissionPage() {
         last_num_trades: m?.last_num_trades ?? null,
       };
       merged.candidate_priority_score = computeCandidatePriority(merged);
+      // Resolve BT trust signal.
+      let btTrust: BtTrust;
+      if (merged.last_backtest_label === 'no_trades') btTrust = 'no_trades';
+      else if (merged.last_bt_score == null) btTrust = 'missing';
+      else if (merged.last_needs_review && merged.last_label_source === 'auto') btTrust = 'needs_review';
+      else btTrust = 'trusted';
+      merged.candidate_score = computeCandidateScore({
+        robustness: merged.score,
+        htq: merged.historical_trend_quality,
+        calibration: merged.calibration_score ?? null,
+        calibrationConfidence: (merged.calibration_confidence as any) ?? null,
+        btScore: btTrust === 'no_trades' ? null : (merged.last_bt_score ?? null),
+        btTrust,
+        momentum: merged.current_momentum_score,
+        hardKills: merged.hard_kill_rules ?? [],
+        fallbackStrategyFit: merged.strategy_fit_score ?? null,
+      });
       return merged;
     });
     const minTrendN = parseFloat(minTrend);
     const minFitN = parseFloat(minFit);
     const minBtN = parseFloat(minBtScore);
+    const minCandN = parseFloat(minCandidateScore);
+
     const filtered = all.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (classFilter !== 'all' && r.trend_classification !== classFilter) return false;
@@ -733,8 +867,16 @@ function AdmissionPage() {
       if (reviewFilter === 'hide' && r.last_needs_review) return false;
       if (sourceFilter !== 'any' && r.last_label_source !== sourceFilter) return false;
       if (btClassFilter !== 'all' && r.last_backtest_label !== btClassFilter) return false;
+      // Candidate score filters
+      if (Number.isFinite(minCandN)) {
+        if (r.candidate_score?.score == null || r.candidate_score.score < minCandN) return false;
+      }
+      if (bucketFilter !== 'all' && r.candidate_score?.bucket !== bucketFilter) return false;
+      if (hideCapped && r.candidate_score?.hardKillCapped) return false;
+      if (tradeEligibleOnly && r.candidate_score?.tradeEligible === false) return false;
       return true;
     });
+
     const dir = sort.dir === 'desc' ? -1 : 1;
     const sorted = [...filtered].sort((a, b) => {
       const av = sortValue(a, sort.key);
@@ -748,7 +890,7 @@ function AdmissionPage() {
       return String(av).localeCompare(String(bv)) * dir;
     });
     return sorted;
-  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, minBtScore, hideNoTrades, reviewFilter, sourceFilter, btClassFilter, sort]);
+  }, [resultsQ.data, latestBtQ.data, statusFilter, classFilter, search, hideHardRejections, onlyTrendCandidates, minTrend, minFit, minBtScore, hideNoTrades, reviewFilter, sourceFilter, btClassFilter, minCandidateScore, bucketFilter, hideCapped, tradeEligibleOnly, sort]);
 
 
   const counts = useMemo(() => {
@@ -1098,6 +1240,43 @@ function AdmissionPage() {
             <option value="no_trades">no_trades</option>
           </select>
         </div>
+        <div className="flex flex-wrap items-center gap-3 mb-3 text-xs">
+          <span className="text-muted-foreground">Candidate:</span>
+          <label className="flex items-center gap-1">
+            Min Candidate Score
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="w-16 rounded border bg-background px-1 py-0.5"
+              value={minCandidateScore}
+              onChange={(e) => setMinCandidateScore(e.target.value)}
+            />
+          </label>
+          <span className="ml-2 text-muted-foreground">Bucket:</span>
+          <select
+            className="rounded border bg-background px-1 py-0.5"
+            value={bucketFilter}
+            onChange={(e) => setBucketFilter(e.target.value as any)}
+          >
+            <option value="all">alle</option>
+            <option value="prime">Prime (≥80)</option>
+            <option value="strong">Strong (65–79)</option>
+            <option value="watch">Watch (50–64)</option>
+            <option value="weak">Weak (35–49)</option>
+            <option value="avoid">Avoid (&lt;35)</option>
+            <option value="blocked">Blocked (hard kill)</option>
+          </select>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={hideCapped} onChange={(e) => setHideCapped(e.target.checked)} />
+            Skjul hard-kill-capped
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={tradeEligibleOnly} onChange={(e) => setTradeEligibleOnly(e.target.checked)} />
+            Kun trade-eligible
+          </label>
+        </div>
+
 
 
         {!activeRunId ? (
@@ -1133,6 +1312,8 @@ function AdmissionPage() {
                   <HeaderCell label="BT Summary" />
                   <HeaderCell label="Calib Score" align="right" sortKey="calib_score" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Priority" align="right" sortKey="priority" activeSort={sort} onSort={toggleSort} />
+                  <HeaderCell label="Candidate" align="right" sortKey="candidate_score" activeSort={sort} onSort={toggleSort} />
+
                   <HeaderCell label="Last BT Date" sortKey="last_bt_date" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="Last BT Ver" sortKey="last_bt_ver" activeSort={sort} onSort={toggleSort} />
                   <HeaderCell label="# BT" align="right" sortKey="bt_count" activeSort={sort} onSort={toggleSort} />
@@ -1205,7 +1386,9 @@ function AdmissionPage() {
                             <span className="ml-1 text-yellow-600" title="Backtest label needs review — BT contribution reduced.">⚠</span>
                           )}
                         </td>
+                        <CandidateScoreCell r={r} />
                         <td className="py-1 pr-2 text-xs font-mono text-muted-foreground">{r.last_backtest_date ?? '—'}</td>
+
                         <td className="py-1 pr-2 text-xs text-muted-foreground max-w-[120px] truncate" title={r.last_backtest_strategy_version ?? ''}>
                           {r.last_backtest_strategy_version ?? '—'}
                         </td>
@@ -1214,7 +1397,7 @@ function AdmissionPage() {
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={24} className="p-3">
+                          <td colSpan={25} className="p-3">
 
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
@@ -1274,7 +1457,9 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                             </div>
+                            <CandidateScoreBreakdown r={r} />
                             <LastBacktestDetail r={r} />
+
                             <BacktestHistorySection symbol={r.symbol} />
                             <div className="mt-3 flex flex-wrap justify-end gap-2">
                               {activeRunId && (
