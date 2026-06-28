@@ -829,6 +829,16 @@ function AdmissionPage() {
 
         )}
       </Card>
+
+      <BacktestResultDialog
+        open={!!backtestPrefill}
+        onOpenChange={(o) => { if (!o) setBacktestPrefill(null); }}
+        prefill={backtestPrefill ?? undefined}
+        onSaved={() => {
+          setBacktestPrefill(null);
+          qc.invalidateQueries({ queryKey: ['admission-results'] });
+        }}
+      />
     </div>
   );
 }
