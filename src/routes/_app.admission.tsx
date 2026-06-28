@@ -575,8 +575,8 @@ function AdmissionPage() {
 
                       {isOpen && (
                         <tr key={`${r.id}-x`} className="border-b bg-muted/20">
-                          <td colSpan={15} className="p-3">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                          <td colSpan={17} className="p-3">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                               <div>
                                 <h4 className="font-semibold mb-1">Robustness components</h4>
                                 <pre className="rounded bg-background p-2 overflow-auto">
@@ -584,9 +584,27 @@ function AdmissionPage() {
                                 </pre>
                               </div>
                               <div>
-                                <h4 className="font-semibold mb-1">Trend components</h4>
+                                <h4 className="font-semibold mb-1">
+                                  HTQ v2 ({r.htq_lookback_days ?? '—'}d · {r.htq_mode ?? '—'})
+                                </h4>
                                 <pre className="rounded bg-background p-2 overflow-auto">
-                                  {JSON.stringify(r.trend_components ?? { note: 'not computed' }, null, 2)}
+                                  {JSON.stringify(r.htq_components ?? { note: 'not computed' }, null, 2)}
+                                </pre>
+                                {r.htq_reason && (
+                                  <p className="mt-1 text-muted-foreground">{r.htq_reason}</p>
+                                )}
+                              </div>
+                              <div>
+                                <h4 className="font-semibold mb-1">Current Momentum (live)</h4>
+                                <pre className="rounded bg-background p-2 overflow-auto">
+                                  {JSON.stringify(
+                                    {
+                                      momentum_score: r.current_momentum_score,
+                                      ...(r.trend_components ?? {}),
+                                    },
+                                    null,
+                                    2,
+                                  )}
                                 </pre>
                               </div>
                               <div>
@@ -595,6 +613,8 @@ function AdmissionPage() {
                                   {JSON.stringify({
                                     admission_reason: r.admission_reason,
                                     admission_mode: r.admission_mode,
+                                    strategy_fit_label: r.strategy_fit_label,
+                                    trend_classification: r.trend_classification,
                                     hard_kill_rules: r.hard_kill_rules,
                                     soft_failures: r.soft_failures,
                                     wick_risk_score: r.wick_risk_score,
@@ -604,6 +624,7 @@ function AdmissionPage() {
                               </div>
                             </div>
                           </td>
+
                         </tr>
                       )}
                     </>
