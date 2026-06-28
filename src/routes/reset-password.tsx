@@ -16,10 +16,22 @@ function ResetPasswordPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Supabase legger recovery-tokenet i URL-hash (#access_token=...&type=recovery).
-  // detectSessionInUrl tar dette automatisk, men vi venter til en session finnes.
   useEffect(() => {
     if (typeof window === "undefined") return;
+
+    const url = new URL(window.location.href);
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+    // Sjekk for feil fra Supabase (utløpt/ugyldig lenke)
+    const errDesc =
+      url.searchParams.get("error_description") ||
+      hash.get("error_description") ||
+      url.searchParams.get("error") ||
+      hash.get("error");
+    if (errDesc) {
+      setLinkError(decodeURIComponent(errDesc).replace(/\+/g, " "));
+      return;
+    }
 
     const check = async () => {
       const { data } = await supabase.auth.getSession();
@@ -30,24 +42,46 @@ function ResetPasswordPage() {
       return false;
     };
 
+    let unsub: (() => void) | undefined;
+
     (async () => {
+      // PKCE flow: ?code=...
+      const code = url.searchParams.get("code");
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          setLinkError(
+            "Reset-lenken er ugyldig eller utløpt. Be om en ny fra login-siden.",
+          );
+          return;
+        }
+        // Rydd opp i URL
+        window.history.replaceState({}, "", window.location.pathname);
+        setReady(true);
+        return;
+      }
+
       if (await check()) return;
-      // Vent på at Supabase prosesserer hash-fragmentet
+
       const { data: sub } = supabase.auth.onAuthStateChange((event) => {
         if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") {
           setReady(true);
         }
       });
-      // Fallback: hvis ingen session etter 2s, vis feilmelding
+      unsub = () => sub.subscription.unsubscribe();
+
       setTimeout(async () => {
         if (!(await check())) {
           setLinkError(
             "Reset-lenken er ugyldig eller utløpt. Be om en ny fra login-siden.",
           );
         }
-      }, 2000);
-      return () => sub.subscription.unsubscribe();
+      }, 3000);
     })();
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const submit = async (e: React.FormEvent) => {
