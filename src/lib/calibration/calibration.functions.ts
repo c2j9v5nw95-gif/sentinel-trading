@@ -878,3 +878,191 @@ export const recalcCalibrationForSymbol = createServerFn({ method: 'POST' })
       observations_used: observations.length,
     };
   });
+
+// ── Bulk import fra Excel (scan-results) ─────────────────────────────────
+
+const BulkImportRowSchema = z.object({
+  symbol: z.string().min(1).max(40),
+  test_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  net_profit_usd: NumericNullable.optional(),
+  net_profit_pct: NumericNullable.optional(),
+  max_drawdown_usd: NumericNullable.optional(),
+  max_drawdown_pct: NumericNullable.optional(),
+  profit_factor: NumericNullable.optional(),
+  win_rate_pct: NumericNullable.optional(),
+  num_trades: IntNullable.optional(),
+});
+
+const BulkImportInput = z.object({
+  strategy_version: z.string().min(1).max(80),
+  timeframe: z.string().max(8).default('5m'),
+  candles_tested: z.number().int().min(0).default(9000),
+  rows: z.array(BulkImportRowSchema).min(1).max(2000),
+});
+
+export const bulkImportBacktestResults = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => BulkImportInput.parse(i))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+
+    // Preload dedupe set: alle eksisterende (symbol, test_date) for denne
+    // brukeren + strategy_version. Vi henter symboler i batcher for å unngå
+    // for lange IN-lister.
+    const symbols = Array.from(new Set(data.rows.map((r) => r.symbol)));
+    const existing = new Set<string>();
+    const CHUNK = 200;
+    for (let i = 0; i < symbols.length; i += CHUNK) {
+      const chunk = symbols.slice(i, i + CHUNK);
+      const { data: rows, error } = await supabase
+        .from('coin_backtest_results')
+        .select('symbol,test_date')
+        .eq('user_id', userId)
+        .eq('strategy_version', data.strategy_version)
+        .in('symbol', chunk);
+      if (error) throw new Error(error.message);
+      for (const r of rows ?? []) {
+        existing.add(`${r.symbol}|${r.test_date}`);
+      }
+    }
+
+    const thresholds = await loadClassificationThresholds(supabase);
+
+    type Outcome = {
+      symbol: string;
+      test_date: string;
+      status: 'inserted' | 'skipped_duplicate' | 'error';
+      label?: string;
+      error?: string;
+    };
+    const outcomes: Outcome[] = [];
+    let inserted = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const raw of data.rows) {
+      const key = `${raw.symbol}|${raw.test_date}`;
+      if (existing.has(key)) {
+        skipped += 1;
+        outcomes.push({ symbol: raw.symbol, test_date: raw.test_date, status: 'skipped_duplicate' });
+        continue;
+      }
+
+      try {
+        const sizing = withSizingDefaults({
+          position_size_type: null,
+          position_size_pct: null,
+          leverage: null,
+          leverage_enabled: null,
+        });
+        const derived = computeSizingDerived(sizing, {
+          net_profit_pct: raw.net_profit_pct ?? null,
+          max_drawdown_pct: raw.max_drawdown_pct ?? null,
+          avg_pnl_pct: null,
+        });
+        const auto = autoSuggestLabel(
+          {
+            net_profit_pct: raw.net_profit_pct ?? null,
+            max_drawdown_pct: raw.max_drawdown_pct ?? null,
+            profit_factor: raw.profit_factor ?? null,
+            win_rate_pct: raw.win_rate_pct ?? null,
+            num_trades: raw.num_trades ?? null,
+            normalized_net_profit_pct: derived.normalized_net_profit_pct,
+            normalized_drawdown_pct: derived.normalized_drawdown_pct,
+            leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+            leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+          },
+          thresholds,
+        );
+        const review = detectNeedsReview(auto.label as BacktestLabel, auto);
+
+        const row = {
+          user_id: userId,
+          symbol: raw.symbol,
+          test_date: raw.test_date,
+          strategy_version: data.strategy_version,
+          timeframe: data.timeframe,
+          candles_tested: data.candles_tested,
+          net_profit_pct: raw.net_profit_pct ?? null,
+          net_profit_usd: raw.net_profit_usd ?? null,
+          max_drawdown_pct: raw.max_drawdown_pct ?? null,
+          max_drawdown_usd: raw.max_drawdown_usd ?? null,
+          profit_factor: raw.profit_factor ?? null,
+          win_rate_pct: raw.win_rate_pct ?? null,
+          num_trades: raw.num_trades ?? null,
+          initial_capital_usd: 10000,
+          position_size_type: sizing.position_size_type,
+          position_size_pct: sizing.position_size_pct,
+          position_size_usd: null,
+          leverage: sizing.leverage,
+          leverage_enabled: sizing.leverage_enabled,
+          notional_exposure_pct: derived.notional_exposure_pct,
+          normalized_net_profit_pct: derived.normalized_net_profit_pct,
+          normalized_drawdown_pct: derived.normalized_drawdown_pct,
+          normalized_avg_trade_pct: derived.normalized_avg_trade_pct,
+          leverage_adjusted_net_profit_pct: derived.leverage_adjusted_net_profit_pct,
+          leverage_adjusted_drawdown_pct: derived.leverage_adjusted_drawdown_pct,
+          sizing_assumption_source: 'default_backfill' as const,
+          extraction_source: 'manual' as const,
+          extraction_status: 'manual' as const,
+          label: auto.label,
+          auto_suggested_label: auto.label,
+          backtest_quality_score: auto.quality_score,
+          classification_reason_codes: auto.reason_codes,
+          classification_positive_drivers: auto.positive_drivers,
+          classification_negative_drivers: auto.negative_drivers,
+          classification_safety_overrides: auto.safety_overrides,
+          classification_summary: auto.summary,
+          sample_bucket: auto.sample_bucket,
+          sample_confidence_weight: auto.sample_confidence_weight,
+          label_source: 'auto' as const,
+          label_config_version: LABEL_CONFIG_VERSION,
+          needs_review: review.needs_review,
+          needs_review_reason: review.reason,
+        };
+
+        const { error } = await supabase.from('coin_backtest_results').insert(row as any);
+        if (error) {
+          // Race-condition safety net: hvis noen andre skrev samme rad
+          // mellom preload og insert, behandle som duplikat.
+          if (/duplicate key|unique constraint/i.test(error.message)) {
+            skipped += 1;
+            outcomes.push({ symbol: raw.symbol, test_date: raw.test_date, status: 'skipped_duplicate' });
+          } else {
+            failed += 1;
+            outcomes.push({
+              symbol: raw.symbol,
+              test_date: raw.test_date,
+              status: 'error',
+              error: error.message,
+            });
+          }
+          continue;
+        }
+        existing.add(key);
+        inserted += 1;
+        outcomes.push({
+          symbol: raw.symbol,
+          test_date: raw.test_date,
+          status: 'inserted',
+          label: auto.label,
+        });
+      } catch (e: any) {
+        failed += 1;
+        outcomes.push({
+          symbol: raw.symbol,
+          test_date: raw.test_date,
+          status: 'error',
+          error: e?.message ?? String(e),
+        });
+      }
+    }
+
+    return {
+      total: data.rows.length,
+      inserted,
+      skipped_duplicate: skipped,
+      failed,
+      outcomes,
+    };
+  });
