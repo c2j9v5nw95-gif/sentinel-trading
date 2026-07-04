@@ -29,6 +29,8 @@ import {
   DEFAULT_WEIGHTS,
   type ScoreWeights,
 } from '@/lib/analysis/stats';
+import { generateInsights } from '@/lib/analysis/insights';
+import { InsightsPanel } from '@/components/analysis/InsightsPanel';
 
 export const Route = createFileRoute('/_app/analysis')({
   component: AnalysisPage,
@@ -75,6 +77,14 @@ function AnalysisPage() {
 
   const data = q.data;
   const active = useMemo(() => (data?.rows ?? []).filter((r) => !r.excluded), [data]);
+  const rankedForInsights = useMemo(
+    () => (active.length ? rankRows(active, DEFAULT_WEIGHTS) : []),
+    [active],
+  );
+  const insights = useMemo(
+    () => (data ? generateInsights(data, active, rankedForInsights) : []),
+    [data, active, rankedForInsights],
+  );
 
   return (
     <div className="space-y-4">
@@ -134,6 +144,8 @@ function AnalysisPage() {
           </div>
         </div>
       </Card>
+
+      {data && insights.length > 0 && <InsightsPanel insights={insights} />}
 
       <div className="flex gap-1 border-b border-border text-sm">
         {(['drivers', 'ranking', 'segments'] as Tab[]).map((t) => (
