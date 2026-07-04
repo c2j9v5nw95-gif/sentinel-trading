@@ -1,34 +1,45 @@
-# Passord-reset for Lekvaken@gmail.com
 
-Du valgte A (send reset nå). Lenken i e-posten må ha en side å lande på — den finnes ikke i prosjektet i dag, så jeg bygger den minimumssiden samtidig. Ingen endringer i trading-logikk, execution eller backend-data.
+# Excel bulk-import for backtest-resultater
 
-## Hva jeg gjør
+Ny funksjon på Calibration-siden som lar deg laste opp Excel-arket fra scan-verktøyet og få hver rad lagret som en backtest — nøyaktig som dagens én-og-én-lagring, men i bulk. Kjøres hver gang du har en oppdatert scan; rader som allerede finnes med samme scan-dato hoppes over.
 
-1. **Opprett `/reset-password`-rute** (`src/routes/reset-password.tsx`, offentlig)
-   - Leser Supabase recovery-token fra URL-hash (Supabase setter en midlertidig session ved `type=recovery`)
-   - Skjema: nytt passord + bekreft passord (min 8 tegn)
-   - Kaller `supabase.auth.updateUser({ password })`
-   - Ved suksess: redirect til `/login` med bekreftelsesmelding
-   - Feilhåndtering hvis lenken er utløpt/ugyldig
+## Hva som legges til
 
-2. **Send reset-mail til Lekvaken@gmail.com**
-   - Engangs server-funksjon som kaller `supabase.auth.resetPasswordForEmail("Lekvaken@gmail.com", { redirectTo: "<published-url>/reset-password" })`
-   - Bruker published URL (`https://signal-guard-pilot.lovable.app/reset-password`) som redirect, slik at lenken virker både fra mobil-appen og nettleser
-   - Kjøres én gang via `invoke-server-function` etter deploy, og fjernes/eller står som ufarlig admin-only hjelper
+**1. Ny "Importer fra Excel"-knapp på Calibration-siden**
+- Åpner en dialog: last opp .xlsx, velg strategy_version + timeframe (default `5m`) som skal brukes for alle rader i filen, se preview, kjør import.
+- Preview viser: totalt rader i filen, hvor mange som er nye, hvor mange som hoppes over (allerede lagret med samme scan-dato), hvor mange som feiler validering.
+- Etter import: liste med resultat per coin (Lagret / Hoppet over / Feilet + grunn).
 
-3. **Legg til "Glemt passord?"-lenke i `src/routes/login.tsx`**
-   - Liten lenke under passord-feltet → navigerer til `/forgot-password`
-   - Ny `src/routes/forgot-password.tsx` (offentlig): e-postfelt, kaller `resetPasswordForEmail` med samme `redirectTo`
-   - Gjør at du (og evt. andre operatører) kan gjøre dette selv neste gang uten å mase på meg
+**2. Ny server-funksjon `importBacktestFromExcel`**
+- Mottar parset rad-liste + felles metadata (strategy_version, timeframe).
+- For hver rad: sjekker om det allerede finnes en rad for `(user_id, symbol, strategy_version, test_date)` med samme `test_date` som scan-datoen i Excel → hopp over.
+- Ellers: kaller nøyaktig samme lagringslogikk som `createBacktestResult` bruker i dag (auto-labeling, sizing-defaults, derived metrics, needs_review-flagg). Ingen ny lagringsvei — vi gjenbruker den eksisterende koden slik at resultatet i databasen blir identisk med manuell lagring.
 
-## Forutsetning
+## Kolonne-mapping Excel → database
 
-Auth-emails må kunne sendes fra Lovable Cloud. Hvis ingen e-postdomene er satt opp, kommer reset-mailen via Lovables default-mal — det er greit for nå (du trenger bare lenken, ikke branding). Hvis sending feiler, sjekker jeg `email_domain--check_email_domain_status` og foreslår oppsett som neste steg.
+| Excel-kolonne | DB-felt |
+|---|---|
+| Symbol | `symbol` |
+| Total PnL (USD) | `net_profit_usd` |
+| Total PnL (%) | `net_profit_pct` |
+| Max drawdown (USD) | `max_drawdown_usd` |
+| Max drawdown (%) | `max_drawdown_pct` |
+| Profit factor | `profit_factor` |
+| Winrate (%) | `win_rate_pct` |
+| Total trades | `num_trades` |
+| Scan date (dd.mm.yyyy) | `test_date` (konverteres til `YYYY-MM-DD`) |
 
-## Etter implementering
+Faste verdier per import: `strategy_version` (velges i dialogen), `timeframe` (default `5m`), `extraction_source = 'manual'`, `sizing_assumption_source = 'default_backfill'`. `label` settes automatisk av eksisterende auto-labeling-motor (samme som "Auto-klassifiser" på manuell lagring).
 
-- Du får mail fra Supabase/Lovable med "Reset password"-lenke
-- Åpne lenken (helst i mobil-nettleser først for å verifisere), sett nytt passord
-- Logg inn i Lovable-mobilappen med nytt passord
+## Duplikat-regel
 
-Tekniske detaljer: bruker `supabase.auth.resetPasswordForEmail` + `updateUser`, ingen RLS/DB-endringer, ingen nye secrets, ingen endringer på `_app`-guard eller eksisterende ruter utover lenken i login.
+Per rad: hvis det finnes en tidligere rad for samme `(symbol, strategy_version, test_date)` med *samme test_date* som Excel-raden → **hopp over, ingen skriving**. Nyere scan-dato lagres som ny rad (historikk beholdes, akkurat som i dag). Dette matcher dagens unike indeks `coin_backtest_results_soft_dedupe` og eksisterende manuell flyt.
+
+## Tekniske detaljer
+
+- Excel-parsing i browseren med `xlsx` (SheetJS) — ingen filopplasting til server, kun parsede rader sendes.
+- Ny server-fn `bulkCreateBacktestResults` i `src/lib/calibration/calibration.functions.ts` som gjenbruker helpers: `withSizingDefaults`, `computeSizingDerived`, `loadClassificationThresholds`, `autoSuggestLabel`, `detectNeedsReview`. Selve INSERT-loopen kjøres én rad om gangen (600 coins ≈ 600 rader — helt uproblematisk) slik at én dårlig rad ikke stopper resten.
+- Dedupe-sjekken gjøres med én `select symbol,test_date` opp front per bruker+strategy_version, ikke per rad.
+- Ny komponent `src/components/calibration/ExcelImportDialog.tsx` med opplasting, preview-tabell og resultatrapport.
+- Ingen migrasjon — ingen skjemaendringer.
+- Ingenting endres i eksisterende manuell lagre-flyt.
