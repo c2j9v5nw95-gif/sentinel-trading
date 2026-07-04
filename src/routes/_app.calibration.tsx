@@ -24,6 +24,7 @@ import {
   clearNeedsReview,
 } from '@/lib/calibration/label-review.functions';
 import { LabelDiagnosticsPanel } from '@/components/calibration/LabelDiagnosticsPanel';
+import { ExcelImportDialog } from '@/components/calibration/ExcelImportDialog';
 
 type Label = 'no_trades' | 'rejected_backtest' | 'marginal' | 'profitable' | 'profitable_plus';
 
