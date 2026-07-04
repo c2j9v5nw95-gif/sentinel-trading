@@ -17,6 +17,7 @@ const NAV: { to: string; label: string }[] = [
   { to: "/admission", label: "Admission" },
   { to: "/recommendations", label: "Recommendations" },
   { to: "/calibration", label: "Calibration" },
+  { to: "/analysis", label: "Analysis" },
   { to: "/settings", label: "Settings" },
 ];
 

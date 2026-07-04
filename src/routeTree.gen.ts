@@ -32,6 +32,7 @@ import { Route as AppInvariantsRouteImport } from './routes/_app.invariants'
 import { Route as AppCalibrationRouteImport } from './routes/_app.calibration'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAnalyticsDebugRouteImport } from './routes/_app.analytics-debug'
+import { Route as AppAnalysisRouteImport } from './routes/_app.analysis'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
 import { Route as AppAdmissionRouteImport } from './routes/_app.admission'
 import { Route as MPositionsSymbolRouteImport } from './routes/m.positions_.$symbol'
@@ -155,6 +156,11 @@ const AppAnalyticsDebugRoute = AppAnalyticsDebugRouteImport.update({
   path: '/analytics-debug',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAnalysisRoute = AppAnalysisRouteImport.update({
+  id: '/analysis',
+  path: '/analysis',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAlertsRoute = AppAlertsRouteImport.update({
   id: '/alerts',
   path: '/alerts',
@@ -208,6 +214,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/admission': typeof AppAdmissionRoute
   '/alerts': typeof AppAlertsRoute
+  '/analysis': typeof AppAnalysisRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
   '/calibration': typeof AppCalibrationRoute
@@ -239,6 +246,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/admission': typeof AppAdmissionRoute
   '/alerts': typeof AppAlertsRoute
+  '/analysis': typeof AppAnalysisRoute
   '/analytics-debug': typeof AppAnalyticsDebugRoute
   '/audit': typeof AppAuditRoute
   '/calibration': typeof AppCalibrationRoute
@@ -273,6 +281,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/_app/admission': typeof AppAdmissionRoute
   '/_app/alerts': typeof AppAlertsRoute
+  '/_app/analysis': typeof AppAnalysisRoute
   '/_app/analytics-debug': typeof AppAnalyticsDebugRoute
   '/_app/audit': typeof AppAuditRoute
   '/_app/calibration': typeof AppCalibrationRoute
@@ -307,6 +316,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/admission'
     | '/alerts'
+    | '/analysis'
     | '/analytics-debug'
     | '/audit'
     | '/calibration'
@@ -338,6 +348,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/admission'
     | '/alerts'
+    | '/analysis'
     | '/analytics-debug'
     | '/audit'
     | '/calibration'
@@ -371,6 +382,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/_app/admission'
     | '/_app/alerts'
+    | '/_app/analysis'
     | '/_app/analytics-debug'
     | '/_app/audit'
     | '/_app/calibration'
@@ -572,6 +584,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAnalyticsDebugRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/analysis': {
+      id: '/_app/analysis'
+      path: '/analysis'
+      fullPath: '/analysis'
+      preLoaderRoute: typeof AppAnalysisRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/alerts': {
       id: '/_app/alerts'
       path: '/alerts'
@@ -634,6 +653,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAdmissionRoute: typeof AppAdmissionRoute
   AppAlertsRoute: typeof AppAlertsRoute
+  AppAnalysisRoute: typeof AppAnalysisRoute
   AppAnalyticsDebugRoute: typeof AppAnalyticsDebugRoute
   AppAuditRoute: typeof AppAuditRoute
   AppCalibrationRoute: typeof AppCalibrationRoute
@@ -653,6 +673,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAdmissionRoute: AppAdmissionRoute,
   AppAlertsRoute: AppAlertsRoute,
+  AppAnalysisRoute: AppAnalysisRoute,
   AppAnalyticsDebugRoute: AppAnalyticsDebugRoute,
   AppAuditRoute: AppAuditRoute,
   AppCalibrationRoute: AppCalibrationRoute,
@@ -706,13 +727,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
