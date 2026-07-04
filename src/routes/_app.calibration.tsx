@@ -261,7 +261,22 @@ function CalibrationPage() {
       <PageHeader
         title="Calibration · Label Review"
         description="Phase 0 — kontroller backtest-labels før calibration læres tungt. Endrer ikke execution, dispatcher, risk eller signaler."
+        actions={
+          <button
+            className="rounded bg-primary text-primary-foreground px-3 py-1 text-sm"
+            onClick={() => setImportOpen(true)}
+          >
+            Importer fra Excel
+          </button>
+        }
       />
+
+      {importOpen && (
+        <ExcelImportDialog
+          onClose={() => setImportOpen(false)}
+          onImported={() => qc.invalidateQueries({ queryKey: ['label-review'] })}
+        />
+      )}
 
       <LabelDiagnosticsPanel />
 
