@@ -172,6 +172,7 @@ function CalibrationPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [bucketFilter, setBucketFilter] = useState<BucketFilter>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
 
   const reviewQ = useQuery({
