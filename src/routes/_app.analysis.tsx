@@ -145,6 +145,8 @@ function AnalysisPage() {
         </div>
       </Card>
 
+      {data && insights.length > 0 && <InsightsPanel insights={insights} />}
+
       <div className="flex gap-1 border-b border-border text-sm">
         {(['drivers', 'ranking', 'segments'] as Tab[]).map((t) => (
           <button
